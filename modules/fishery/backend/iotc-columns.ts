@@ -46,8 +46,8 @@ export function iotcAttachment(raw: Buffer, pageUrl: string): string {
   return href;
 }
 
-export function prepareIotc(candidate: IotcCandidate, receipt: unknown, raw: Buffer, pdf: Parameters<typeof prepareOfficial>[3]) {
-  const result = prepareOfficial("iotc", receipt, raw, pdf, "live_capture");
+export function prepareIotc(candidate: IotcCandidate, receipt: unknown, raw: Buffer, pdf: Parameters<typeof prepareOfficial>[3], acquisitionMode:"live_capture"|"archive_replay"="live_capture") {
+  const result = prepareOfficial("iotc", receipt, raw, pdf, acquisitionMode);
   const $ = cheerio.load(new TextDecoder("utf-8", { fatal: true }).decode(raw));
   const status = collapse($("#content .node-cmm .field-name-field-cmm-status").text());
   const number = /\b(\d{2}\/\d{2})\b/.exec(result.title ?? "")?.[1];
