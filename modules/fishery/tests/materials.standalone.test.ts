@@ -14,7 +14,7 @@ import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
 import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
-import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding} from "../backend/evidence.ts";
+import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
 import { createHash } from "node:crypto";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 
@@ -560,7 +560,11 @@ test("ID expansion retains occurrence, date, unit, role and expanded review-enve
   const body="会议A已召开。会议B拟召开。会议未召开。如果会议召开则另行通知。公海是治理领域。船队10艘。会议于5月16日召开。",input=idTestInput(body),request=buildFisheryDraftRequest(input,"mock");
   const parse=(patch:object)=>validateFisheryDraft(input,request.schema.parse({...idTestDraft(),...patch}));
   assert.doesNotThrow(()=>parse({eventStatus:{value:"reported_occurred",evidence:["p1s1"]}}));
-  for(const text of ["会议未举行。","工作未完成。","会议取消召开。","会议延期举行。","若条件具备会议召开。","会议A已召开，会议B拟召开。","The meeting was not held.","The meeting was held if conditions were met.","The meeting was held but cancelled."]) {
+  for(const text of ["会议已正式召开。","会议如期举行。","工作已按期完成。","The meeting was held.","The meeting took place."]) {
+    const positive=idTestInput(text),positiveRequest=buildFisheryDraftRequest(positive,"mock");
+    assert.doesNotThrow(()=>validateFisheryDraft(positive,positiveRequest.schema.parse({...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]}})),text);
+  }
+  for(const text of ["会议未举行。","工作未完成。","会议并未正式召开。","会议未如期召开。","工作未能按期完成。","会议尚未正式举行。","The meeting never took place.","The meeting was not actually held.","The work was never completed.","会议取消召开。","会议延期举行。","若条件具备会议召开。","会议A已召开，会议B拟召开。","The meeting was not held.","The meeting was held if conditions were met.","The meeting was held but cancelled."]) {
     const negative=idTestInput(text),negativeRequest=buildFisheryDraftRequest(negative,"mock");
     assert.throws(()=>validateFisheryDraft(negative,negativeRequest.schema.parse({...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]}})),/Reported occurrence/,text);
   }
@@ -587,4 +591,16 @@ test("review wire only supports original claim ID subsets and preserves complete
   const empty=validateFisheryDraft(input,generation.schema.parse(idTestDraft())),emptyRequest=buildFisheryReviewRequest(input,empty,"mock");
   const result=await reviewFisheryDraft(input,empty,"mock",async()=>({data:emptyRequest.schema.parse({...wire,findings:[]}),receiptId:1000,reused:false,model:"mock",usage:null}));
   assert.equal(result.status,"needs_evidence");
+});
+
+
+test("saved generation and review cannot inherit a new prompt/schema or catalog version",()=>{
+  const input=idTestInput("合成公海会议已召开。"),catalog=buildEvidenceCatalog(input),generation=buildFisheryDraftRequest(input,"mock"),draft=validateFisheryDraft(input,generation.schema.parse({...idTestDraft(),summaryZh:[{sentence:"合成公海会议已召开。",evidence:["p1s1"]}]}));
+  for(const [request,schemaVersion] of [[generation,"fishery-draft-wire-v5"],[buildFisheryReviewRequest(input,draft,"mock"),"fishery-review-wire-v3"]] as const) {
+    const expected={promptVersion:request.promptVersion,schemaVersion},saved={...expected,evidenceCatalog:evidenceBinding(catalog)};
+    assert.doesNotThrow(()=>assertSavedEvidenceArtifact(input,saved,expected));
+    for(const changed of [{...saved,promptVersion:"old-prompt"},{...saved,schemaVersion:"old-schema"},{...saved,evidenceCatalog:{...saved.evidenceCatalog,version:"old-spans"}},{...saved,evidenceCatalog:{...saved.evidenceCatalog,hash:"0".repeat(64)}}]) assert.throws(()=>assertSavedEvidenceArtifact(input,changed,expected),/version changed|cannot be reinterpreted/);
+    assert.throws(()=>assertSavedEvidenceArtifact(input,{},expected),/preserve the old attempt/);
+    assert.deepEqual(saved,{...expected,evidenceCatalog:evidenceBinding(catalog)},"Version checks never rewrite saved results");
+  }
 });

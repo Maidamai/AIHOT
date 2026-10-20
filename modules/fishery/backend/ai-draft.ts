@@ -7,7 +7,7 @@ import { sha256 } from "./source-adapters.ts";
 import type { ChatJsonOptions, ChatJsonResult } from "@aihot/backend/providers/llm";
 
 // Bump for every canonical/wire schema or deterministic validation change; included in receipt/task fingerprints.
-export const FISHERY_RULES_VERSION="fishery-rules-v5.1";
+export const FISHERY_RULES_VERSION="fishery-rules-v5.2";
 export const MAX_DRAFT_WIRE_BYTES=8192;
 export const quoteSchema = z.strictObject({ quote:z.string().min(1).max(1200), paragraph:z.int().positive(), page:z.int().positive().nullable() });
 const dateFact = z.strictObject({ date:dateSchema, evidence:z.array(quoteSchema).max(4) }).superRefine((v,ctx)=>{
@@ -96,7 +96,13 @@ export function validateFisheryDraft(input:DraftInput,value:unknown) {
     if(fact.role==="page_publisher"&&!fact.evidence.some(a=>/(?:发布机构|发布单位|信息发布|Publisher)\s*[:：]/i.test(a.quote))) throw new Error("Page publisher role requires explicit page-publisher labeling; policy issuers are different");
   }
   if(result.eventStatus.value==="planned"&&!result.eventStatus.evidence.some(a=>/(?:计划|拟|将|定于|planned|scheduled|will (?:be|hold|take))/i.test(a.quote))) throw new Error("Planned event status lacks explicit planning evidence");
-  if(result.eventStatus.value==="reported_occurred"&&(!result.eventStatus.evidence.some(a=>/(?:举行|召开|已发生|完成|departed|was held|took place|occurred)/i.test(a.quote))||result.eventStatus.evidence.some(a=>/(?:计划|拟|将(?:于|在|举行|召开|开展|进行|发生)|定于|取消|延期|推迟|中止|暂停|不(?:再|会)?(?:举行|召开|发生|完成)|未(?:曾|能)?(?:举行|召开|发生|完成)|没有|并非|尚未|若|如果|如未|除非|条件|planned|scheduled|will (?:be|hold|take)|not (?:held|completed)|did not|cancelled|canceled|postponed|if |unless)/i.test(a.quote)))) throw new Error("Reported occurrence needs explicit occurrence evidence, not a plan or elapsed date");
+  // Scope negation across intervening modifiers in each complete bound quote. This deliberately errs toward unknown,
+  // including mixed events or unrelated caveats in one sentence; it is not a complete natural-language inference engine.
+  const occurrenceCaveat=(quote:string)=>/(?:计划|拟|将[^。！？\n]*(?:举行|召开|发生|完成)|定于|取消|延期|推迟|中止|暂停|若|如果|如未|如有|除非|条件)/i.test(quote)
+    ||/(?:未|没有|并非|不曾|不是|不能|不会|不再|不予|不)[^。！？\n]*(?:举行|召开|发生|完成)/.test(quote)
+    ||/\b(?:planned|scheduled|will|cancelled|canceled|postponed|if|unless|conditional|provided that|subject to)\b/i.test(quote)
+    ||/\b(?:never|not|no|without|didn't|wasn't|weren't|hasn't|hadn't|cannot|can't)\b[^\n]*\b(?:held|hold|take|took|taken|place|occur(?:red)?|complet(?:e|ed)|depart(?:ed)?)\b/i.test(quote);
+  if(result.eventStatus.value==="reported_occurred"&&(!result.eventStatus.evidence.some(a=>/(?:举行|召开|已发生|完成|departed|was held|took place|occurred)/i.test(a.quote))||result.eventStatus.evidence.some(a=>occurrenceCaveat(a.quote)))) throw new Error("Reported occurrence needs explicit occurrence evidence, not a plan or elapsed date");
   // Compare complete numeric tokens, including signs, separators and domain units.
   for(const fact of result.summaryZh) {
     const available=new Set(fact.evidence.flatMap(a=>numericClaims(a.quote)));

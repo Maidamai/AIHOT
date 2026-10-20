@@ -66,3 +66,8 @@ export function catalogSource(input:EvidenceInput,catalog:EvidenceCatalog) {
   // Full source exactly once; index points into it using UTF-16 code-unit offsets. Pages are intervals, never another full-text copy.
   return {body:input.body,offsetUnit:"UTF-16",evidenceCatalog:{...evidenceBinding(catalog),spans:catalog.spans.map(({quote,...index})=>index)},paragraphs:sourceParagraphs(input.body).map(({text,...index})=>index),pages:catalog.pages};
 }
+
+export function assertSavedEvidenceArtifact(input:EvidenceInput,artifact:{evidenceCatalog?:ReturnType<typeof evidenceBinding>;promptVersion?:string;schemaVersion?:string},expected:{promptVersion:string;schemaVersion:string}) {
+  if(artifact.promptVersion!==expected.promptVersion||artifact.schemaVersion!==expected.schemaVersion) throw new Error("Saved artifact prompt/schema version changed; preserve the old attempt and do not automatically resend");
+  return assertEvidenceBinding(input,artifact.evidenceCatalog!);
+}

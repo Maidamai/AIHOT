@@ -2,9 +2,9 @@
 import {parseArgs} from "node:util";
 import {TRIAL,installTrialTransport,trialCapacity,trialUsage} from "../backend/trial-transport.ts";
 import {buildFisheryDraftRequest,validateFisheryDraft} from "../backend/ai-draft.ts";
-import {reviewFisheryDraft,assertFisheryPairFits} from "../backend/ai-review.ts";
+import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {readBatch,verifyBatchItem} from "../backend/column-batches.ts";
-import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding} from "../backend/evidence.ts";
+import {buildEvidenceCatalog,evidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
 import {sha256} from "../backend/source-adapters.ts";
 function assertReusable(previous:{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>},options:{attemptTag?:string;promptVersion:string;system:string;user:unknown;temperature?:number;maxTokens?:number}) {
   if(!["received","completed"].includes(previous.status)) throw new Error(`Existing ${previous.status} receipt ${previous.id}; no blind retry`);
@@ -80,8 +80,8 @@ try {
         request.attemptTag=`fishery-trial:${values.attempt}:generation`;
         request.system+="\n本轮输出简短JSON：摘要最多2句，每句只陈述一条有完整所附引证支持的具体事实，允许每句最多2引句，每条证据仅选择完整目录ID，地点最多4条。不确定就保留未知。";
         request.promptVersion=`${request.promptVersion}:trial:${sha256(request.system)}`;
-        const [saved]=await sql<{value:{draft:unknown;bodySha256:string;evidenceCatalog:ReturnType<typeof evidenceBinding>}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
-        if(saved) assertEvidenceBinding(input,saved.value.evidenceCatalog);
+        const [saved]=await sql<{value:{draft:unknown;bodySha256:string;promptVersion:string;schemaVersion:string;evidenceCatalog:ReturnType<typeof evidenceBinding>}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
+        if(saved) assertSavedEvidenceArtifact(input,saved.value,{promptVersion:request.promptVersion,schemaVersion:"fishery-draft-wire-v5"});
         let draft=saved?validateFisheryDraft(input,saved.value.draft):undefined;
         if(saved&&saved.value.bodySha256!==input.bodySha256) throw new Error("Attempt source changed; use a new explicit attempt identity");
         const [previous]=!draft?await sql<{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>}[]>`SELECT id,status,logical_key,model,request FROM receipts WHERE subject=${request.subject} AND purpose='fishery_draft' ORDER BY id DESC LIMIT 1`:[];
@@ -104,7 +104,11 @@ try {
         if(values.stage!=="generation") {
           const reviewKey=sourceKey+".review."+(values["review-attempt"]??values.attempt);
           if(!draft) throw new Error("Review stage requires a saved successful generation in this attempt");
-          if((await sql`SELECT 1 FROM settings WHERE key=${reviewKey}`).length) {console.log(JSON.stringify({sourceUrl:item.url,stage:"review",status:"reused_saved_review"}));continue;}
+          const [savedReview]=await sql<{value:Parameters<typeof assertSavedEvidenceArtifact>[1]}[]>`SELECT value FROM settings WHERE key=${reviewKey}`;
+          if(savedReview) {
+            assertSavedEvidenceArtifact(input,savedReview.value,{promptVersion:buildFisheryReviewRequest(input,draft,"default").promptVersion,schemaVersion:"fishery-review-wire-v3"});
+            console.log(JSON.stringify({sourceUrl:item.url,stage:"review",status:"reused_saved_review"}));continue;
+          }
           const review=await reviewFisheryDraft(input,draft,"default",async options=>{
             options.subject+=`:attempt:${values.attempt}:review:${values["review-attempt"]??values.attempt}`;
             options.attemptTag=`fishery-trial:${values.attempt}:review:${values["review-attempt"]??values.attempt}`;
