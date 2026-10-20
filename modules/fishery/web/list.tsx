@@ -30,12 +30,13 @@ export default function Materials({ loaderData: data }: ComponentProps<typeof lo
       <Stat label="已撤回" value={data.counts.withdrawn} />
     </div>
     <details className="mb-5 rounded-panel bg-surface p-4 ring-1 ring-line">
-      <summary className="cursor-pointer text-[14px] font-semibold text-ink">来源与本页获取记录 · {sources.length}</summary>
+      <summary className="cursor-pointer text-[14px] font-semibold text-ink">来源最近归档获取状态 · {sources.length}</summary>
+      <p className="mt-3 text-[12px] text-ink-3">汇总当前素材范围的已导入获取记录，不受本页分页或筛选影响；不代表连续健康监控或事实可靠。未导入的获取失败和批次错误请查看<Link to="/admin/fishery/collect" className="text-accent">采集批次</Link>。</p>
       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{sources.map(s => {
-        const capture = data.rows.filter(r => r.sourceId === s.id).map(r => r.latest?.payload.sourceCapture).filter(c => !!c).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0];
+        const capture = data.sourceCaptures[s.id];
         return <div key={s.id} className="min-w-0 rounded-control bg-bg-sunk/60 p-3 text-[12.5px]">
           <p className="break-words font-medium text-ink">{s.name}</p>
-          <p className="mt-1 text-ink-3">{capture ? `HTTP ${capture.httpStatus} · ${capture.parseStatus} · ${bj(capture.capturedAt, true)} 北京时间` : "尚无归档获取记录"}</p>
+          <p className="mt-1 text-ink-3">{capture ? <Link to={`/admin/fishery/${capture.documentId}`} className="text-accent">{`HTTP ${capture.httpStatus} · ${capture.parseStatus} · ${bj(capture.capturedAt, true)} 北京时间 · 观察v${capture.observationRevision}`}</Link> : "当前素材范围尚无已导入归档获取记录"}</p>
           <p className="mt-1 text-ink-3">{acquisitionLabel(capture?.acquisitionMode)} · 许可{s.profile.rightsStatus === "permitted" ? "有记录，仍须核对用途与期限" : "未确认/受限"}</p>
           <p className="mt-1 text-ink-4">{s.enabled ? "常规来源配置已启用" : "自动采集关闭"} · 许可版本 {s.revision}</p>
         </div>;

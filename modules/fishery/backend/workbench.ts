@@ -34,11 +34,16 @@ export async function workbench(query: { page?: number; q?: string; scope?: stri
     d.article_id ? availability[d.article_id]?.status : undefined));
   const scope = query.scope ?? "real", q = query.q?.trim().toLocaleLowerCase() ?? "";
   const scoped = all.filter(r => scope === "all" || r.testOnly === (scope === "test"));
+  const sourceCaptures:Workbench["sourceCaptures"]={};
+  for(const row of scoped) {
+    const capture=row.latest?.payload.sourceCapture,previous=sourceCaptures[row.sourceId];
+    if(capture&&(!previous||Date.parse(capture.capturedAt)>Date.parse(previous.capturedAt))) sourceCaptures[row.sourceId]={documentId:row.id,observationRevision:row.latest!.revision,capturedAt:capture.capturedAt,httpStatus:capture.httpStatus,parseStatus:capture.parseStatus,acquisitionMode:capture.acquisitionMode};
+  }
   const counts: Workbench["counts"] = { pending:0, failed:0, unverified:0, stale:0, rejected:0, approved:0, withdrawn:0 };
   for (const row of scoped) counts[row.state]++;
   const filtered = scoped.filter(r => (!query.state || r.state === query.state) && (!q || [r.title,r.issuer,r.source.name,r.canonicalUrl,r.documentNumber].join(" ").toLocaleLowerCase().includes(q)));
   const limit = 25, page = Math.min(Math.max(1,query.page ?? 1),Math.max(1,Math.ceil(filtered.length/limit)));
-  return { limit, page, total:filtered.length, counts, sources: registered, scopeCounts: { real:all.filter(r=>!r.testOnly).length,test:all.filter(r=>r.testOnly).length,all:all.length }, rows:filtered.slice((page-1)*limit,page*limit) };
+  return { limit, page, total:filtered.length, counts, sourceCaptures, sources: registered, scopeCounts: { real:all.filter(r=>!r.testOnly).length,test:all.filter(r=>r.testOnly).length,all:all.length }, rows:filtered.slice((page-1)*limit,page*limit) };
 }
 
 export async function materialDetail(id: string): Promise<MaterialDetail> {
