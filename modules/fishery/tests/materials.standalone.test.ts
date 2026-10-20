@@ -503,7 +503,7 @@ test("numeric checks preserve signs, thousands separators and opaque domain unit
 
 test("full-source generation and bounded review envelopes are checked before any send",()=>{
   const body="--- Page 1 ---\n"+"International fisheries governance full source evidence. ".repeat(150),input={documentId:"full-pdf",observationRevision:1,body,bodySha256:sha256(body),language:"en",pages:[{page:1,text:body}]};
-  const sizes=assertFisheryPairFits(input);assert.ok(sizes.generationBytes<48000);assert.ok(sizes.reviewEnvelopeBytes<48000);assert.equal(sizes.maxWireBytes,48000);
-  const oversized="Complete source text. ".repeat(2000);
+  const sizes=assertFisheryPairFits(input);assert.ok(sizes.generationBytes<96000);assert.ok(sizes.reviewEnvelopeBytes<96000);assert.equal(sizes.maxWireBytes,96000);
+  const oversized="完整原文。".repeat(7000);
   assert.throws(()=>assertFisheryPairFits({...input,body:oversized,bodySha256:sha256(oversized),pages:[]}),/zero-call manual/);
 });
