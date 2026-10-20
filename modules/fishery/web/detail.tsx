@@ -46,7 +46,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
           ["原始URL", <a className="break-all text-accent" href={d.canonicalUrl} target="_blank" rel="noreferrer">{d.canonicalUrl}</a>],
           ["发布机构", d.issuer], ["文号", d.documentNumber ?? "未知"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],
           ["获取时间", c ? `${bj(c.capturedAt, true)} 北京时间` : "未知"], ["发布日期", o ? dateLabel(o.dates.published) : "未知"],
-          ["事件日期", "未记录，不用抓取或发布日期代替"], ["通过日期", o ? dateLabel(o.dates.adopted) : "未知"],
+          ["事件日期", o?.dates.event ? dateLabel(o.dates.event) : "未知，不用抓取或发布日期代替"], ["通过日期", o ? dateLabel(o.dates.adopted) : "未知"],
           ["生效日期", o ? dateLabel(o.dates.effectiveFrom) : "未知"], ["终止日期", o ? dateLabel(o.dates.effectiveUntil) : "未知"],
           ["政策状态", ({ unknown: "未知", draft: "草案", adopted: "已通过", repealed: "已废止", superseded: "被替代" } as Record<string, string>)[o?.policyStatus ?? "unknown"]],
           ["适用区域", o?.scope.regions.join("、") || "未知"], ["鱼种", o?.scope.species.join("、") || "未知"], ["船旗 / 活动", `${o?.scope.flags.join("、") || "未知"} / ${o?.scope.activities.join("、") || "未知"}`],

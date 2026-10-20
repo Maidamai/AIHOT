@@ -1,6 +1,8 @@
 import { sql } from "@aihot/backend/db";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { createHash } from "node:crypto";
+import { config } from "@aihot/backend/config";
+import { readCapturedText } from "./column-batches.ts";
 import { documentHistory, listDocuments, listSources, NotFound } from "./store.ts";
 import { exportBlockers } from "./export.ts";
 import type { MaterialDetail, MaterialObservation, MaterialReview, MaterialRow, MaterialSource, Workbench } from "../ui-contracts.ts";
@@ -24,12 +26,19 @@ function rowOf(d: Record<string, any>, source: MaterialSource, latest: MaterialO
       latest, review ? { revision: review.revision, source_revision: review.sourceRevision, decision: review.decision } : null, linkedStatus, new Date()) };
 }
 
-export async function workbench(): Promise<Workbench> {
+export async function workbench(query: { page?: number; q?: string; scope?: string; state?: string } = {}): Promise<Workbench> {
   const [docs, registered] = await Promise.all([listDocuments(), sources()]);
   const availability = await itemAvailability(docs.flatMap(d => d.article_id ? [d.article_id] : []));
-  return { limit: 100, sources: registered, rows: docs.map(d => rowOf(d, registered.find(s => s.id === d.source_id)!,
+  const all = docs.map(d => rowOf(d, registered.find(s => s.id === d.source_id)!,
     d.revision ? observationOf(d) : null, d.decision ? reviewOf({ ...d, revision: d.reviewed_revision, source_revision: d.reviewed_source_revision, actor: d.reviewer }) : null,
-    d.article_id ? availability[d.article_id]?.status : undefined)) };
+    d.article_id ? availability[d.article_id]?.status : undefined));
+  const scope = query.scope ?? "real", q = query.q?.trim().toLocaleLowerCase() ?? "";
+  const scoped = all.filter(r => scope === "all" || r.testOnly === (scope === "test"));
+  const counts: Workbench["counts"] = { pending:0, failed:0, unverified:0, stale:0, rejected:0, approved:0, withdrawn:0 };
+  for (const row of scoped) counts[row.state]++;
+  const filtered = scoped.filter(r => (!query.state || r.state === query.state) && (!q || [r.title,r.issuer,r.source.name,r.canonicalUrl,r.documentNumber].join(" ").toLocaleLowerCase().includes(q)));
+  const limit = 25, page = Math.min(Math.max(1,query.page ?? 1),Math.max(1,Math.ceil(filtered.length/limit)));
+  return { limit, page, total:filtered.length, counts, sources: registered, scopeCounts: { real:all.filter(r=>!r.testOnly).length,test:all.filter(r=>r.testOnly).length,all:all.length }, rows:filtered.slice((page-1)*limit,page*limit) };
 }
 
 export async function materialDetail(id: string): Promise<MaterialDetail> {
@@ -42,8 +51,14 @@ export async function materialDetail(id: string): Promise<MaterialDetail> {
   // Only this document's privately archived evidence. Never render upstream HTML or expose its raw JSON.
   const [stored] = await sql<{ body_text: string | null; mode: string | null }[]>`SELECT body_text, raw->>'mode' AS mode FROM articles
     WHERE source_id = ${d.source_id} AND ((id = ${d.article_id} AND ${d.article_id}::text IS NOT NULL) OR raw->>'fisheryDocumentId' = ${id}) LIMIT 1`;
-  const body = stored?.body_text;
+  let body = stored?.body_text, mode = stored?.mode;
+  const capture = latest?.payload.sourceCapture;
+  if (capture?.archiveId) {
+    body = null; mode = capture.acquisitionMode;
+    // Never fall back to another version's text if the bound archive is missing or changed.
+    if (capture.bodySha256) try { body = await readCapturedText(config.dataDir,capture.archiveId,capture.bodySha256); } catch { body = null; }
+  }
   return { ...rowOf(d, source, latest, review, linkedStatus), observations, reviews, text: body ? {
-    body: body.slice(0, 65536), truncated: body.length > 65536, acquisitionMode: stored.mode,
+    body: body.slice(0, 65536), truncated: body.length > 65536, acquisitionMode: mode ?? null,
     hashMatches: createHash("sha256").update(body).digest("hex") === latest?.payload.sourceCapture?.bodySha256 } : null };
 }

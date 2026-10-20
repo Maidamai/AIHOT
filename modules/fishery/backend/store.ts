@@ -103,7 +103,42 @@ export async function listDocuments() {
     FROM fishery_documents d JOIN fishery_sources s ON s.source_id = d.source_id
     LEFT JOIN LATERAL (SELECT * FROM fishery_observations WHERE document_id = d.id ORDER BY revision DESC LIMIT 1) o ON true
     LEFT JOIN LATERAL (SELECT * FROM fishery_reviews WHERE document_id = d.id ORDER BY id DESC LIMIT 1) r ON true
-    ORDER BY coalesce(o.observed_at, d.created_at) DESC, d.id DESC LIMIT 100`;
+    ORDER BY coalesce(o.observed_at, d.created_at) DESC, d.id DESC`;
+}
+
+// Idempotency compares the latest evidence, not any historic hash (A → B → A is a new version).
+export function evidenceIdentity(input: unknown) {
+  const { expectedRevision: _, ...payload } = observationSchema.parse(input);
+  const capture = payload.sourceCapture;
+  if (capture) { const { capturedAt: _time, archiveId: _archive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
+  return hash(payload);
+}
+export async function importCapturedMaterial(column: { id: string; name: string; issuer: string }, canonicalUrl: string, input: unknown, actor: string) {
+  const { expectedRevision: _, ...payload } = observationSchema.parse(input);
+  const sourceId = `fishery-column-${column.id}`;
+  return sql.begin(async tx => {
+    await tx`INSERT INTO sources (id,name,kind,enabled,participation_mode,site_fulltext,next_fetch_at)
+      VALUES (${sourceId},${column.name},'external',false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
+    // Lock the source to serialize imports of the same URL and preserve operator rights settings.
+    await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
+    if (!(await tx`SELECT 1 FROM fishery_sources WHERE source_id=${sourceId}`).length) {
+      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: column.issuer, healthNote: "手动官方栏目试采；自动采集关闭，转载权未知" });
+      await tx`INSERT INTO fishery_sources(source_id,revision,profile) VALUES (${sourceId},1,${tx.json(profile)})`;
+      await audit(actor,"fishery.source",`source:${sourceId}`,"Manual batch registration",null,{ revision:1, profile },{db:tx});
+    }
+    let [doc] = await tx`SELECT * FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`;
+    if (!doc) {
+      [doc] = await tx`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES (${randomUUID()},${sourceId},${column.issuer},${canonicalUrl}) RETURNING *`;
+      await audit(actor,"fishery.document",`fishery:${doc!.id}`,null,null,doc!,{db:tx});
+    }
+    if (doc!.withdrawn_reason) throw new Conflict("Document withdrawn; batch cannot restore it");
+    const [previous] = await tx`SELECT revision,payload FROM fishery_observations WHERE document_id=${doc!.id} ORDER BY revision DESC LIMIT 1`;
+    if (previous && evidenceIdentity({ ...previous.payload, expectedRevision:0 }) === evidenceIdentity({ ...payload, expectedRevision:0 })) return { id:doc!.id as string, revision:previous.revision as number, unchanged:true };
+    const revision = (previous?.revision ?? 0) + 1;
+    await tx`INSERT INTO fishery_observations(document_id,revision,actor,content_hash,payload) VALUES (${doc!.id},${revision},${actor},${hash(payload)},${tx.json(payload)})`;
+    await audit(actor,"fishery.observe",`fishery:${doc!.id}`,"Manual captured batch; unreviewed",{revision:previous?.revision??0},{revision,contentHash:hash(payload)},{db:tx});
+    return { id:doc!.id as string, revision, unchanged:false };
+  });
 }
 export async function documentHistory(id: string) {
   const [document] = await sql`SELECT * FROM fishery_documents WHERE id = ${id}`;

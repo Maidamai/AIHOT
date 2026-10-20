@@ -9,29 +9,28 @@ import { acquisitionLabel, noStore, StateBadge, TrialNotice, useFreshMaterial } 
 
 export const headers = noStore;
 export const meta: MetaFunction = () => [{ title: `渔业素材 · ${SITE.name} 后台` }];
-export async function loader({ request }: LoaderArgs) { return adminGet<Workbench>(request, "/api/admin/fishery/workbench"); }
+export async function loader({ request }: LoaderArgs) { return adminGet<Workbench>(request, `/api/admin/fishery/workbench${new URL(request.url).search}`); }
 
 export default function Materials({ loaderData: data }: ComponentProps<typeof loader>) {
   const [params] = useSearchParams(), refresh = useFreshMaterial();
-  const scope = params.get("scope") ?? "real", state = params.get("state") ?? "", q = (params.get("q") ?? "").trim().toLocaleLowerCase();
-  const scoped = data.rows.filter(r => scope === "all" || r.testOnly === (scope === "test"));
-  const rows = scoped.filter(r => (!state || r.state === state) && (!q || [r.title, r.issuer, r.source.name, r.canonicalUrl, r.documentNumber].join(" ").toLocaleLowerCase().includes(q)));
+  const scope = params.get("scope") ?? "real", state = params.get("state") ?? "", rows = data.rows;
+  const pageLink = (page: number) => { const p = new URLSearchParams(params); p.set("page",String(page)); return `?${p}`; };
   const sources = data.sources.filter(s => scope === "all" || s.testOnly === (scope === "test"));
   return <AdminPage title="渔业素材" subtitle="先核对原始证据，再记录审核。导出始终检查最新版本、来源许可与撤回状态。"
-    actions={<Button busy={refresh.state === "loading"} onClick={() => refresh.revalidate()}>重新核对</Button>}>
+    actions={<><Link to="/admin/fishery/collect" className="text-[13px] text-accent">采集批次</Link><Button busy={refresh.state === "loading"} onClick={() => refresh.revalidate()}>重新核对</Button></>}>
     <TrialNotice />
     <nav aria-label="素材范围" className="mb-5 flex flex-wrap gap-2">
       {[["real", "真实素材"], ["test", "测试演练"], ["all", "全部"]].map(([value, label]) => <Link key={value} to={`?${new URLSearchParams({ scope: value })}`}
-        aria-current={scope === value ? "page" : undefined} className={`rounded-control px-3 py-2 text-[13px] ${scope === value ? "bg-ink text-bg" : "bg-surface text-ink-2 ring-1 ring-line"}`}>{label} · {data.rows.filter(r => value === "all" || r.testOnly === (value === "test")).length}</Link>)}
+        aria-current={scope === value ? "page" : undefined} className={`rounded-control px-3 py-2 text-[13px] ${scope === value ? "bg-ink text-bg" : "bg-surface text-ink-2 ring-1 ring-line"}`}>{label} · {data.scopeCounts[value as keyof typeof data.scopeCounts]}</Link>)}
     </nav>
     <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
-      <Stat label="待审核" value={scoped.filter(r => r.state === "pending").length} />
-      <Stat label="获取失败 / 待核验" value={scoped.filter(r => ["failed", "unverified"].includes(r.state)).length} tone="warn" />
-      <Stat label="审核已失效" value={scoped.filter(r => r.state === "stale").length} tone="warn" />
-      <Stat label="已撤回" value={scoped.filter(r => r.state === "withdrawn").length} />
+      <Stat label="待审核" value={data.counts.pending} />
+      <Stat label="获取失败 / 待核验" value={data.counts.failed+data.counts.unverified} tone="warn" />
+      <Stat label="审核已失效" value={data.counts.stale} tone="warn" />
+      <Stat label="已撤回" value={data.counts.withdrawn} />
     </div>
     <details className="mb-5 rounded-panel bg-surface p-4 ring-1 ring-line">
-      <summary className="cursor-pointer text-[14px] font-semibold text-ink">来源与最近获取 · {sources.length}</summary>
+      <summary className="cursor-pointer text-[14px] font-semibold text-ink">来源与本页获取记录 · {sources.length}</summary>
       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{sources.map(s => {
         const capture = data.rows.filter(r => r.sourceId === s.id).map(r => r.latest?.payload.sourceCapture).filter(c => !!c).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0];
         return <div key={s.id} className="min-w-0 rounded-control bg-bg-sunk/60 p-3 text-[12.5px]">
@@ -48,7 +47,7 @@ export default function Materials({ loaderData: data }: ComponentProps<typeof lo
       <Select key={state} name="state" defaultValue={state} aria-label="素材状态"><option value="">所有状态</option>{Object.entries(MATERIAL_STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>
       <Button type="submit" tone="primary">筛选素材</Button>
     </Form>
-    <Card pad={false} title={`材料列表 · ${rows.length} 条`} right={<span>最近 {data.limit} 条</span>}>
+    <Card pad={false} title={`材料列表 · 共 ${data.total} 条`} right={<span>第 {data.page} 页 · 每页 {data.limit} 条</span>}>
       {rows.length ? <ul className="divide-y divide-line">{rows.map(row => <li key={row.id} className="px-4 py-4 hover:bg-bg-sunk/40">
         <div className="flex flex-wrap items-start justify-between gap-2"><Link to={`/admin/fishery/${row.id}`} className="min-w-0 flex-1 break-words text-[14px] font-medium text-ink hover:text-accent">{row.title}</Link><StateBadge row={row} /></div>
         <div className="mt-2 flex flex-wrap gap-1.5">{row.testOnly && <Badge tone="warn">合成许可 / 测试审批</Badge>}<Badge>观察 v{row.latest?.revision ?? 0} · 许可 v{row.source.revision}</Badge></div>
@@ -56,5 +55,6 @@ export default function Materials({ loaderData: data }: ComponentProps<typeof lo
         <p className="mt-1 break-words text-[12px] text-ink-4">{row.blockers.length ? `不可导出：${row.blockers.map(b => b.message).join("；")}` : "可申请手动导出；提交时再次核对后端门禁"}</p>
       </li>)}</ul> : <Empty>当前条件下没有素材。调整关键词、状态或素材范围。</Empty>}
     </Card>
+    <nav aria-label="素材分页" className="mt-4 flex justify-between text-[13px] text-accent">{data.page>1?<Link to={pageLink(data.page-1)}>上一页</Link>:<span />}{data.page*data.limit<data.total&&<Link to={pageLink(data.page+1)}>下一页</Link>}</nav>
   </AdminPage>;
 }

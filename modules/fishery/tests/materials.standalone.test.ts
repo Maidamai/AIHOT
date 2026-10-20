@@ -5,8 +5,95 @@ import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
 import { observationFixture, sourceFixture, unknownDate } from "./fixtures.ts";
 import { extractPdf } from "../backend/pdf-text.ts";
-import { readFile, access } from "node:fs/promises";
+import { readFile, access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence, titlePriority } from "../backend/official-columns.ts";
+import { collectColumns, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
+import { evidenceIdentity } from "../backend/store.ts";
+import { buildFisheryDraftRequest, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
 import { createHash } from "node:crypto";
+
+const columnUrl = "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202605/t20260519_7149775.htm";
+function columnHtml(body="明确推进远洋渔业和南极磷虾产业合规发展。".repeat(4),date="2026-05-20 08:29") {
+  return Buffer.from(`<meta name="ArticleTitle" content="合成远洋渔业材料"><meta name="PubDate" content="${date}"><h1>合成远洋渔业材料</h1><div id="detailCont"><div class="TRS_Editor"><html><body><p>${body}</p></body></html></div><p>第二个正文块：公海作业合规证据。</p><script>NEVER_EXECUTE</script></div><aside>无关推荐</aside>`);
+}
+const columnReceipt=(body:Buffer,url=columnUrl,status=200)=>({requestedUrl:url,finalUrl:url,status,finishedAt:"2026-10-20T00:00:00Z",sha256:sha256(body)});
+
+test("official discovery reads present column identities and excludes domestic contract performance",()=>{
+  const html=`<ul class="xw-list-1 gl_list"><li><a href="${columnUrl}">远洋渔业新材料</a><span>2026-05-19</span></li><li><a href="${columnUrl.replace("7149775","9999999")}">近海养殖合同履约</a></li><li><a href="https://example.org/t20260519_1.htm">公海</a></li><li><a href="${columnUrl}">重复</a></li></ul>`;
+  const result=discoverColumn("fujian",html);
+  assert.equal(result.listed,2);assert.equal(result.rejected,1);assert.equal(result.candidates.length,1);
+  assert.equal(result.candidates[0]!.url,columnUrl);assert.equal(result.candidates[0]!.listDate,"2026-05-19");
+  assert.equal(titlePriority("近海养殖合同履约"),null);
+  const long="中性背景文字".repeat(150)+"公海渔业治理证据";
+  assert.ok(relevanceEvidence(long)[0]!.includes("公海渔业治理证据"));
+});
+
+test("official metadata outranks URL dates; nested blocks survive and missing dates remain unknown",()=>{
+  const raw=columnHtml(),result=prepareColumnArticle("fujian",columnReceipt(raw),raw,"archive_replay");
+  assert.equal(result.readyForReview,true);assert.equal(result.dates.published.value,"2026-05-20");
+  assert.equal(result.sourceCapture.publishedAt,"2026-05-20T00:29:00.000Z");assert.equal(result.dates.event.value,null);
+  assert.match(result.body!,/第二个正文块/);assert.doesNotMatch(result.body!,/NEVER_EXECUTE|无关推荐/);
+  assert.equal(result.sourceCapture.acquisitionMode,"archive_replay");
+  for(const date of ["","2026-02-30 08:29"]) {
+    const bytes=columnHtml(undefined,date),r=prepareColumnArticle("fujian",columnReceipt(bytes),bytes);
+    assert.equal(r.dates.published.value,null);
+    if(date) assert.equal(r.readyForReview,false);
+  }
+  for(const [bytes,receipt] of [[raw,columnReceipt(raw,columnUrl,404)],[raw,{...columnReceipt(raw),sha256:"0".repeat(64)}],[raw,columnReceipt(raw,"https://hyyyj.fujian.gov.cn/other/t20260519_1.htm")],[Buffer.from([0xff]),columnReceipt(Buffer.from([0xff]))]] as const) {
+    assert.equal(prepareColumnArticle("fujian",receipt,bytes).readyForReview,false);
+  }
+  const empty=Buffer.from('<meta name="ArticleTitle" content="标题"><div id="detailCont"></div>');
+  assert.equal(prepareColumnArticle("fujian",columnReceipt(empty),empty).readyForReview,false);
+});
+
+test("manual batches archive current-list responses, expose failures and verify bound body hashes",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-batch-test-"));
+  const badUrl=columnUrl.replace("7149775","7149776"), raw=columnHtml(), called:string[]=[];
+  const fetch=async(url:string)=>{
+    called.push(url);if(url===badUrl) throw new Error("Synthetic upstream timeout");
+    const body=url.endsWith("robots.txt")?Buffer.from("not found"):url===COLUMNS.fujian.url?Buffer.from(`<ul class="xw-list-1 gl_list"><li><a href="${badUrl}">公海超时样例</a></li><li><a href="${columnUrl}">南极磷虾</a></li></ul>`):raw;
+    return {url,status:url.endsWith("robots.txt")?404:200,body,headers:{get:()=>"text/html"}};
+  };
+  try {
+    const b=await collectColumns({id:"synthetic-1",dataDir,columns:["fujian"],limit:1,fetch,wait:async()=>{}});
+    assert.equal(b.sources[0]!.listed,2);assert.deepEqual(b.items.map(i=>i.state),["failed","ready"]);
+    assert.match(b.items[0]!.error!,/timeout/);assert.equal(b.status,"complete");
+    const stored=await readBatch(dataDir,b.id);const item=stored.items[1]!;
+    assert.equal((await verifyBatchItem(dataDir,stored,item)).readyForReview,true);
+    assert.equal(await readCapturedText(dataDir,item.archiveId,item.prepared!.sourceCapture.bodySha256!),prepareColumnArticle("fujian",columnReceipt(raw),raw).body);
+    await writeFile(path.join(dataDir,"fishery-batches",b.id,"body",`${item.archiveId}.txt`),"tampered");
+    await assert.rejects(verifyBatchItem(dataDir,stored,item),/hash mismatch/);
+    await assert.rejects(collectColumns({id:b.id,dataDir,columns:["fujian"],limit:1,fetch,wait:async()=>{}}),/EEXIST/);
+    await assert.rejects(readBatch(dataDir,"../escape"));
+    const denied=await collectColumns({id:"synthetic-2",dataDir,columns:["fujian"],limit:1,fetch:async url=>({url,status:403,body:Buffer.from("denied"),headers:{get:()=>null}}),wait:async()=>{}});
+    assert.equal(denied.items.length,0);assert.match(denied.sources[0]!.error!,/policy inspection/);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("capture time and archive relocation do not change evidence, but latest-body changes do",()=>{
+  const raw=columnHtml(),r=prepareColumnArticle("fujian",columnReceipt(raw),raw);
+  const a={...observationFixture,rawSha256:r.sourceCapture.rawSha256,sourceCapture:r.sourceCapture};
+  const first=evidenceIdentity(a);
+  assert.equal(evidenceIdentity({...a,sourceCapture:{...r.sourceCapture,capturedAt:"2026-10-21T00:00:00Z",archiveId:"later_1234"}}),first);
+  const b={...a,sourceCapture:{...r.sourceCapture,bodySha256:"b".repeat(64)}};
+  assert.notEqual(evidenceIdentity(b),first);
+  assert.notEqual(evidenceIdentity(a),evidenceIdentity(b));
+});
+
+test("fishery AI mock yields only version-bound drafts; false anchors and Pending-as-effective fail",async()=>{
+  const body="Resolution status: Pending. Objection deadline is 18 November 2026.\nIndian Ocean meeting; vessels departed Xiamen port.", input={documentId:"synthetic",observationRevision:2,body,bodySha256:sha256(body),language:"en"};
+  const anchor={quote:"Resolution status: Pending.",paragraph:1,page:null};
+  const unknown={date:unknownDate,evidence:[]};
+  const output={relevance:{decision:"unknown",reason:"Needs original review",evidence:[]},summaryZh:[{sentence:"该决议仍待生效。",evidence:[anchor]}],dates:{published:unknown,event:unknown,adopted:unknown,effective:unknown,objectionDeadline:unknown},entryIntoForce:{value:"pending",evidence:[anchor]},locations:[],uncertainties:["No vessel registration evidence"]};
+  const result=await prepareFisheryDraft(input,"mock",async options=>{assert.equal(options.purpose,"fishery_draft");return {data:options.schema.parse(output),receiptId:123,reused:false,model:"mock",usage:null};});
+  assert.equal(result.status,"needs_review");assert.equal(result.observationRevision,2);assert.equal(result.bodySha256,input.bodySha256);
+  assert.throws(()=>validateFisheryDraft(input,{...output,summaryZh:[{sentence:"False",evidence:[{...anchor,quote:"In force"}]}]}),/continuous/);
+  assert.throws(()=>validateFisheryDraft(input,{...output,entryIntoForce:{value:"pending",evidence:[{...anchor,page:4}]}}),/page anchor/);
+  assert.throws(()=>validateFisheryDraft(input,{...output,dates:{...output.dates,effective:{date:{precision:"day",value:"2026-11-18"},evidence:[anchor]}}}),/Pending/);
+  assert.throws(()=>buildFisheryDraftRequest({...input,body:body+" changed"},"mock"),/changed source body/);
+});
 
 test("date precision never supplies missing days, times or legal applicability", () => {
   assert.deepEqual(dateSchema.parse(unknownDate), unknownDate);

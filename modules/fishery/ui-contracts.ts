@@ -15,7 +15,7 @@ export interface MaterialRow {
   articleId: string | null; withdrawnReason: string | null; source: MaterialSource; latest: MaterialObservation | null;
   review: MaterialReview | null; state: MaterialState; blockers: Blocker[]; testOnly: boolean;
 }
-export interface Workbench { rows: MaterialRow[]; sources: MaterialSource[]; limit: number; }
+export interface Workbench { rows: MaterialRow[]; sources: MaterialSource[]; limit: number; page: number; total: number; counts: Record<MaterialState, number>; scopeCounts: { real: number; test: number; all: number }; }
 export interface MaterialDetail extends MaterialRow {
   observations: MaterialObservation[]; reviews: MaterialReview[];
   text: { body: string; truncated: boolean; hashMatches: boolean; acquisitionMode: string | null } | null;

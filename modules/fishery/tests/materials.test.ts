@@ -11,10 +11,11 @@ import { stopBoss } from "@aihot/backend/jobs/queue";
 import { buildApp } from "../../../apps/api/src/app.ts";
 import fishery from "../server.ts";
 import { exportMaterial, materialMarkdown } from "../backend/export.ts";
-import { createDocument, documentHistory, hash, observe, registerSource, review, sourceHealth, withdraw } from "../backend/store.ts";
+import { createDocument, documentHistory, hash, importCapturedMaterial, observe, registerSource, review, sourceHealth, withdraw } from "../backend/store.ts";
 import { sourceFixture, observationFixture } from "./fixtures.ts";
 import { materialDetail } from "../backend/workbench.ts";
 import { sha256 } from "../backend/source-adapters.ts";
+import { workbench } from "../backend/workbench.ts";
 
 installModules([fishery]);
 const app = await buildApp();
@@ -31,6 +32,33 @@ async function fixture(options: { unknownRights?: boolean; articleId?: string; s
   return { id: String(doc.id), sourceId };
 }
 const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { revision, sourceRevision, decision: "approved", applicabilityReviewed: false, note: "Manual fixture review" }, "reviewer");
+
+test("captured imports are unreviewed, unchanged captures deduplicate and A→B→A invalidates review",async()=>{
+  const column={id:"synthetic-import",name:"Synthetic column",issuer:"Synthetic official issuer"};
+  const a={...observationFixture,sourceCapture:{adapter:"moa",sourceUrl:"https://example.org/import",capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:"a".repeat(64),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}};
+  const first=await importCapturedMaterial(column,"https://example.org/import",a,"tester");
+  assert.equal(first.revision,1);assert.equal((await materialDetail(first.id)).state,"pending");
+  const sources=await sql`SELECT s.enabled,s.site_fulltext,f.profile FROM sources s JOIN fishery_sources f ON f.source_id=s.id WHERE s.id='fishery-column-synthetic-import'`;
+  assert.equal(sources[0]!.enabled,false);assert.equal(sources[0]!.site_fulltext,false);assert.equal(sources[0]!.profile.rightsStatus,"unknown");
+  await approve(first.id);
+  const duplicate=await importCapturedMaterial(column,"https://example.org/import",{...a,sourceCapture:{...a.sourceCapture,capturedAt:"2026-10-21T00:00:00Z"}},"tester");
+  assert.equal(duplicate.unchanged,true);assert.equal((await materialDetail(first.id)).state,"approved");
+  const changed=await importCapturedMaterial(column,"https://example.org/import",{...a,sourceCapture:{...a.sourceCapture,bodySha256:"b".repeat(64)}},"tester");
+  assert.equal(changed.revision,2);assert.equal((await materialDetail(first.id)).state,"stale");
+  const back=await importCapturedMaterial(column,"https://example.org/import",a,"tester");
+  assert.equal(back.revision,3);assert.equal(back.unchanged,false);
+  assert.equal((await documentHistory(first.id)).reviews.length,1);
+  for(let i=0;i<28;i++) await importCapturedMaterial(column,`https://example.org/page-${i}`,{...a,title:`Unique pagination fixture ${i}`},"tester");
+  const page1=await workbench({q:"Unique pagination fixture",scope:"all",page:1}),page2=await workbench({q:"Unique pagination fixture",scope:"all",page:2});
+  assert.equal(page1.total,28);assert.equal(page1.rows.length,25);assert.equal(page2.rows.length,3);
+  assert.equal(new Set([...page1.rows,...page2.rows].map(r=>r.id)).size,28);
+  config.devAdmin=null;
+  assert.equal((await app.inject("/api/admin/fishery/batches")).statusCode,401);
+  assert.equal((await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic/import",payload:{}})).statusCode,401);
+  config.devAdmin={displayName:"Synthetic CSRF tester"};
+  assert.equal((await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic/import",payload:{}})).statusCode,403);
+  config.devAdmin=null;
+});
 
 test("isolated test exports keep the test-review warning in JSON, Markdown and their content hash", async () => {
   const environment = config.environmentName;

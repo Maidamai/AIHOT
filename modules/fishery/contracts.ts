@@ -54,7 +54,8 @@ export const policyContextSchema = z.strictObject({
 });
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
-  adapter: z.enum(["jinjiang", "iotc", "fuzhou"]), sourceUrl: linkSchema, capturedAt: instant,
+  adapter: z.enum(["jinjiang", "iotc", "fuzhou", "moa", "fujian"]), sourceUrl: linkSchema, capturedAt: instant,
+  archiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
   bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   parser: text.max(100), parseStatus: z.enum(["parsed", "missing", "failed", "unverified"]),
@@ -67,7 +68,7 @@ export const captureSchema = z.strictObject({
 export const observationSchema = z.strictObject({
   expectedRevision: z.int().nonnegative(), originalTitle: text.max(500), title: text.max(500),
   summaryZh: text.max(4000), language: text.max(30), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  dates: z.strictObject({ published: dateSchema, adopted: dateSchema, effectiveFrom: dateSchema, effectiveUntil: dateSchema }),
+  dates: z.strictObject({ published: dateSchema, event: dateSchema.optional(), adopted: dateSchema, effectiveFrom: dateSchema, effectiveUntil: dateSchema }),
   policyStatus: z.enum(["unknown", "draft", "adopted", "repealed", "superseded"]),
   policyContext: policyContextSchema.optional(), sourceCapture: captureSchema.optional(),
   scope: z.strictObject({
