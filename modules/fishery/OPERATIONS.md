@@ -121,3 +121,9 @@ v5.2规则将reported_occurred的否定范围跨过“正式/如期/按期”等
 `GET /api/admin/fishery/reader`（可选category/page）及`/:documentId`复用正常管理员只读鉴权，无需GET伪加CSRF。唯一eligibleReaderItems集合同时决定列表、详情与非零分类计数：真实非测试、文书未撤回、最新权威任务、当前正文/观察/权利及prompt快照有效、关联article仍available、relevant且非空摘要、隔离核查及人工内部qualified。最新pending/rejected不会回退旧qualified。
 
 DTO仅有经当前人工快照绑定的原观察标题、短摘要/原文短引、来源安全链接、原始日期精度、原文年龄与核对标签。没有完整私有正文、审核note/actor、prompt/receipt/key/cost。版权unknown仍可内部阅读，不放宽公开或全文导出；所有读取不生成任务或模型调用。分类是对实际可读资料的规则分组，只返回非零类，不显示不存在的来源/文章统计。合成DB门禁测试不算真实业务稿件验收。
+
+行业登录预览位于 `/fishery` 与 `/fishery/:documentId`，后台导航有“行业阅读预览”入口。Web只经adminGet转发正常访问者Cookie读取上述管理员API，不读取Cookie值、不自建会话、不扩大既有登录return白名单。未登录照既有登录流程回后台，再从预览入口进入。没有修改站点根URL、正式品牌或条款。
+
+共享Web仅新增可选root.shell插口（modules.ts/root.tsx）；管理员chrome优先，匹配/fishery边界的正常页与错误页均使用模块导航，不显示旧AI分类、搜索、TabBar或“回到精选”。普通站点保持原导航与RSS链接。预览HTML、.data和错误响应均private/no-store/noindex，未知子路径也在同一正常鉴权边界内。历史日期及发布日期未知按原值展示，不把采集或核查时间改称新闻日期。
+
+UI浏览器验收使用显式合成API，不能当真实流水线验收。生产构建后可单独执行 `node --test --test-timeout=120000 modules/fishery/web/tests/reader.browser.ts`（配置已安装的PLAYWRIGHT_BROWSERS_PATH，不下载）。覆盖HTML/.data/404/503私有响应、正常登录重定向、默认站导航/RSS保持，以及320/393/1024列表、引证详情、错误与空态截图。测试不加入默认后端DB测试的浏览器依赖。

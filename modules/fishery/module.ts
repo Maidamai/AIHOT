@@ -1,6 +1,10 @@
 import { defineModule } from "@aihot/contracts/modules";
 
-export default defineModule({ name: "fishery", apiPaths: [/^\/api\/admin\/fishery(?:\/|$)/], adminPages: [
+export default defineModule({ name: "fishery", apiPaths: [/^\/api\/admin\/fishery(?:\/|$)/], pages:[
+  {path:"fishery",file:"web/reader-list.tsx",id:"fishery-reader"},
+  {path:"fishery/:id",file:"web/reader-item.tsx",id:"fishery-reader-item"},
+  {path:"fishery/*",file:"web/reader-unavailable.tsx",id:"fishery-reader-unavailable"},
+], adminPages: [
   { path: "admin/fishery", file: "web/list.tsx", id: "fishery-materials" },
   { path: "admin/fishery/collect", file: "web/collect.tsx", id: "fishery-batches" },
   { path: "admin/fishery/flows/:id", file: "web/flow.tsx", id: "fishery-flow" },
