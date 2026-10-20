@@ -343,7 +343,7 @@ test("an approved observation cannot export a failed source capture", async () =
 
 test("persistent fishery flow reuses successful stages, requires human snapshot decision and invalidates versions",async()=>{
   const body="合成公海远洋渔业证据材料。",url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_2.htm";
-  await collectColumns({id:"synthetic-flow",dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>({url:request,status:request.endsWith("robots.txt")?404:200,headers:{get:()=>"text/html"},body:Buffer.from(request.endsWith("robots.txt")?"missing":request===COLUMNS.moa.url?`<ul class="sj_e_tonzhi_list"><li><a href="${url}">合成公海材料</a></li></ul>`:`<meta name="ArticleTitle" content="合成公海材料"><div class="sj_arc_body"><div class="TRS_Editor"><p>${body.repeat(5)}</p></div></div>`)})});
+  await collectColumns({id:"synthetic-flow",dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>({url:request,status:request.endsWith("robots.txt")?404:200,headers:{get:()=>"text/html"},body:Buffer.from(request.endsWith("robots.txt")?"missing":request===COLUMNS.moa.url?`<ul class="sj_e_tonzhi_list"><li><a href="${url}">合成公海材料</a></li></ul>`:`<meta name="ArticleTitle" content="合成公海材料"><div class="sj_arc_body"><div class="TRS_Editor">${Array.from({length:5},()=>`<p>${body}</p>`).join("")}</div></div>`)})});
   config.devAdmin={displayName:"ISOLATED TEST FLOW"};
   let id:string;
   try {
@@ -357,10 +357,10 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
   let generated=0,reviewed=0,failReview=true;
   const invoke=async(options:any)=>{
     let data:any;
-    const evidence=[{quote:body,paragraph:1,page:null}],date={date:{precision:"unknown",value:null},evidence:[]};
-    if(options.purpose==="fishery_draft") {generated++;data={relevance:{decision:"relevant",reason:"test",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]};}
+    const evidence=["p1s1"],date={date:{precision:"unknown",value:null},evidence:[]};
+    if(options.purpose==="fishery_draft") {generated++;data={relevance:{decision:"relevant",reason:"test",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]};}
     else {reviewed++;if(failReview) throw new Error("Synthetic review failure");data={decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原句一致",evidence},{field:"relevance",verdict:"supported",reason:"原句明确公海远洋",evidence}]};}
-    return {data,receiptId:999999,model:"mock",reused:false,usage:null};
+    return {data:options.schema.parse(data),receiptId:999999,model:"mock",reused:false,usage:null};
   };
   const failed=await runFlow(id!,invoke);assert.equal(failed.status,"failed");assert.equal(failed.stage,"review");assert.ok(failed.draft);assert.equal(generated,1);
   await assert.rejects(runFlow(id!,invoke),/not queued/);
@@ -387,8 +387,8 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
 
 
 test("stage persistence failures resume the same received receipt; only explicit regeneration creates a new paid identity",async()=>{
-  const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=[{quote:body,paragraph:1,page:null}];
-  const output={relevance:{decision:"relevant",reason:"test",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],uncertainties:[]};
+  const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
+  const output={relevance:{decision:"relevant",reason:"test",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]};
   async function task(identity:string) {
     const f=await fixture({unknownRights:true});
     await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
@@ -445,7 +445,7 @@ test("stage persistence failures resume the same received receipt; only explicit
 test("manual processor only consumes explicit flows, persists blocks and failures, and never resends duplicate tasks",async()=>{
   const boss=await getBoss({schedule:false,supervise:false});
   await assert.rejects(getBoss({schedule:true}),/mode differs/);
-  const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=[{quote:body,paragraph:1,page:null}];
+  const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
   async function task(identity:string) {
     const f=await fixture({unknownRights:true});
     await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
@@ -462,7 +462,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
   let calls=0,fail=false,ineligible=false,emptySummary=false,hold:Promise<void>|undefined,releaseHold:(()=>void)|undefined;
   const invoke=async(options:any)=>{
     calls++;if(hold) await hold;if(fail) throw new Error("Synthetic model failure");
-    const data=options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"test",evidence},summaryZh:emptySummary?[]:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]}:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic original sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevant original",evidence}]};
+    const data=options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"test",evidence},summaryZh:emptySummary?[]:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]}:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic original sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevant original",evidence}]};
     if(ineligible&&options.purpose==="fishery_draft") data.relevance={decision:"unknown",reason:"Synthetic relevance unknown",evidence:[]};
     return {data:options.schema.parse(data),receiptId:999999,model:"mock",reused:false,usage:null};
   };
