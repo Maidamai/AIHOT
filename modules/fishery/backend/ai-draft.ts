@@ -31,7 +31,7 @@ export function buildFisheryDraftRequest(input:DraftInput,model:string):ChatJson
 分别记录发布日期、事件日期、通过日期、生效日期、异议截止日。Pending不是生效；不得把异议截止当生效日。日期和地区不确定保留unknown。
 分别记录发布机关、报道的船队属地、出发港、作业海域、会议地点、船旗登记；出发港不能推导船旗或船籍登记。印度洋不等于北太平洋。
 返回JSON：relevance{decision:relevant|irrelevant|unknown,reason,evidence}；summaryZh[{sentence,evidence}]；dates{published,event,adopted,effective,objectionDeadline}，各为{date:{precision:unknown|year|month|day,value:unknown时null否则ISO精度字符串},evidence}；entryIntoForce{value:unknown|pending|in_force,evidence}；locations[{role:issuer|fleet_origin_reported|departure_port|fishing_area|meeting_location|flag_registration,value,evidence}]；uncertainties[]。
-所有evidence项为{quote:连续原文,paragraph:从1起段号,page:提供页码或null}。无证据的日期必须unknown，其他事实留空并记录uncertainties。不得给审核通过、许可或发布决定。`;
+所有evidence字段必须是数组，例如[{quote:连续原文,paragraph:从1起段号,page:提供页码或null}]，无引句必须用空数组[]，不能用单个对象或null。无证据的日期必须unknown，其他事实留空并记录uncertainties。不得给审核通过、许可或发布决定。`;
   const paragraphs=input.body.split(/\n+/).filter(p=>p.trim());
   return {model,purpose:"fishery_draft",subject:`fishery:${input.documentId}:v${input.observationRevision}:${input.bodySha256}`,promptVersion:`fishery-draft-v1:${sha256(system)}`,system,
     user:JSON.stringify({language:input.language,paragraphs:paragraphs.map((text,i)=>({paragraph:i+1,text})),pages:input.pages??[]}),schema:fisheryDraftSchema,temperature:0,maxTokens:4000};
