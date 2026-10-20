@@ -5,7 +5,7 @@ import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
 import { observationFixture, sourceFixture, unknownDate } from "./fixtures.ts";
 import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
-import { readFile, access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { readFile, access, chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence, titlePriority } from "../backend/official-columns.ts";
@@ -210,6 +210,32 @@ test("manifest write failure preserves the previous complete JSON and leaves the
     assert.deepEqual((await readdir(root)).sort(),[".manifest.other-writer.tmp","body","manifest.json","raw"]);
     assert.equal(await readFile(path.join(root,".manifest.other-writer.tmp"),"utf8"),"preserve unrelated temporary evidence");
   } finally {await chmod(root,0o700).catch(()=>{});await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("manifest rename failure removes its written temporary file and preserves other evidence",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-manifest-rename-")),id="rename-blocked",root=path.join(batchRoot(dataDir),id),manifest=path.join(root,"manifest.json");
+  let previousManifest="";
+  try {
+    await assert.rejects(collectColumns({id,dataDir,columns:["fujian"],limit:1,wait:async()=>{},fetch:async url=>{
+      const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.fujian.url;
+      if(!robots&&!listing) {
+        previousManifest=await readFile(manifest,"utf8");
+        await rename(manifest,path.join(root,"previous-manifest.json"));
+        await mkdir(manifest);
+        await writeFile(path.join(manifest,"target-evidence.txt"),"preserve existing target evidence");
+        await writeFile(path.join(root,"other-writer.tmp"),"preserve unrelated temporary evidence");
+      }
+      return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(`<ul class="xw-list-1 gl_list"><li><a href="${columnUrl}">远洋渔业材料</a></li></ul>`):columnHtml(),headers:{get:()=>"text/html"}};
+    }}),(error:NodeJS.ErrnoException)=>error.syscall==="rename"&&["EISDIR","ENOTEMPTY","EEXIST"].includes(error.code??""));
+    assert.ok(previousManifest);assert.equal(await readFile(path.join(root,"previous-manifest.json"),"utf8"),previousManifest);
+    assert.equal(JSON.parse(previousManifest).status,"running");
+    assert.equal(await readFile(path.join(manifest,"target-evidence.txt"),"utf8"),"preserve existing target evidence");
+    assert.equal(await readFile(path.join(root,"other-writer.tmp"),"utf8"),"preserve unrelated temporary evidence");
+    assert.deepEqual((await readdir(root)).sort(),["body","manifest.json","other-writer.tmp","previous-manifest.json","raw"]);
+    assert.equal((await readdir(path.join(root,"body"))).length,1,"The article body was saved before manifest replacement failed");
+    assert.equal((await listBatches(dataDir))[0]!.status,"unreadable");
+    await assert.rejects(readBatch(dataDir,id));
+  } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
 test("capture time and archive relocation do not change evidence, but latest-body changes do",()=>{
