@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
-import { getBoss, stopBoss, enqueueOn } from "@aihot/backend/jobs/queue";
+import { getBoss, stopBoss, enqueueOn, shutdownSignal } from "@aihot/backend/jobs/queue";
 import { acquireProcessingLease, assertProcessingLease, type ProcessingLease } from "../backend/processing-lease.ts";
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { authorizationKey, assertFisheryCapacity, withFisheryAuthorization } from "../backend/authorization.ts";
@@ -115,4 +115,46 @@ test("a response already sent can settle after lease loss, but the old owner can
     }));
     assert.equal(sends,1);assert.deepEqual((await entries()).map(e=>e.state),["received"]);
   } finally {await lease.release();}
+});
+
+
+test("active HTTP lease loss drains consumer release and shutdown until the deferred response settles",async t=>{
+  configure(t);assert.match(new URL(config.databaseUrl).pathname,/_(test|ci)$/);
+  if(!(await sql`SELECT 1 FROM settings WHERE key=${authorizationKey}`).length) await seedTestLedger();
+  const before=await entries(),boss=await getBoss({schedule:false,supervise:false});
+  assert.ok(before.every(e=>e.state==="received"));assert.equal(shutdownSignal.signal.aborted,false);
+  const sent=Promise.withResolvers<void>(),reply=Promise.withResolvers<Response>(),lost=Promise.withResolvers<void>();
+  let sends=0,claims=0,aborted=false,releaseReturned=false,shuttingDown:Promise<void>|undefined;
+  t.mock.method(globalThis,"fetch",async(_input:unknown,options?:RequestInit)=>{
+    sends++;assert.equal(options?.signal,shutdownSignal.signal);
+    const abort=()=>{aborted=true;reply.reject(new Error("An already-sent HTTP request was aborted during drain"));};
+    options!.signal!.addEventListener("abort",abort,{once:true});sent.resolve();
+    try {return await reply.promise;} finally {options!.signal!.removeEventListener("abort",abort);}
+  });
+  const release=await registerManualFlowConsumer(boss,async()=>{
+    claims++;
+    await withFisheryAuthorization(async()=>{
+      assert.equal((await fetch(TRIAL.endpoint,{...wire,signal:shutdownSignal.signal})).status,200);
+      await assert.rejects(fetch(TRIAL.endpoint,wire),/lease/);
+    });
+  },{watchIntervalMs:20,onLeaseLost:()=>{
+    lost.resolve();
+    shuttingDown=(async()=>{await release();releaseReturned=true;await stopBoss();})();
+  }});
+  try {
+    const activeId=await enqueueOn(flowQueue,{id:"active-http-deferred"});assert.ok(activeId);
+    await Promise.race([sent.promise,new Promise((_,reject)=>setTimeout(()=>reject(new Error("Mock HTTP was not sent")),5000))]);
+    const sessions=await sql`SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND application_name='fishery-processing-lease'`;
+    assert.equal(sessions.length,1);await terminateOwnLease({backendPid:sessions[0]!.pid});
+    await Promise.race([lost.promise,new Promise((_,reject)=>setTimeout(()=>reject(new Error("Active lease loss was not detected")),5000))]);
+    const queuedId=await enqueueOn(flowQueue,{id:"after-loss-must-stay-queued"});assert.ok(queuedId);
+    await new Promise(resolve=>setTimeout(resolve,50));
+    assert.equal(releaseReturned,false);assert.equal(aborted,false);assert.equal(shutdownSignal.signal.aborted,false);
+    assert.equal((await entries()).at(-1)!.state,"pending");
+    reply.resolve(response());await shuttingDown;
+    assert.equal(releaseReturned,true);assert.equal(aborted,false);assert.equal(shutdownSignal.signal.aborted,true);assert.equal(sends,1);assert.equal(claims,1);
+    const after=await entries();assert.equal(after.length,before.length+1);assert.deepEqual(after.slice(0,-1),before);assert.equal(after.at(-1)!.state,"received");
+    const jobs=await sql`SELECT id,state FROM pgboss.job WHERE id IN (${activeId},${queuedId})`;
+    assert.equal(jobs.find(j=>j.id===activeId)?.state,"completed");assert.equal(jobs.find(j=>j.id===queuedId)?.state,"created");
+  } finally {reply.resolve(response());await (shuttingDown??release().then(()=>stopBoss()));}
 });
