@@ -13,6 +13,8 @@ import fishery from "../server.ts";
 import { exportMaterial, materialMarkdown } from "../backend/export.ts";
 import { createDocument, documentHistory, hash, observe, registerSource, review, sourceHealth, withdraw } from "../backend/store.ts";
 import { sourceFixture, observationFixture } from "./fixtures.ts";
+import { materialDetail } from "../backend/workbench.ts";
+import { sha256 } from "../backend/source-adapters.ts";
 
 installModules([fishery]);
 const app = await buildApp();
@@ -42,6 +44,43 @@ test("isolated test exports keep the test-review warning in JSON, Markdown and t
     const { contentHash, ...payload } = bundle;
     assert.equal(contentHash, hash(payload));
   } finally { config.environmentName = environment; }
+});
+
+test("private workbench explains the same gates as export, separates explicit test clones and shows only matching archived text", async () => {
+  config.devAdmin = null;
+  assert.equal((await app.inject("/api/admin/fishery/workbench")).statusCode, 401);
+  const { id, sourceId } = await fixture({ unknownRights: true });
+  assert.equal((await app.inject(`/api/admin/fishery/documents/${id}/detail`)).statusCode, 401);
+  const body = "Synthetic archived plain text <script>not executable</script>";
+  const capture = { acquisitionMode: "live_capture", adapter: "jinjiang", sourceUrl: `https://example.org/${sourceId}`, capturedAt: "2026-10-20T00:00:00Z", httpStatus: 200,
+    rawSha256: observationFixture.rawSha256, bodySha256: sha256(body), parser: "Synthetic UI parser/v1", parseStatus: "parsed", attachmentSha256: null, conflicts: [] };
+  await observe(id, { ...observationFixture, expectedRevision: 1, sourceCapture: capture }, "tester");
+  await upsertMaterial({ sourceId, url: `https://example.org/${sourceId}`, title: "Synthetic archive", bodyText: body, bodyStatus: "ok", via: "unit-test", raw: { fisheryDocumentId: id, mode: "live_capture", htmlBase64: "do not expose raw JSON" } });
+  config.devAdmin = { displayName: "Synthetic workbench reviewer" };
+  const response = await app.inject(`/api/admin/fishery/documents/${id}/detail`);
+  assert.equal(response.statusCode, 200, response.body); assert.equal(response.headers["cache-control"], "no-store");
+  assert.equal(response.json().text.hashMatches, true); assert.equal(response.json().text.body, body);
+  assert.equal(response.body.includes("htmlBase64"), false); assert.equal(response.json().testOnly, false);
+  assert.deepEqual(response.json().blockers.map((b: { code: string }) => b.code), ["rights", "review"]);
+  await approve(id, 2);
+  assert.deepEqual((await materialDetail(id)).blockers.map(b => b.code), ["rights"]);
+  await registerSource(sourceId, { ...sourceFixture, expectedRevision: 1 }, "tester");
+  assert.equal((await materialDetail(id)).state, "stale");
+  await approve(id, 2, 2); assert.equal((await materialDetail(id)).blockers.length, 0);
+  await exportMaterial(id, 2, "tester", now);
+  const testDoc = await createDocument({ sourceId, issuer: "ISOLATED TEST workbench clone", canonicalUrl: `https://example.org/test-${count}` }, "tester");
+  await observe(testDoc.id, observationFixture, "tester");
+  assert.equal((await materialDetail(testDoc.id)).testOnly, true);
+  await observe(id, { ...observationFixture, expectedRevision: 2, sourceCapture: { ...capture, parser: "Synthetic UI parser/v2" } }, "tester");
+  assert.equal((await materialDetail(id)).state, "stale");
+  await assert.rejects(exportMaterial(id, 2, "tester", now), /latest observation/);
+  await withdraw(id, { expectedRevision: 3, reason: "Synthetic workbench withdrawal" }, "tester");
+  assert.equal((await materialDetail(id)).state, "withdrawn");
+  assert.ok((await materialDetail(id)).blockers.some(b => b.code === "withdrawn"));
+  const list = await app.inject("/api/admin/fishery/workbench");
+  assert.equal(list.statusCode, 200, list.body); assert.equal(list.headers["cache-control"], "no-store");
+  assert.ok(list.json().rows.some((r: { id: string; state: string }) => r.id === id && r.state === "withdrawn"));
+  config.devAdmin = null;
 });
 
 test("A→B→A and attachment-only replacements remain separate observations and invalidate approval", async () => {

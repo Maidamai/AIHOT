@@ -4,6 +4,7 @@ import { sendProblem } from "@aihot/api/http/respond";
 import { exportSchema, idSchema } from "./contracts.ts";
 import { createDocument, documentHistory, listDocuments, listSources, NotFound, observe, registerSource, review, sourceHealth, withdraw } from "./backend/store.ts";
 import { exportMaterial, materialMarkdown } from "./backend/export.ts";
+import { materialDetail, workbench } from "./backend/workbench.ts";
 
 const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin) => {
   try { return await handler(req, reply, admin); }
@@ -17,6 +18,8 @@ const param = (req: { params: unknown }) => idSchema.parse((req.params as Record
 export default defineServerModule({
   name: "fishery", sourceHealth,
   http(app) {
+    app.get("/api/admin/fishery/workbench", guarded(async () => workbench()));
+    app.get("/api/admin/fishery/documents/:id/detail", guarded(async req => materialDetail(param(req))));
     app.get("/api/admin/fishery/sources", guarded(async () => ({ rows: await listSources() })));
     app.put("/api/admin/fishery/sources/:id", guarded(async (req, _reply, admin) => registerSource(param(req), req.body, admin.name)));
     app.get("/api/admin/fishery/documents", guarded(async () => ({ rows: await listDocuments() })));

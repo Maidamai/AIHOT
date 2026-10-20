@@ -26,10 +26,12 @@ function receiptProblems(source: Adapter, receipt: ArchiveReceipt, raw: Buffer):
   ];
 }
 
-export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pdf?: { receipt: unknown; bytes: Buffer; parsed: PdfText }) {
+export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pdf?: { receipt: unknown; bytes: Buffer; parsed: PdfText }, acquisitionMode: "live_capture" | "archive_replay" = "archive_replay") {
   const receipt = archiveReceiptSchema.parse(input);
   const conflicts = receiptProblems(source, receipt, raw);
-  const warnings: string[] = ["Offline archive only; HTTP receipts are not remote signatures; human review and current rights are still required"];
+  const warnings: string[] = [acquisitionMode === "live_capture"
+    ? "Live HTTP acquisition receipt; extraction reads that archived response. A failed response is not article text. Receipts are not remote signatures; human review and current rights are still required"
+    : "Offline archive replay; no new network acquisition. HTTP receipts are not remote signatures; human review and current rights are still required"];
   let parseStatus: "parsed" | "missing" | "failed" | "unverified" = receipt.status === 200 ? "missing" : "failed";
   let title: string | null = null, body: string | null = null, publishedAt: string | null = null, publicationLiteral: string | null = null;
   let parser = "none", attachmentSha256: string | null = null;
@@ -119,7 +121,7 @@ export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pd
   } else if (raw.length > 6 * 1024 * 1024) { parseStatus = "unverified"; warnings.push("HTML exceeds offline size limit"); }
   if (conflicts.length) parseStatus = "unverified";
   const capture = captureSchema.parse({ adapter: source, sourceUrl: receipt.finalUrl, capturedAt: receipt.finishedAt, httpStatus: receipt.status,
-    rawSha256: sha256(raw), bodySha256: body ? sha256(body) : null, parser, parseStatus, attachmentSha256, attachmentUrl, attachmentHttpStatus, attachmentCapturedAt, attachmentPages, conflicts, publishedAt, publicationLiteral });
+    acquisitionMode, rawSha256: sha256(raw), bodySha256: body ? sha256(body) : null, parser, parseStatus, attachmentSha256, attachmentUrl, attachmentHttpStatus, attachmentCapturedAt, attachmentPages, conflicts, publishedAt, publicationLiteral });
   const readyForReview = parseStatus === "parsed" && conflicts.length === 0 && !!body && !!title;
   return { schemaVersion: "fishery-offline-capture/0.1", source, readyForReview, reviewState: "awaiting_human_review", title,
     dates: { published, adopted, effectiveFrom: unknown(), effectiveUntil: unknown() }, policyContext: context,

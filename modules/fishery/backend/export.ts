@@ -6,6 +6,35 @@ import { itemAvailability } from "@aihot/backend/publication/availability";
 import { publicSourceName } from "@aihot/backend/publication/rules";
 import { effectiveState, canExportSummary, type Observation, type SourceProfile } from "../contracts.ts";
 import { hash, lockDocument } from "./store.ts";
+import type { Blocker } from "../ui-contracts.ts";
+
+/** Read-only explanations and the export command use exactly the same eligibility checks. */
+export function exportBlockers(doc: { withdrawn_reason: string | null; article_id: string | null },
+  source: { revision: number; profile: SourceProfile; participation_mode: string },
+  observation: { revision: number; payload: Observation } | null,
+  review: { revision: number; source_revision: number; decision: string } | null,
+  linkedStatus: string | undefined, now: Date, requestedRevision = observation?.revision): Blocker[] {
+  const out: Blocker[] = [], add = (code: string, message: string) => out.push({ code, message });
+  const p = source.profile;
+  if (doc.withdrawn_reason) add("withdrawn", `材料已撤回：${doc.withdrawn_reason}`);
+  if (source.participation_mode !== "editorial") add("rights", "当前来源不参与编辑素材导出");
+  if (!canExportSummary(p, now.getTime())) add("rights", p.rightsStatus !== "permitted" ? `来源转载许可未确认（${p.rightsStatus}）`
+    : !p.allowedSummary || !p.allowedPublication ? "来源尚未允许摘要和对外发布用途"
+    : !p.rightsCheckedAt || Date.parse(p.rightsCheckedAt) > now.getTime() ? "来源许可核验时间未知或尚未到达" : "来源许可已到复核期限或缺少期限");
+  if (!observation || requestedRevision !== observation.revision || !review || review.decision !== "approved" ||
+      review.revision !== observation.revision || review.source_revision !== source.revision)
+    add("review", !review ? "当前版本尚未审核" : review.revision !== observation?.revision || review.source_revision !== source.revision
+      ? "材料或来源许可版本已变化，需要重新审核" : review.decision === "rejected" ? "当前版本已被拒绝" : "只能导出最新审核版本");
+  if (doc.article_id && linkedStatus !== "public" && linkedStatus !== "summary-only") add("linked", "关联文章已不在允许使用的公开范围");
+  if (observation) {
+    const c = observation.payload.sourceCapture;
+    if (c && (c.httpStatus !== 200 || c.parseStatus !== "parsed" || !c.bodySha256 || c.conflicts.length))
+      add("capture", c.httpStatus !== 200 ? `原文 HTTP ${c.httpStatus}，没有可核验正文` : c.conflicts.length ? `来源字段冲突：${c.conflicts.join("；")}` : `正文解析为 ${c.parseStatus}，缺少已核验文本`);
+    if (c?.adapter === "iotc" && (c.attachmentHttpStatus !== 200 || !c.attachmentSha256 || !c.attachmentUrl || !c.attachmentPages)) add("pdf", "IOTC附件获取或PDF页码证据不完整");
+    if (observation.payload.policyContext?.entryIntoForce === "pending" && observation.payload.dates.effectiveFrom.precision !== "unknown") add("date", "Pending异议截止日不能写成生效日");
+  }
+  return out;
+}
 
 /** Additional evidence gate; approval never turns a failed capture into reliable material. */
 export function assertCaptureExportable(o: Observation) {
@@ -28,16 +57,14 @@ export async function exportMaterial(id: string, revision: number, actor: string
       WHERE f.source_id = ${doc.source_id} FOR SHARE OF f`;
     const [observation] = await tx<{ revision: number; payload: Observation; content_hash: string; observed_at: Date }[]>`
       SELECT * FROM fishery_observations WHERE document_id = ${id} ORDER BY revision DESC LIMIT 1`;
-    const [review] = await tx`SELECT * FROM fishery_reviews WHERE document_id = ${id} ORDER BY id DESC LIMIT 1`;
+    const [review] = await tx<{ revision: number; source_revision: number; decision: string; applicability_reviewed: boolean; actor: string; reviewed_at: Date }[]>`SELECT * FROM fishery_reviews WHERE document_id = ${id} ORDER BY id DESC LIMIT 1`;
     const p = source.profile;
-    if (doc.withdrawn_reason || source.participation_mode !== "editorial" || !canExportSummary(p, now.getTime()))
-      throw new Conflict("Current rights or withdrawal prevent export");
-    if (!observation || revision !== observation.revision || !review || review.decision !== "approved" ||
-      review.revision !== revision || review.source_revision !== source.revision) throw new Conflict("Only the latest observation approved against current rights can be exported");
-    if (doc.article_id) {
-      const status = (await itemAvailability([doc.article_id]))[doc.article_id]?.status;
-      if (status !== "public" && status !== "summary-only") throw new Conflict("Linked article is no longer publicly available");
-    }
+    const linkedStatus = doc.article_id ? (await itemAvailability([doc.article_id]))[doc.article_id]?.status : undefined;
+    const blocked = exportBlockers({ withdrawn_reason: doc.withdrawn_reason, article_id: doc.article_id }, source, observation ?? null, review ?? null, linkedStatus, now, revision)[0];
+    const errors: Record<string, string> = { rights: "Current rights or withdrawal prevent export", withdrawn: "Current rights or withdrawal prevent export",
+      review: "Only the latest observation approved against current rights can be exported", linked: "Linked article is no longer publicly available",
+      capture: "Capture failed, unverified, missing body or conflicting fields prevent export", pdf: "Missing or failed PDF evidence prevents export", date: "Pending entry into force cannot be exported as an effective date" };
+    if (blocked) throw new Conflict(`${errors[blocked.code]}：${blocked.message}`);
     const o = observation.payload;
     assertCaptureExportable(o);
     const payload = {

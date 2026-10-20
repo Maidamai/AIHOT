@@ -49,7 +49,7 @@ if (source === "iotc") {
 const page = await get(urls[source], "page", 6 * 1024 * 1024);
 if (!page) { console.log(JSON.stringify({ source, readyForReview: false, reviewState: "acquisition_failed", output })); process.exitCode = 2; }
 else {
-  const args = [path.join(import.meta.dirname, "prepare-official.ts"), "--source", source, "--receipt", path.join(output, "page.receipt.json"), "--html", path.join(output, "page.bin"), "--output", path.join(output, "prepared")];
+  const args = [path.join(import.meta.dirname, "prepare-official.ts"), "--source", source, "--receipt", path.join(output, "page.receipt.json"), "--html", path.join(output, "page.bin"), "--output", path.join(output, "prepared"), "--capture-mode", "live_capture"];
   if (source === "iotc" && page.receipt.status === 200) {
     const $ = cheerio.load(page.response.text());
     const href = $("#content .node-cmm a[href]").toArray().map(e => new URL($(e).attr("href")!, page.receipt.finalUrl).href)

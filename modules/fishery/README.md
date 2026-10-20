@@ -46,7 +46,7 @@ DATABASE_URL=postgres://aihot_test@127.0.0.1:55437/fishery_mvp_test \
 
 ## 后续边界
 
-仍未实现：去重前在线抓取hook、通用HTTP失败/304持久化观察、常驻增量附件采集、生产环境PDF解析与OCR、政策关系/条款证据、完整法律适用性审核、校准后的渔业新闻taxonomy/提示词、生产源批量入库、GUI、机器只读认证、固定清单snapshot/changes/tombstone、Easel拉取及下游处置台账、传播后撤回、真实样本准确率/性能/成本、生产部署和生产恢复演练。手工导出不能保证下游已经保存的包自动撤销；使用前须重核，`revalidateBy`只规定最迟复核期限，不保证此前权利不变。
+素材工作台已提供现有后台内的列表、证据详情、带版本/原因的审核与受控导出，见[操作说明与访问边界](../../docs/fishery-center/material-workbench.md)。仍未实现：去重前在线抓取hook、通用HTTP失败/304持久化观察、常驻增量附件采集、生产环境PDF解析与OCR、政策关系/条款证据、完整法律适用性审核、校准后的渔业新闻taxonomy/提示词、生产源批量入库、机器只读认证、固定清单snapshot/changes/tombstone、Easel拉取及下游处置台账、传播后撤回、真实样本准确率/性能/成本、生产部署和生产恢复演练。手工导出不能保证下游已经保存的包自动撤销；使用前须重核，`revalidateBy`只规定最迟复核期限，不保证此前权利不变。
 
 安装：在 `site/modules/index.ts` 与 `server.ts` 注册，`site/package.json` 依赖模块包，Dockerfile包含模块包清单；无Web部分，无需在web清单登记空模块。迁移每个文件一条在线语句，新增表非破坏性；移除清单可关闭模块路由与健康扩展，保留档案数据，不改历史迁移。请勿删除许可/审核记录来“恢复”导出。
 

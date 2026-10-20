@@ -6,7 +6,7 @@ import { z } from "zod";
 import { prepareOfficial } from "../backend/source-adapters.ts";
 import { extractPdf } from "../backend/pdf-text.ts";
 const { values } = parseArgs({ options: { source: { type: "string" }, receipt: { type: "string" }, html: { type: "string" },
-  "pdf-receipt": { type: "string" }, pdf: { type: "string" }, output: { type: "string" } } });
+  "pdf-receipt": { type: "string" }, pdf: { type: "string" }, output: { type: "string" }, "capture-mode": { type: "string" } } });
 const source = z.enum(["jinjiang", "iotc", "fuzhou"]).parse(values.source);
 for (const name of ["receipt", "html", "output"] as const) if (!values[name]) throw new Error(`--${name} is required`);
 async function bytes(file: string, limit: number) { if ((await stat(file)).size > limit) throw new Error("Archive size limit exceeded"); return readFile(file); }
@@ -18,7 +18,8 @@ if (values.pdf && values["pdf-receipt"]) {
   const parsed = await extractPdf(original);
   pdf = { receipt: JSON.parse(await readFile(values["pdf-receipt"], "utf8")), bytes: original, parsed };
 } else if (values.pdf || values["pdf-receipt"]) throw new Error("Both --pdf and --pdf-receipt are required together");
-const result = prepareOfficial(source, receipt, html, pdf);
+const mode = z.enum(["live_capture", "archive_replay"]).parse(values["capture-mode"] ?? "archive_replay");
+const result = prepareOfficial(source, receipt, html, pdf, mode);
 await mkdir(values.output!, { recursive: true });
 const { body, ...metadata } = result;
 await writeFile(path.join(values.output!, "capture.json"), JSON.stringify(metadata, null, 2) + "\n");

@@ -53,6 +53,7 @@ export const policyContextSchema = z.strictObject({
   provisionYears: z.array(z.int().min(1900).max(2199)).max(20),
 });
 export const captureSchema = z.strictObject({
+  acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
   adapter: z.enum(["jinjiang", "iotc", "fuzhou"]), sourceUrl: linkSchema, capturedAt: instant,
   httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
   bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),

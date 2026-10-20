@@ -68,7 +68,7 @@ try {
     assert.equal(sha256(html), receipt.sha256);
     const replay = path.join(output, adapter);
     const args = [path.join(import.meta.dirname, "prepare-official.ts"), "--source", adapter, "--receipt", input(adapter, "receipt"),
-      "--html", input(adapter, "html"), "--output", replay];
+      "--html", input(adapter, "html"), "--output", replay, "--capture-mode", live ? "live_capture" : "archive_replay"];
     let pdf: Buffer | null = null;
     if (adapter === "iotc" && existsSync(input(adapter, "pdf")) && existsSync(input(adapter, "pdf-receipt"))) {
       const pr = JSON.parse(await readFile(input(adapter, "pdf-receipt"), "utf8"));

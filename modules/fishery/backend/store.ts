@@ -95,15 +95,15 @@ export async function sourceHealth(now: number) {
     .map((r) => `渔业来源 ${r.source_id}：许可未知、受限或已到复核期限，素材导出关闭`);
 }
 export async function listSources() {
-  return sql`SELECT f.*, s.name, s.health, s.last_fetch_at, s.last_ok_at, s.last_error FROM fishery_sources f JOIN sources s ON s.id = f.source_id ORDER BY f.source_id`;
+  return sql`SELECT f.*, s.name, s.health, s.last_fetch_at, s.last_ok_at, s.last_error, s.enabled, s.participation_mode FROM fishery_sources f JOIN sources s ON s.id = f.source_id ORDER BY f.source_id`;
 }
 export async function listDocuments() {
-  return sql`SELECT d.*, o.revision, o.observed_at, o.payload->>'title' AS title,
-    r.decision, r.revision AS reviewed_revision, r.source_revision AS reviewed_source_revision, s.revision AS source_revision
+  return sql`SELECT d.*, o.revision, o.observed_at, o.actor, o.content_hash, o.payload, o.payload->>'title' AS title,
+    r.decision, r.note, r.reviewed_at, r.actor AS reviewer, r.applicability_reviewed, r.revision AS reviewed_revision, r.source_revision AS reviewed_source_revision, s.revision AS source_revision
     FROM fishery_documents d JOIN fishery_sources s ON s.source_id = d.source_id
     LEFT JOIN LATERAL (SELECT * FROM fishery_observations WHERE document_id = d.id ORDER BY revision DESC LIMIT 1) o ON true
     LEFT JOIN LATERAL (SELECT * FROM fishery_reviews WHERE document_id = d.id ORDER BY id DESC LIMIT 1) r ON true
-    ORDER BY d.created_at DESC LIMIT 100`;
+    ORDER BY coalesce(o.observed_at, d.created_at) DESC, d.id DESC LIMIT 100`;
 }
 export async function documentHistory(id: string) {
   const [document] = await sql`SELECT * FROM fishery_documents WHERE id = ${id}`;

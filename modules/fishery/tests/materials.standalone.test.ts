@@ -70,6 +70,21 @@ test("Jinjiang reads visible source time at +08:00 and leaves the body geography
   assert.equal("approved" in result, false);
 });
 
+test("live receipts and archive replay are labelled separately without upgrading a 404 to article text", () => {
+  const raw = jjHtml();
+  const archived = prepareOfficial("jinjiang", receipt(raw), raw);
+  assert.equal(archived.sourceCapture.acquisitionMode, "archive_replay");
+  assert.ok(archived.warnings.some(w => w.includes("no new network acquisition")));
+  const live = prepareOfficial("jinjiang", receipt(raw), raw, undefined, "live_capture");
+  assert.equal(live.sourceCapture.acquisitionMode, "live_capture");
+  assert.ok(live.warnings.some(w => w.includes("Live HTTP acquisition receipt")));
+  assert.equal(live.warnings.some(w => /Offline archive/i.test(w)), false);
+  const missing = Buffer.from("404 error response");
+  const failed = prepareOfficial("fuzhou", receipt(missing, "https://hyj.fuzhou.gov.cn/fixture.htm", 404), missing, undefined, "live_capture");
+  assert.equal(failed.sourceCapture.acquisitionMode, "live_capture");
+  assert.equal(failed.sourceCapture.httpStatus, 404); assert.equal(failed.readyForReview, false); assert.equal(failed.body, null);
+});
+
 test("missing source dates remain unknown despite a dated URL; day-only metadata stays day-only", () => {
   let raw = jjHtml("", "");
   let result = prepareOfficial("jinjiang", receipt(raw), raw);
