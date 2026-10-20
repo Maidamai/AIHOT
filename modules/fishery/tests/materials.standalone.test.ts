@@ -5,11 +5,13 @@ import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
 import { observationFixture, sourceFixture, unknownDate } from "./fixtures.ts";
 import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
-import { readFile, access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFile, access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence, titlePriority } from "../backend/official-columns.ts";
-import { collectColumns, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
+import { batchRoot, collectColumns, listBatches, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
+import { importBatch } from "../backend/import-batch.ts";
+import { config } from "@aihot/backend/config";
 import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft, fisheryDraftWireSchema,parseFisheryManualRevision } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
@@ -163,6 +165,51 @@ test("manual batches archive current-list responses, expose failures and verify 
     const denied=await collectColumns({id:"synthetic-2",dataDir,columns:["fujian"],limit:1,fetch:async url=>({url,status:403,body:Buffer.from("denied"),headers:{get:()=>null}}),wait:async()=>{}});
     assert.equal(denied.items.length,0);assert.match(denied.sources[0]!.error!,/policy inspection/);
   } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("unreadable batch manifests are isolated in listings and rejected before import",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-manifest-test-")),previousDataDir=config.dataDir;
+  const batch={version:"fishery-column-batch/0.1",id:"healthy",startedAt:"2026-10-20T00:00:00Z",finishedAt:"2026-10-20T00:01:00Z",status:"complete",sources:[],items:[]};
+  const broken=[{id:"missing",body:null},{id:"truncated",body:'{"version":"fishery-column-batch/0.1",'},{id:"invalid",body:JSON.stringify({...batch,id:"invalid",sources:[null]})}];
+  try {
+    config.dataDir=dataDir;
+    for(const {id,body} of [{id:batch.id,body:JSON.stringify(batch)},...broken]) {
+      await mkdir(path.join(batchRoot(dataDir),id),{recursive:true});
+      if(body!==null) await writeFile(path.join(batchRoot(dataDir),id,"manifest.json"),body);
+    }
+    const rows=await listBatches(dataDir);assert.equal(rows.length,4);
+    assert.deepEqual(rows.find(r=>r.id===batch.id),batch);
+    for(const brokenBatch of broken) {
+      const row=rows.find(r=>r.id===brokenBatch.id)!;assert.equal(row.status,"unreadable");
+      if(row.status!=="unreadable") throw new Error("Expected an explicit unreadable row");
+      assert.ok(row.error);assert.equal("items" in row,false);assert.equal("networkRequests" in row,false);
+      await assert.rejects(readBatch(dataDir,row.id));
+      await assert.rejects(importBatch(row.id,"standalone-test"),/ENOENT|JSON|Invalid batch manifest/);
+      const file=path.join(batchRoot(dataDir),row.id,"manifest.json");
+      if(brokenBatch.body===null) await assert.rejects(access(file));
+      else assert.equal(await readFile(file,"utf8"),brokenBatch.body,"Listing/import must not repair bad evidence");
+    }
+  } finally {config.dataDir=previousDataDir;await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("manifest write failure preserves the previous complete JSON and leaves the batch unfinished",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-manifest-failure-")),id="interrupted",root=path.join(batchRoot(dataDir),id);
+  let previousManifest="";
+  try {
+    await assert.rejects(collectColumns({id,dataDir,columns:["fujian"],limit:1,wait:async()=>{},fetch:async url=>{
+      const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.fujian.url;
+      if(!robots&&!listing) {
+        previousManifest=await readFile(path.join(root,"manifest.json"),"utf8");
+        await writeFile(path.join(root,".manifest.other-writer.tmp"),"preserve unrelated temporary evidence");
+        await chmod(root,0o500);
+      }
+      return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(`<ul class="xw-list-1 gl_list"><li><a href="${columnUrl}">远洋渔业材料</a></li></ul>`):columnHtml(),headers:{get:()=>"text/html"}};
+    }}),/EACCES|EPERM/);
+    assert.ok(previousManifest);assert.equal(await readFile(path.join(root,"manifest.json"),"utf8"),previousManifest);
+    const stored=await readBatch(dataDir,id);assert.equal(stored.status,"running");assert.equal(stored.finishedAt,null);
+    assert.deepEqual((await readdir(root)).sort(),[".manifest.other-writer.tmp","body","manifest.json","raw"]);
+    assert.equal(await readFile(path.join(root,".manifest.other-writer.tmp"),"utf8"),"preserve unrelated temporary evidence");
+  } finally {await chmod(root,0o700).catch(()=>{});await rm(dataDir,{recursive:true,force:true});}
 });
 
 test("capture time and archive relocation do not change evidence, but latest-body changes do",()=>{

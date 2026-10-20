@@ -1,5 +1,6 @@
 // Bounded manual official capture and explicit static archive reparse. No database, model, review or publishing.
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
@@ -8,6 +9,7 @@ import { COLUMNS, columnIdSchema, discoverColumn, prepareColumnArticle, type Col
 import { archiveReceiptSchema, sha256, type PdfText } from "./source-adapters.ts";
 import { assertIotcRobots, discoverIotc, iotcAttachment, prepareIotc } from "./iotc-columns.ts";
 import { extractPdf } from "./pdf-text.ts";
+import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
@@ -20,24 +22,41 @@ const replaySchema=z.strictObject({version:z.literal("fishery-pdf-reparse/1"),op
 type Replay=z.infer<typeof replaySchema>;
 type ParsePdf=(bytes:Buffer)=>Promise<PdfText>;
 export interface ColumnBatch { version: "fishery-column-batch/0.1"; id: string; startedAt: string; finishedAt: string | null; status: "running" | "complete"; reparse?:Replay; networkRequests?:0;reparsedItems?:number;sources: { id: ColumnId; listed: number; titleFiltered: number; attempted: number; error: string | null }[]; items: BatchItem[]; }
+export type BatchListEntry = ColumnBatch | { id: string; status: "unreadable"; error: string };
+const manifestSchema=z.object({version:z.literal("fishery-column-batch/0.1"),id:batchIdSchema,startedAt:z.iso.datetime({offset:true}),finishedAt:z.iso.datetime({offset:true}).nullable(),status:z.enum(["running","complete"]),reparse:replaySchema.optional(),networkRequests:z.literal(0).optional(),reparsedItems:z.int().nonnegative().optional(),
+  sources:z.array(z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable()})).max(6),
+  items:z.array(z.object({column:columnIdSchema,url:linkSchema,discoveryTitle:z.string(),listDate:z.string().nullable(),state:z.enum(["ready","irrelevant","failed"]),archiveId:archiveIdSchema,prepared:z.object({dates:z.object({published:dateSchema}),sourceCapture:captureSchema}).nullable(),error:z.string().nullable()})).max(36)});
 export const batchRoot = (dataDir: string) => path.resolve(dataDir, "fishery-batches");
 const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 async function save(file: string, value: unknown) { await writeFile(file, json(value), { mode: 0o600 }); }
+async function saveManifest(file: string, value: ColumnBatch) {
+  const bytes=json(value), temporary=path.join(path.dirname(file),`.manifest.${randomUUID()}.tmp`);
+  let handle:Awaited<ReturnType<typeof open>>|null=await open(temporary,"wx",0o600);
+  try {
+    await handle.writeFile(bytes);
+    await handle.close();handle=null;
+    await rename(temporary,file);
+  } finally {
+    try {await handle?.close();} finally {await rm(temporary,{force:true});}
+  }
+}
 
 export async function readBatch(dataDir: string, id: string): Promise<ColumnBatch> {
   batchIdSchema.parse(id);
   const file = path.join(batchRoot(dataDir), id, "manifest.json");
   if ((await stat(file)).size > 2 * 1024 * 1024) throw new Error("Batch manifest too large");
   const value = JSON.parse(await readFile(file, "utf8")) as ColumnBatch;
-  if (value.version !== "fishery-column-batch/0.1" || value.id !== id || !Array.isArray(value.items) || !Array.isArray(value.sources) || value.items.length > 36) throw new Error("Invalid batch manifest");
-  if(value.reparse) replaySchema.parse(value.reparse);
+  if (!manifestSchema.safeParse(value).success || value.id !== id || (value.status === "complete" && !value.finishedAt)) throw new Error("Invalid batch manifest");
   for (const item of value.items) { columnIdSchema.parse(item.column); archiveIdSchema.parse(item.archiveId); if (!item.archiveId.startsWith(id + "_")) throw new Error("Archive/batch mismatch"); }
   return value;
 }
-export async function listBatches(dataDir: string) {
+export async function listBatches(dataDir: string):Promise<BatchListEntry[]> {
   let names: string[];
   try { names = await readdir(batchRoot(dataDir)); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
-  return await Promise.all(names.filter(id => batchIdSchema.safeParse(id).success).sort().reverse().slice(0, 40).map(id => readBatch(dataDir, id)));
+  return await Promise.all(names.filter(id => batchIdSchema.safeParse(id).success).sort().reverse().slice(0, 40).map(async id => {
+    try {return await readBatch(dataDir,id);}
+    catch(error) {return {id,status:"unreadable" as const,error:String((error as Error).message).slice(0,500)};}
+  }));
 }
 export async function readCapturedText(dataDir: string, archiveId: string, expectedHash: string): Promise<string> {
   archiveIdSchema.parse(archiveId);
@@ -177,13 +196,13 @@ export async function reparseArchivedIotc(options:{dataDir:string;sourceBatchId:
   if(sha256(finalSnapshot.manifestBytes)!==replay.sourceManifestSha256) throw new Error("Source manifest changed during reparse");
   if(finalSnapshot.artifacts.some((file,i)=>file.sha256!==original.artifacts[i]?.sha256)) throw new Error("Source artifact changed during reparse");
   await mkdir(batchRoot(options.dataDir),{recursive:true,mode:0o700});await mkdir(root,{mode:0o700});
-  await writeFile(path.join(root,"manifest.json"),json(batch),{flag:"wx",mode:0o600});
+  await saveManifest(path.join(root,"manifest.json"),batch);
   await mkdir(path.join(root,"raw"),{mode:0o700});await mkdir(path.join(root,"body"),{mode:0o700});
   await writeFile(path.join(root,"reparse.json"),json(replay),{flag:"wx",mode:0o600});
   for(const file of raw) await writeFile(path.join(root,file.targetName),file.bytes,{flag:"wx",mode:0o600});
   for(const file of bodies) await writeFile(path.join(root,"body",`${file.archiveId}.txt`),file.body,{flag:"wx",mode:0o600});
   batch.status="complete";batch.finishedAt=new Date().toISOString();
-  await save(path.join(root,"manifest.json"),batch);
+  await saveManifest(path.join(root,"manifest.json"),batch);
   return batch;
 }
 
@@ -201,7 +220,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
   await mkdir(path.join(root, "raw"), { mode: 0o700 });
   await mkdir(path.join(root, "body"), { mode: 0o700 });
   const batch: ColumnBatch = { version: "fishery-column-batch/0.1", id, startedAt: new Date().toISOString(), finishedAt: null, status: "running", sources: [], items: [] };
-  const persist = () => save(path.join(root, "manifest.json"), batch);
+  const persist = () => saveManifest(path.join(root, "manifest.json"), batch);
   await persist();
   const fetch = options.fetch ?? defaultFetch, wait = options.wait ?? sleep, deadline = Date.now() + 180_000;
   async function get(url: string, name: string) {
