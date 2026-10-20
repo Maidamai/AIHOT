@@ -95,6 +95,34 @@ test("official discovery reads present column identities and excludes domestic c
   assert.ok(relevanceEvidence(long)[0]!.includes("公海渔业治理证据"));
 });
 
+test("cooperation and fisheries safety titles retrieve context but need explicit DWF body evidence",()=>{
+  // Two inspected official titles and short paragraph-4 excerpts reproduce the missed retrievals.
+  const cases=[
+    {url:"https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202610/t20261018_7237949.htm",date:"2026-10-19",title:"推进建设21世纪海上丝绸之路高质量发展：国际友城与海洋经济合作研讨会在福州举办",body:"主题发言阶段，新加坡青年海运协会主席周毅恩、摩洛哥国家渔业研究所水产品增值与技术专业中心主任玛丽亚姆・哈鲁比、印中商务中心董事长韩煦雅、福州宏龙海洋水产有限公司副总经理齐琤，围绕海运人才交流、蓝色技术走廊、印尼海洋经济与中印尼海洋产业合作机遇、远洋渔业发展等主题分享实践经验，为海洋经济合作建言献策。",evidence:"远洋渔业发展"},
+    {url:"https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202609/t20260929_7219976.htm",date:"2026-09-29",title:"福建省海洋与渔业局领导以“四不两直”方式赴宁德调研检查涉渔船舶安全监管工作",body:"实地走访渔船组织化公司福建省联邦远洋渔业有限公司，详细了解渔船出海作业管理、船员安全教育、海上应急处置等工作，强调要创新完善激励约束机制，压实渔船组织化公司主体责任",evidence:"福建省联邦远洋渔业有限公司"},
+  ];
+  const listing=`<ul class="xw-list-1 gl_list">${cases.map(c=>`<li><a href="${c.url}">${c.title}</a></li>`).join("")}</ul>`;
+  assert.deepEqual(discoverColumn("fujian",listing).candidates.map(c=>[c.url,c.priority]),cases.map(c=>[c.url,"context"]));
+  const article=(title:string,body:string,date="2026-10-20")=>Buffer.from(`<meta name="ArticleTitle" content="${title}"><meta name="PubDate" content="${date}"><div id="detailCont"><p>${body}</p></div>`);
+  for(const c of cases){
+    const raw=article(c.title,c.body,c.date),result=prepareColumnArticle("fujian",columnReceipt(raw,c.url),raw,"archive_replay");
+    assert.equal(titlePriority(c.title),"context");assert.equal(result.readyForReview,true);
+    assert.equal(result.relevance.decision,"candidate");assert.ok(result.relevance.evidence.some(e=>e.includes(c.evidence)));
+    assert.equal(result.dates.published.value,c.date);assert.equal(result.dates.effectiveFrom.precision,"unknown");
+  }
+  assert.equal(titlePriority("全省渔业安全生产检查工作部署"),"context");
+  const excludedTitles=["全省海洋经济高质量发展大会","近海养殖合同履约","水产养殖安全生产培训","海洋经济合作与近海养殖交流"];
+  for(const title of excludedTitles){
+    assert.equal(titlePriority(title),null,title);
+  }
+  // A matching context title cannot upgrade ordinary coastal safety/cooperation text.
+  for(const title of [cases[0]!.title,cases[1]!.title,"全省渔业安全生产检查工作部署",...excludedTitles]){
+    const raw=article(title,"此次检查聚焦近海渔船安全生产，核查救生消防设备、进出港报告和船员培训情况，要求整改隐患，提升沿海渔港应急处置能力。"),result=prepareColumnArticle("fujian",columnReceipt(raw),raw);
+    assert.equal(result.sourceCapture.parseStatus,"parsed");assert.equal(result.readyForReview,false);
+    assert.equal(result.relevance.decision,"not_proven");assert.deepEqual(result.relevance.evidence,[]);
+  }
+});
+
 test("official metadata outranks URL dates; nested blocks survive and missing dates remain unknown",()=>{
   const raw=columnHtml(),result=prepareColumnArticle("fujian",columnReceipt(raw),raw,"archive_replay");
   assert.equal(result.readyForReview,true);assert.equal(result.dates.published.value,"2026-05-20");

@@ -26,13 +26,14 @@ export type ColumnId = z.infer<typeof columnIdSchema>;
 export const unknownDate = () => ({ precision: "unknown" as const, value: null });
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 const direct = /远洋|公海|境外入渔|南极磷虾|国际渔业|IOTC|NPFC|SPRFMO|WCPFC|CCAMLR/i;
-const contextual = /渔业法|渔业发展|渔业支持|渔业委员会|渔业合作/;
+const contextual = /渔业法|渔业发展|渔业支持|渔业委员会|渔业合作|涉渔船舶安全|渔业安全|海洋经济合作/;
 
 export interface Candidate { url: string; title: string; listDate: string | null; priority: "direct" | "context"; }
 export function titlePriority(title: string): Candidate["priority"] | null {
   if (direct.test(title)) return "direct";
-  // Aquaculture, fish names and generic ocean-economy stories are not DWF evidence.
-  if (/养殖|增殖放流|伏季休渔|近海|海洋经济|职工|党课|离退休/.test(title)) return null;
+  // Context only widens retrieval; the article body must still supply explicit DWF evidence.
+  if (/养殖|增殖放流|伏季休渔|近海|职工|党课|离退休/.test(title)) return null;
+  if (/海洋经济/.test(title) && !/海洋经济合作/.test(title)) return null;
   return contextual.test(title) ? "context" : null;
 }
 
