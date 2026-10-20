@@ -11,10 +11,13 @@ import { completeReceipt } from "@aihot/backend/providers/receipts";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { hash, lockDocument, NotFound } from "./store.ts";
 import { readCapturedText } from "./column-batches.ts";
-import { prepareFisheryDraft, type DraftInput } from "./ai-draft.ts";
-import { reviewFisheryDraft, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
+import { prepareFisheryDraft, buildFisheryDraftRequest, fisheryDraftWireSchema, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
+import { reviewFisheryDraft, buildFisheryReviewRequest, fisheryWireBytes, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
 import { sha256 } from "./source-adapters.ts";
 import { withFisheryAuthorization, assertFisheryCapacity } from "./authorization.ts";
+
+import { buildEvidenceCatalog, evidenceBinding, anchorIds } from "./evidence.ts";
+import { TRIAL } from "./trial-transport.ts";
 
 const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const qualification=z.strictObject({decision:z.enum(["qualified","rejected"]),snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),note:z.string().trim().min(1).max(2000)});
@@ -61,6 +64,71 @@ export async function createFlow(documentId:string,raw:unknown,actor:string) {
     await audit(actor,"fishery.flow.create",`fishery:${documentId}`,null,null,{id:row!.id,snapshotHash:current.hash},{db:tx});return row!;
   });
 }
+// Revision provenance is admin-only; it is never included in reviewFisheryDraft input.
+export async function revisionContext(id:string) {
+  const [original]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${id}`;
+  if(!original) throw new NotFound("Original flow not found");
+  const manual=original.draft?.provenance?.origin==="human_revision";
+  if(!(manual?["failed","needs_evidence","rejected"]:["failed","needs_evidence"]).includes(original.status)) throw new Conflict("Only settled failed or needs-evidence candidates, or rejected manual revisions, can be revised");
+  for(const request of Object.values(original.stage_requests??{}) as {subject:string;purpose:string}[]) {
+    const [uncertain]=await sql`SELECT id FROM receipts WHERE subject=${request.subject} AND purpose=${request.purpose} AND status IN ('pending','unknown') LIMIT 1`;
+    if(uncertain) throw new Conflict("Parent has pending/unknown receipt; reconcile before revision");
+  }
+  let generation=original;
+  if(manual) {
+    if(original.draft.provenance.candidateHash!==sha256(JSON.stringify(fisheryDraftSchema.parse(original.draft.draft)))) throw new Conflict("Parent manual candidate hash changed");
+    const rootId=original.draft.provenance.originalGenerationTaskId??original.draft.provenance.originalTaskId;
+    const [root]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${rootId}`;
+    if(!root||root.document_id!==original.document_id||root.draft?.provenance) throw new Conflict("Invalid original generation lineage");
+    generation=root;
+  }
+  const current=await snapshot(original.document_id),input=await inputFor(original.document_id,current.hash),catalog=buildEvidenceCatalog(input);
+  const receiptId=generation.draft?.receiptId??generation.error?.receiptId;
+  const [receipt]=receiptId?await sql`SELECT id,response,status,purpose,subject FROM receipts WHERE id=${receiptId}`:[];
+  if(!receipt||!receipt.response||!["received","completed","failed"].includes(receipt.status)) throw new Conflict("A reconciled received original response is required");
+  const generationRequests=Object.entries(generation.stage_requests??{}).filter(([key])=>key.startsWith("generation:")).map(([,request])=>request as {subject:string;purpose:string});
+  if(receipt.purpose!=="fishery_draft"||!generationRequests.some(request=>request.subject===receipt.subject&&request.purpose===receipt.purpose)) throw new Conflict("Original receipt is not bound to this task generation stage");
+  const response=receipt.response;
+  if(manual&&(original.draft.provenance.receiptId!==receipt.id||original.draft.provenance.responseHash!==hash(response))) throw new Conflict("Original generation receipt provenance changed");
+  let candidate:unknown=original.draft?.draft??null;
+  if(!manual) try {candidate=JSON.parse(response?.choices?.[0]?.message?.content??"null")??candidate;}catch{/* Preserve malformed original as provenance, never silently parse it. */}
+  let editable=candidate;
+  if(manual&&hash(original.snapshot)===current.hash) {
+    // Canonical parent anchors may become IDs only in the identical current catalog; never migrate old versions.
+    const convert=(value:any):any=>Array.isArray(value)?value.map(convert):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).map(([key,v])=>[key,key==="evidence"?anchorIds(catalog,v as any):convert(v)])):value;
+    editable=convert(candidate);
+  }
+  const unknownDate={date:{precision:"unknown",value:null},evidence:[]};
+  const template={relevance:{decision:"unknown",reason:"待人工选择当前证据",evidence:[]},summaryZh:[],dates:{published:unknownDate,event:unknownDate,adopted:unknownDate,effective:unknownDate,objectionDeadline:unknownDate},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]};
+  return {originalTaskId:id,originalGenerationTaskId:generation.id,documentId:original.document_id,receiptId:receipt.id,responseHash:hash(response),snapshotHash:current.hash,evidenceCatalog:catalog,originalCandidate:candidate,candidate:hash(original.snapshot)===current.hash&&editable?editable:template,originalContent:typeof response?.choices?.[0]?.message?.content==="string"?response.choices[0].message.content:null};
+}
+export async function createHumanRevision(id:string,raw:unknown,actor:string) {
+  const data=z.strictObject({identity,snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),evidenceHash:z.string().regex(/^[a-f0-9]{64}$/),reason:z.string().trim().min(1).max(2000),candidate:z.unknown()}).parse(raw);
+  const context=await revisionContext(id);
+  if(data.snapshotHash!==context.snapshotHash||data.evidenceHash!==context.evidenceCatalog.hash) throw new Conflict("Current snapshot or evidence catalog changed; reload and select current IDs");
+  const input=await inputFor(context.documentId,context.snapshotHash),catalog=buildEvidenceCatalog(input);
+  const candidate=(()=>{try{return validateFisheryDraft(input,fisheryDraftWireSchema(catalog).parse(data.candidate));}catch(error){throw new Conflict(`Candidate validation refused: ${(error as Error).message.slice(0,2000)}`);}})();
+  if(candidate.relevance.decision!=="relevant"||!candidate.summaryZh.length) throw new Conflict("Revision requires relevant nonempty supported summary");
+  if(fisheryWireBytes(buildFisheryReviewRequest(input,candidate,"default"))>TRIAL.maxWireBytes) throw new Conflict("Full source and revision review exceed wire capacity; no request sent");
+  const candidateHash=sha256(JSON.stringify(candidate)),current=await snapshot(context.documentId);
+  const provenance={origin:"human_revision",originalTaskId:id,directParentTaskId:id,originalGenerationTaskId:context.originalGenerationTaskId,receiptId:context.receiptId,responseHash:context.responseHash,actor,at:new Date().toISOString(),reason:data.reason,candidateHash,
+    diff:{before:context.originalCandidate,after:data.candidate}};
+  const draft={receiptId:null,model:"human_revision",promptVersion:buildFisheryDraftRequest(input,"default").promptVersion,schemaVersion:"fishery-draft-wire-v5",evidenceCatalog:evidenceBinding(catalog),draft:candidate,provenance};
+  return sql.begin(async tx=>{
+    await lockDocument(tx,context.documentId);
+    if((await snapshot(context.documentId)).hash!==context.snapshotHash) throw new Conflict("Snapshot changed while saving revision");
+    const [old]=await tx`SELECT * FROM fishery_flow_tasks WHERE document_id=${context.documentId} AND identity=${data.identity}`;
+    if(old) {if(old.draft?.provenance?.candidateHash!==candidateHash||hash(old.snapshot)!==context.snapshotHash) throw new Conflict("Revision identity already belongs to a different candidate");return old;}
+    const [same]=await tx`SELECT * FROM fishery_flow_tasks WHERE document_id=${context.documentId} AND snapshot=${tx.json(current.value)} AND draft->'provenance'->>'candidateHash'=${candidateHash} ORDER BY created_at DESC,id DESC LIMIT 1`;
+    if(same) return same;
+    const [row]=await tx`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor,draft) VALUES (${randomUUID()},${context.documentId},${data.identity},${tx.json(current.value)},'queued','review',${actor},${tx.json(JSON.parse(JSON.stringify(draft)))}) RETURNING *`;
+    await audit(actor,"fishery.flow.human_revision",`fishery:${context.documentId}`,data.reason,null,{id:row!.id,snapshotHash:context.snapshotHash,...provenance},{db:tx});
+    return row!;
+  });
+}
+function candidateReviewBound(row:Record<string,any>) {
+  try {const candidateHash=sha256(JSON.stringify(fisheryDraftSchema.parse(row.draft?.draft)));return row.quality_review?.draftSha256===candidateHash&&(!row.draft.provenance||row.draft.provenance.candidateHash===candidateHash);}catch{return false;}
+}
 async function flowTimeline(row:Record<string,any>,now:Date):Promise<FlowTimeline> {
   // Read the task's bound revision, never a newer observation or the model's publication guess.
   const [observation]=await sql`SELECT payload FROM fishery_observations WHERE document_id=${row.document_id} AND revision=${row.snapshot.observationRevision}`;
@@ -94,12 +162,14 @@ export async function flowDetail(id:string,now=new Date()):Promise<Record<string
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
   const authoritative=latest?.id===id,timeline=await flowTimeline(row,now),materialRejected=await currentMaterialRejected(row.document_id);
   return {...row,authoritative,timeline,materialRejected,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
-    internalArticle:row.status==="qualified"&&!staleReason&&authoritative&&!materialRejected&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
+    internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&!materialRejected&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
 async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,stage:string,attempt:number,options:ChatJsonOptions<S>,invoke:FisheryInvoke) {
-  options.attemptTag=`fishery-flow:${snapshotHash}:${stage}:${attempt}`;
-  options.subject+=`:snapshot:${snapshotHash}:${stage}:${attempt}`;
+  const [task]=await sql`SELECT draft FROM fishery_flow_tasks WHERE id=${id}`;
+  const revisionHash=task?.draft?.provenance?.candidateHash;
+  options.attemptTag=`fishery-flow:${snapshotHash}:${stage}:${attempt}${revisionHash?`:revision:${revisionHash}`:""}`;
+  options.subject+=`:snapshot:${snapshotHash}:${stage}:${attempt}${revisionHash?`:revision:${revisionHash}`:""}`;
   const fingerprint=hash({model:options.model,purpose:options.purpose,promptVersion:options.promptVersion,system:options.system,user:options.user,temperature:options.temperature,maxTokens:options.maxTokens,attemptTag:options.attemptTag});
   await sql.begin(async tx=>{
     const [row]=await tx`SELECT stage_requests FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
@@ -126,6 +196,11 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
       phase="source";
       const input=await inputFor(claimed.document_id,hash(claimed.snapshot));
       let draft=claimed.draft;
+      if(draft?.provenance?.origin==="human_revision") {
+        if(stage!=="review"||draft.provenance.candidateHash!==sha256(JSON.stringify(fisheryDraftSchema.parse(draft.draft)))) throw new Conflict("Human revision candidate hash or review-only stage changed");
+        validateFisheryDraft(input,draft.draft);
+        if(fisheryWireBytes(buildFisheryReviewRequest(input,draft.draft,"default"))>TRIAL.maxWireBytes) throw new Conflict("Revision review exceeds wire capacity");
+      }
       if(stage==="generation") assertFisheryPairFits(input);
       if(stage==="generation") {
         phase="call";
@@ -137,7 +212,7 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
       }
       if(draft.draft.relevance.decision!=="relevant"||!draft.draft.summaryZh.some((item:{sentence:string})=>item.sentence.trim())) {
         const reason="行业相关性须为relevant，且至少有一条非空事实摘要；请补证、明确重新生成或人工拒绝";
-        await sql`UPDATE fishery_flow_tasks SET status='needs_evidence',stage='generation',quality_review=NULL,error=${sql.json({code:"FISHERY_ARTICLE_INELIGIBLE",stage:"generation",phase:"eligibility",reason,receiptId:draft.receiptId,noAutomaticRetry:true})},updated_at=now() WHERE id=${id}`;
+        await sql`UPDATE fishery_flow_tasks SET status='needs_evidence',stage=${draft.provenance?.origin==="human_revision"?"review":"generation"},quality_review=NULL,error=${sql.json({code:"FISHERY_ARTICLE_INELIGIBLE",stage:"generation",phase:"eligibility",reason,receiptId:draft.receiptId,noAutomaticRetry:true})},updated_at=now() WHERE id=${id}`;
         return;
       }
       phase="call";
@@ -159,7 +234,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
   return sql.begin(async tx=>{
     const [row]=await tx`SELECT * FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
     if(!row||!["failed","needs_evidence","running"].includes(row.status)) throw new Conflict("Only failed, needs-evidence or reconciled interrupted flows can resume");
-    const stage=row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stage==="review"?row.review_attempt:row.generation_attempt;
+    const stage=row.draft?.provenance?.origin==="human_revision"?"review":row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stage==="review"?row.review_attempt:row.generation_attempt;
     const bound=row.stage_requests[`${stage}:${oldAttempt}`];
     const [receipt]=bound?await tx`SELECT id,status FROM receipts WHERE subject=${bound.subject} AND purpose=${bound.purpose} ORDER BY id DESC LIMIT 1`:[];
     if(receipt&&["pending","unknown"].includes(receipt.status)) throw new Conflict("Receipt pending/unknown; reconcile outcome before any resume or regeneration");
@@ -193,6 +268,7 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
       await inputFor(row.document_id,current.hash);
       if(current.hash!==hash(row.snapshot)) throw new Conflict("Review snapshot changed");
       if(row.draft?.draft.relevance.decision!=="relevant"||!row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())) throw new Conflict("行业相关性须为relevant，且至少一条非空事实摘要，方可内部合格");
+      if(!candidateReviewBound(row)) throw new Conflict("Review is not bound to the current candidate hash");
       if(!["needs_human_review","qualified","rejected"].includes(row.status)||row.quality_review?.status!=="needs_human_review") throw new Conflict("Independent review and deterministic gates must pass before internal qualification");
     }
     const human={decision:data.decision,note:data.note,actor,snapshotHash:hash(row.snapshot),at:new Date().toISOString(),internalOnly:true};

@@ -20,7 +20,7 @@ import { collectColumns } from "../backend/column-batches.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
 import { paidRequest } from "@aihot/backend/providers/receipts";
-import { createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
+import { revisionContext, createHumanRevision, createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
 
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { authorizationKey } from "../backend/authorization.ts";
@@ -284,7 +284,7 @@ test("linked articles remain governed by publication withdrawal", async () => {
 
 test("real module routes enforce admin and CSRF before reading or mutating evidence", async () => {
   config.devAdmin = null;
-  const routes = ["sources", "documents", "documents/missing"];
+  const routes = ["sources", "documents", "documents/missing", "flows/missing/revision"];
   for (const path of routes) {
     const res = await app.inject(`/api/admin/fishery/${path}`);
     assert.equal(res.statusCode, 401);
@@ -293,6 +293,7 @@ test("real module routes enforce admin and CSRF before reading or mutating evide
   }
   assert.equal((await app.inject("/api/fishery/v1/materials/snapshot")).statusCode, 404);
   config.devAdmin = { displayName: "Fixture admin" };
+  for(const csrf of [undefined,"wrong"]) assert.equal((await app.inject({method:"POST",url:"/api/admin/fishery/flows/missing/revision",headers:csrf?{"x-csrf-token":csrf}:{},payload:{}})).statusCode,403);
   const { id } = await fixture();
   const request = (path: string, payload: Record<string, unknown>, csrf?: string) => app.inject({ method: "POST", url: `/api/admin/fishery/documents/${id}/${path}`, headers: csrf ? { "x-csrf-token": csrf } : {}, payload });
   for (const csrf of [undefined, "wrong"]) assert.equal((await request("observations", { ...observationFixture, expectedRevision: 1 }, csrf)).statusCode, 403);
@@ -649,4 +650,56 @@ test("private reader projects only the current real qualified set and never expo
   await sql`UPDATE fishery_flow_tasks SET status='rejected' WHERE id=${task.id+"-newer"}`;await absent();
   await observe(f.id,{...observationFixture,expectedRevision:2,title:"合成新版本，旧稿失效"},"fixture-admin");await absent();
   await withdraw(f.id,{expectedRevision:3,reason:"Synthetic withdrawal"},"fixture-admin");await absent();
+});
+
+
+test("human revision preserves received provenance, saves without calls and only reviews the hash-bound current candidate",async()=>{
+  const f=await fixture({unknownRights:true}),body="合成远洋渔业资料，仅用于人工修订测试。";
+  const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
+  const wire={relevance:{decision:"relevant",reason:"合成远洋渔业资料",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",uncertainties:[]};
+  await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-revision/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+  await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/revision-${f.id}`,title:"SYNTHETIC FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+  const original=await createFlow(f.id,{identity:"revision-original"},"fixture-admin");
+  const received=await paidRequest({service:"revision-local-mock",model:"mock",purpose:"fishery_draft",subject:original.id,identity:{original:original.id}},async()=>({response:{choices:[{message:{content:JSON.stringify(wire)}}]}}));
+  await sql`UPDATE fishery_flow_tasks SET status='failed',stage_requests=${sql.json({'generation:1':{subject:original.id,purpose:'fishery_draft'}})},error=${sql.json({receiptId:received.receiptId,phase:"validate",reason:"synthetic invalid original"})} WHERE id=${original.id}`;
+  const [receiptBefore]=await sql`SELECT * FROM receipts WHERE id=${received.receiptId}`,[taskBefore]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${original.id}`;
+  const context=await revisionContext(original.id),request={identity:"revision-candidate",snapshotHash:context.snapshotHash,evidenceHash:context.evidenceCatalog.hash,reason:"PRIVATE_REVISION_REASON",candidate:wire};
+  await assert.rejects(createHumanRevision(original.id,{...request,candidate:{...wire,summaryZh:[{sentence:body,evidence:["wrong-id"]}]}},"PRIVATE_REVISION_ACTOR"),/Invalid/);
+  await assert.rejects(createHumanRevision(original.id,{...request,snapshotHash:"0".repeat(64)},"fixture-admin"),/snapshot/);
+  const beforeCalls=(await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+  const revised=await createHumanRevision(original.id,request,"PRIVATE_REVISION_ACTOR");
+  assert.notEqual(revised.id,original.id);assert.equal(revised.stage,"review");assert.equal(revised.status,"queued");
+  assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,beforeCalls);
+  assert.deepEqual((await sql`SELECT * FROM receipts WHERE id=${received.receiptId}`)[0],receiptBefore);
+  assert.deepEqual((await sql`SELECT * FROM fishery_flow_tasks WHERE id=${original.id}`)[0],taskBefore);
+  assert.equal((await flowDetail(revised.id)).internalArticle,null);
+  assert.equal((await createHumanRevision(original.id,request,"PRIVATE_REVISION_ACTOR")).id,revised.id);
+  assert.equal((await createHumanRevision(original.id,{...request,identity:"duplicate-revision"},"PRIVATE_REVISION_ACTOR")).id,revised.id);
+  let calls=0;
+  const result=await runFlow(revised.id,async(options:any)=>{
+    calls++;assert.equal(options.purpose,"fishery_quality_review");assert.ok(options.attemptTag.includes(revised.draft.provenance.candidateHash));
+    assert.ok(!JSON.stringify(options).includes("PRIVATE_REVISION"));
+    const claims=JSON.parse(options.user).claims;
+    return {data:options.schema.parse({decision:"supported",coverage:"complete_input",findings:claims.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic verification",evidence:c.evidenceIds}))}),receiptId:999999,model:"mock",reused:false,usage:null};
+  });
+  assert.equal(calls,1);assert.equal(result.status,"needs_human_review",JSON.stringify(result.error));
+  await decideFlow(revised.id,{decision:"qualified",snapshotHash:result.snapshotHash,note:"synthetic qualification"},"fixture-admin");
+  assert.ok((await flowDetail(revised.id)).internalArticle);
+  assert.equal((await readerItem(f.id,now)).verification.label,"人工修订候选，经模型辅助核查与人工审核");
+  await sql`UPDATE fishery_flow_tasks SET draft=jsonb_set(draft,'{provenance,candidateHash}',${sql.json("0".repeat(64))}) WHERE id=${revised.id}`;
+  assert.equal((await flowDetail(revised.id)).internalArticle,null);
+  await assert.rejects(decideFlow(revised.id,{decision:"qualified",snapshotHash:result.snapshotHash,note:"tampered hash"},"fixture-admin"),/candidate hash/);
+  await assert.rejects(readerItem(f.id,now),/No current/);
+  await sql`UPDATE fishery_flow_tasks SET draft=jsonb_set(draft,'{provenance,candidateHash}',${sql.json(result.draft.provenance.candidateHash)}) WHERE id=${revised.id}`;
+  await decideFlow(revised.id,{decision:"rejected",snapshotHash:result.snapshotHash,note:"synthetic follow-up correction"},"fixture-admin");
+  const nextContext=await revisionContext(revised.id);
+  assert.deepEqual((nextContext.candidate as any).summaryZh[0].evidence,evidence);
+  const next=await createHumanRevision(revised.id,{...request,identity:"revision-follow-up",candidate:{...wire,uncertainties:["合成修订记录"]}},"fixture-admin");
+  assert.equal(next.draft.provenance.directParentTaskId,revised.id);assert.equal(next.draft.provenance.originalGenerationTaskId,original.id);
+  assert.equal(next.draft.provenance.receiptId,received.receiptId);assert.equal(next.stage,"review");
+  await observe(f.id,{...observationFixture,expectedRevision:2,title:"SYNTHETIC changed current observation",sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-revision/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+  await assert.rejects(createHumanRevision(original.id,request,"fixture-admin"),/snapshot/i);
+  const fresh=await revisionContext(original.id);assert.deepEqual((fresh.candidate as any).summaryZh,[],"new observation never auto-migrates old IDs");
+  const freshTask=await createHumanRevision(original.id,{...request,identity:"fresh-observation-revision",snapshotHash:fresh.snapshotHash,evidenceHash:fresh.evidenceCatalog.hash},"fixture-admin");
+  assert.equal(freshTask.snapshot.observationRevision,3);assert.equal(freshTask.stage,"review");
 });

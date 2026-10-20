@@ -33,7 +33,7 @@ export interface FlowView {
   id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;materialRejected:boolean;stale:boolean;staleReason:string|null;
   timeline:FlowTimeline;
   generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
-  draft:{receiptId:number;promptVersion:string;model:string;draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
+  draft:{receiptId:number|null;promptVersion:string;model:string;provenance?:{origin:"human_revision";candidateHash:string;originalTaskId:string;receiptId:number;responseHash:string;reason:string;actor:string;at:string;diff:unknown};draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
   quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
   human_decision:{decision:string;actor:string;at:string;note:string}|null;
   error:{stage:string;phase?:string;reason:string;receiptId:number|null}|null;

@@ -66,3 +66,22 @@ test("reader list, complete citation detail and empty/error states fit 320, 393 
 test("failed administrator flow cannot offer internal qualification without a reviewed relevant draft",async()=>{
   mode="ready";const page=await browser.newPage();try{await visit(page,web.origin+"/admin/fishery/flows/synthetic-failed");await expect(page.getByRole("heading",{name:"内部文章审核",exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"记录内部合格",exact:true})).toBeDisabled();}finally{await page.close();}
 });
+
+test("administrator saves synthetic manual revision separately from explicit model review queue",async()=>{
+  mode="ready";const page=await browser.newPage({viewport:{width:393,height:852}}),requests:{method:string;body:any}[]=[];
+  await page.route("**/api/admin/fishery/flows/synthetic-failed/revision",async route=>{
+    const request=route.request();requests.push({method:request.method(),body:request.postDataJSON()});
+    await route.fulfill({json:request.method()==="GET"?{snapshotHash:"a".repeat(64),evidenceCatalog:{hash:"b".repeat(64),spans:[{id:"p1s1",quote:"Synthetic source only"}]},candidate:{synthetic:"editable fixture"},originalContent:'{"synthetic":"original fixture"}'}:{id:"synthetic-revision"}});
+  });
+  try {
+    await visit(page,web.origin+"/admin/fishery/flows/synthetic-failed");
+    await page.getByRole("button",{name:"载入当前证据与可编辑候选",exact:true}).click();
+    await expect(page.getByLabel("人工修订候选 JSON")).toHaveValue(/editable fixture/);
+    await page.getByLabel("修订原因",{exact:false}).fill("Synthetic revision reason");
+    await page.getByRole("button",{name:"零调用校验并保存为新任务",exact:true}).click();
+    await expect(page.getByRole("link",{name:/打开新修订任务/})).toHaveAttribute("href","/admin/fishery/flows/synthetic-revision");
+    assert.deepEqual(requests.map(r=>r.method),["GET","POST"]);assert.equal(requests[1]!.body.evidenceHash,"b".repeat(64));
+    assert.equal(requests[1]!.body.reason,"Synthetic revision reason");assert.equal(apiPaths.some(p=>p.endsWith("/run")),false);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  } finally {await page.close();}
+});

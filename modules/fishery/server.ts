@@ -10,7 +10,7 @@ import { config } from "@aihot/backend/config";
 import { batchIdSchema, listBatches } from "./backend/column-batches.ts";
 import { importBatch } from "./backend/import-batch.ts";
 
-import { createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
+import { revisionContext, createHumanRevision, createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
 
 import { readerPage, readerItem, READER_CATEGORIES } from "./backend/reader.ts";
 
@@ -31,6 +31,8 @@ export default defineServerModule({
     app.get("/api/admin/fishery/documents/:id/flows", guarded(async req=>({rows:await listFlows(param(req))})));
     app.post("/api/admin/fishery/documents/:id/flows", guarded(async(req,reply,admin)=>reply.code(201).send(await createFlow(param(req),req.body,admin.name))));
     app.get("/api/admin/fishery/flows/:id", guarded(async req=>flowDetail(param(req))));
+    app.get("/api/admin/fishery/flows/:id/revision", guarded(async req=>revisionContext(param(req))));
+    app.post("/api/admin/fishery/flows/:id/revision", guarded(async(req,reply,admin)=>reply.code(201).send(await createHumanRevision(param(req),req.body,admin.name))));
     app.post("/api/admin/fishery/flows/:id/run", guarded(async req=>enqueueFlow(param(req))));
     app.post("/api/admin/fishery/flows/:id/retry", guarded(async(req,_reply,admin)=>retryFlow(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/decision", guarded(async(req,_reply,admin)=>decideFlow(param(req),req.body,admin.name)));

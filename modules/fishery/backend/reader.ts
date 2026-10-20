@@ -37,7 +37,7 @@ export async function eligibleReaderItems(now=new Date()):Promise<FisheryReaderI
     const category=categoryFor(title,summary.map((s:{sentence:string})=>s.sentence).join("\n")),time=flow.timeline;
     items.push({id:row.id,title,source:{name:row.source_name,url:sourceUrl.data},category:{id:category,label:READER_CATEGORIES[category]},summary,
       dates:{published:time.sourcePublished,event:time.sourceEvent},age:{referenceDate:time.referenceDate,days:time.originalAgeDays,historical:time.historical,label:time.label},
-      verification:{status:"internally_qualified",label:"摘要已完成内部核对",legalApplicability:"未完成法律适用性核验"}});
+      verification:{status:"internally_qualified",label:flow.draft?.provenance?.origin==="human_revision"?"人工修订候选，经模型辅助核查与人工审核":"摘要已完成内部核对",legalApplicability:"未完成法律适用性核验"}});
   }
   return items.sort((a,b)=>(b.dates.published.value??"").localeCompare(a.dates.published.value??"")||a.id.localeCompare(b.id));
 }
