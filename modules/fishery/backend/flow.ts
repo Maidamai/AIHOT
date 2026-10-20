@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { FlowTimeline } from "../ui-contracts.ts";
+import type { FlowTimeline, FlowReconciliation } from "../ui-contracts.ts";
 import { z } from "zod";
 import { sql, type Db } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
@@ -14,10 +14,11 @@ import { readCapturedText } from "./column-batches.ts";
 import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
 import { reviewFisheryDraft, buildFisheryReviewRequest, fisheryWireBytes, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
 import { sha256 } from "./source-adapters.ts";
-import { withFisheryAuthorization, assertFisheryCapacity } from "./authorization.ts";
+import { withFisheryAuthorization, assertFisheryCapacity, authorizationKey } from "./authorization.ts";
 
 import { buildEvidenceCatalog, anchorIds, assertSavedEvidenceArtifact } from "./evidence.ts";
 import { TRIAL } from "./trial-transport.ts";
+import { acquireProcessingLease, assertProcessingLease } from "./processing-lease.ts";
 
 const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const qualification=z.strictObject({decision:z.enum(["qualified","rejected"]),snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),note:z.string().trim().min(1).max(2000)});
@@ -174,12 +175,118 @@ async function currentMaterialDecision(documentId:string,db:Db=sql) {
     LEFT JOIN LATERAL (SELECT decision,revision,source_revision FROM fishery_reviews WHERE document_id=d.id AND revision=o.revision AND source_revision=s.revision ORDER BY id DESC LIMIT 1) r ON true WHERE d.id=${documentId}`;
   return row?.revision===row?.current_revision&&row?.source_revision===row?.current_source_revision?row?.decision??null:null;
 }
+const reconcileSchema=z.strictObject({snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),executionFingerprint:z.string().regex(/^[a-f0-9]{64}$/),expectedStatus:z.literal("running"),acknowledgeRunnerStopped:z.literal(true),reason:z.string().trim().min(1).max(2000),cancelActiveJobId:z.uuid().optional()});
+function executionState(row:Record<string,any>) {
+  return {id:row.id,documentId:row.document_id,snapshotHash:hash(row.snapshot),status:row.status,stage:row.stage,generationAttempt:row.generation_attempt,reviewAttempt:row.review_attempt,stageRequests:row.stage_requests,
+    candidateHash:hash(row.draft?.draft??null),draftHash:hash(row.draft??null),qualityHash:hash(row.quality_review??null),humanHash:hash(row.human_decision??null),error:row.error,updatedAt:row.execution_updated_at??new Date(row.updated_at).toISOString()};
+}
+async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=false):Promise<FlowReconciliation> {
+  const tasks=locking?await db`SELECT *,updated_at::text AS execution_updated_at FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY id FOR UPDATE`:await db`SELECT *,updated_at::text AS execution_updated_at FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY id`;
+  const [queueCatalog]=await db`SELECT to_regclass('pgboss.job') IS NOT NULL AS available`;
+  const jobs=queueCatalog?.available?(locking?await db`SELECT id,data->>'id' AS task_id,state,created_on,started_on,completed_on FROM pgboss.job WHERE name='fishery.flow' AND data->>'id' IN (SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id}) ORDER BY id FOR UPDATE`:await db`SELECT id,data->>'id' AS task_id,state,created_on,started_on,completed_on FROM pgboss.job WHERE name='fishery.flow' AND data->>'id' IN (SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id}) ORDER BY id`):[];
+  const receipts=await db`SELECT r.id,r.status,r.purpose,r.subject,r.response,r.error,r.attempts,r.updated_at::text AS receipt_updated_at FROM receipts r
+    WHERE starts_with(r.purpose,'fishery_') OR starts_with(r.subject,${`fishery:${row.document_id}:`})
+    OR r.id IN (SELECT NULLIF(t.draft->>'receiptId','')::bigint FROM fishery_flow_tasks t WHERE document_id=${row.document_id}
+      UNION SELECT NULLIF(t.error->>'receiptId','')::bigint FROM fishery_flow_tasks t WHERE document_id=${row.document_id}
+      UNION SELECT NULLIF(t.quality_review->>'receiptId','')::bigint FROM fishery_flow_tasks t WHERE document_id=${row.document_id})
+    OR EXISTS (SELECT 1 FROM fishery_flow_tasks t CROSS JOIN LATERAL jsonb_each(t.stage_requests) b WHERE t.document_id=${row.document_id} AND r.subject=b.value->>'subject' AND r.purpose=b.value->>'purpose') ORDER BY r.id`;
+  const [stored]=locking?await db`SELECT value FROM settings WHERE key=${authorizationKey} FOR UPDATE`:await db`SELECT value FROM settings WHERE key=${authorizationKey}`;
+  const [current]=await db`SELECT d.withdrawn_reason,s.revision AS source_revision,s.profile,o.revision AS observation_revision,o.content_hash,r.id AS review_id,r.decision FROM fishery_documents d JOIN fishery_sources s ON s.source_id=d.source_id
+    JOIN LATERAL (SELECT revision,content_hash FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1) o ON true
+    LEFT JOIN LATERAL (SELECT id,decision FROM fishery_reviews WHERE document_id=d.id AND revision=o.revision AND source_revision=s.revision ORDER BY id DESC LIMIT 1) r ON true WHERE d.id=${row.document_id}`;
+  const reasons:string[]=[],ledger=stored?.value,entries=Array.isArray(ledger?.entries)?ledger.entries:[];
+  const ledgerValid=ledger?.id===TRIAL.id&&ledger.maxRequests===TRIAL.maxRequests&&ledger.maxReservedMicroCny===TRIAL.maxReservedMicroCny&&Array.isArray(ledger.entries)&&entries.length<=TRIAL.maxRequests&&entries.every((e:any,i:number)=>e.id===i+1&&["pending","unknown","received","refused"].includes(e.state)&&Number.isSafeInteger(e.reservedMicroCny)&&e.reservedMicroCny>=0)&&entries.reduce((sum:number,e:any)=>sum+e.reservedMicroCny,0)<=TRIAL.maxReservedMicroCny;
+  if(!ledgerValid) reasons.push("Existing cumulative authorization ledger is missing or inconsistent; no allowance is created");
+  if(entries.some((e:any)=>e.state!=="received")) reasons.push("Global ledger pending/unknown/refused outcome requires billing reconciliation");
+  if(receipts.some(r=>["pending","unknown"].includes(r.status))) reasons.push("Global fishery receipt pending/unknown requires reconciliation");
+  if(receipts.some(r=>["received","completed","failed"].includes(r.status)&&r.response===null)) reasons.push("Fishery receipt response missing; zero-request recovery cannot infer an outcome");
+  if(row.status!=="running") reasons.push("Only running interrupted tasks can be reconciled");
+  if(current?.decision!=="approved"||current.withdrawn_reason) reasons.push("Current source and observation must be normally approved and not withdrawn");
+  if(tasks.some(t=>t.id!==row.id&&["running","queued"].includes(t.status))) reasons.push("Another document task is running/queued; reconcile it explicitly first");
+  const requests=Object.entries(row.stage_requests??{}) as [string,{subject:string;purpose:string}][];
+  const currentKey=`${row.stage}:${row.stage==="generation"?row.generation_attempt:row.review_attempt}`;
+  if(!["generation","review"].includes(row.stage)||requests.some(([key])=>key===currentKey||key.startsWith(`${row.stage}:`))) reasons.push("Current stage has a durable request; use its original receipt/recovery, never zero-request reconciliation");
+  let reusableGenerationReceiptId:number|null=null;
+  if(row.stage==="generation"&&(requests.length||row.draft||row.quality_review)) reasons.push("Generation recovery requires no prior stage request or output");
+  if(row.stage==="review") {
+    if(!row.draft||row.quality_review) reasons.push("Review-before-request recovery requires a saved candidate and no review output");
+    else try {
+      const candidate=fisheryDraftSchema.parse(row.draft.draft),manual=row.draft.provenance?.origin==="human_revision";
+      if(row.draft.evidenceCatalog?.bodySha256!==row.snapshot.bodySha256||row.draft.evidenceCatalog?.observationRevision!==row.snapshot.observationRevision) throw new Error("Saved draft body/observation binding changed");
+      const schemaVersion=manual?"fishery-manual-revision-wire-v1":"fishery-draft-wire-v5";
+      if(row.draft.schemaVersion!==schemaVersion) throw new Error("Saved candidate schema changed; do not infer reusable output");
+      const currentSnapshot=await snapshot(row.document_id);
+      if(currentSnapshot.hash===hash(row.snapshot)) {
+        const input=await inputFor(row.document_id,currentSnapshot.hash);
+        assertSavedEvidenceArtifact(input,row.draft,{promptVersion:buildFisheryDraftRequest(input,"default").promptVersion,schemaVersion});
+        validateFisheryDraft(input,candidate,manual?{mode:"manual_revision"}:{});
+      }
+      if(manual) {if(requests.length||row.draft.provenance.candidateHash!==sha256(JSON.stringify(candidate))) throw new Error("Manual candidate/request binding changed");}
+      else {
+        const generation=requests.filter(([key])=>key.startsWith("generation:"));
+        if(!generation.length||generation.length!==requests.length) throw new Error("Only durable generation requests may precede a new review");
+        for(const [,request] of generation) {
+          const found=receipts.filter(r=>r.subject===request.subject&&r.purpose===request.purpose);
+          if(request.purpose!=="fishery_draft"||!found.length||found.some(r=>!["received","completed"].includes(r.status)||!r.response)) throw new Error("Generation receipt missing, unsettled or unusable");
+        }
+        const receipt=receipts.find(r=>r.id===row.draft.receiptId);
+        if(!receipt||receipt.purpose!=="fishery_draft"||!["received","completed"].includes(receipt.status)||!receipt.response||row.stage_requests[`generation:${row.generation_attempt}`]?.subject!==receipt.subject||row.draft.documentId!==row.document_id||row.draft.bodySha256!==row.snapshot.bodySha256||row.draft.observationRevision!==row.snapshot.observationRevision) throw new Error("Saved generation receipt binding changed");
+        reusableGenerationReceiptId=receipt.id;
+      }
+    } catch(error) {reasons.push((error as Error).message);}
+  }
+  const base=`fishery:${row.document_id}:v${row.snapshot.observationRevision}:${row.snapshot.bodySha256}`,candidate=row.draft?.draft;
+  let currentSubject:string|null=null;
+  try {currentSubject=(row.stage==="review"?`${base}:draft:${sha256(JSON.stringify(fisheryDraftSchema.parse(candidate)))}`:base)+`:snapshot:${hash(row.snapshot)}:${row.stage}:${row.stage==="generation"?row.generation_attempt:row.review_attempt}`+(row.draft?.provenance?.candidateHash?`:revision:${row.draft.provenance.candidateHash}`:"");}catch{reasons.push("Current candidate cannot identify its review request");}
+  if(row.error?.receiptId||row.quality_review?.receiptId||receipts.some(r=>r.subject===currentSubject)) reasons.push("Current stage already has a receipt; original received output or billing reconciliation is required");
+  if(!queueCatalog?.available) reasons.push("Queue catalog unavailable; cannot verify interrupted jobs");
+  if(jobs.some(j=>["created","retry"].includes(j.state))) reasons.push("Queued/retry jobs or duplicate dispatches must be reconciled explicitly");
+  const active=jobs.filter(j=>j.state==="active");
+  if(active.length>1||active.some(j=>j.task_id!==row.id)) reasons.push("Multiple or other active document jobs cannot be cancelled by this recovery");
+  const receiptState=receipts.map(r=>({id:r.id,status:r.status,purpose:r.purpose,subject:r.subject,responseHash:r.response===null?null:hash(r.response),errorHash:hash(r.error),attempts:r.attempts,updatedAt:r.receipt_updated_at}));
+  const jobState=jobs.map(j=>({id:String(j.id),task_id:String(j.task_id),state:String(j.state),created_on:j.created_on?.toISOString(),started_on:j.started_on?.toISOString(),completed_on:j.completed_on?.toISOString()}));
+  return {version:"fishery-reconcile-v1",eligible:reasons.length===0,reasons,executionFingerprint:hash({version:"fishery-reconcile-v1",task:executionState(row),tasks:tasks.map(executionState),current,jobs:jobState,receipts:receiptState,ledger}),snapshotHash:hash(row.snapshot),status:row.status,stage:row.stage,
+    currentSourceRevision:current?.source_revision??null,currentObservationRevision:current?.observation_revision??null,currentMaterialApproved:current?.decision==="approved",stageRequestCount:requests.length,candidateHash:hash(candidate??null),reusableGenerationReceiptId,newCallsOnResume:row.stage==="generation"?2:1,
+    ledger:{id:ledger?.id??null,valid:ledgerValid,entryCount:entries.length,reservedMicroCny:entries.reduce((sum:number,e:any)=>sum+(Number.isSafeInteger(e.reservedMicroCny)?e.reservedMicroCny:0),0),states:entries.map((e:any)=>String(e.state))},
+    receipts:receiptState.map(({responseHash,errorHash,...r})=>({...r,responsePresent:responseHash!==null})),jobs:jobState.map(j=>({id:j.id,taskId:j.task_id,state:j.state})),activeJobId:active.length===1?active[0]!.id:null};
+}
+export async function reconcileFlow(id:string,raw:unknown,actor:string) {
+  const data=reconcileSchema.parse(raw);
+  const lease=await acquireProcessingLease().catch((error:unknown)=>{throw new Conflict(`Processing lease unavailable; stop and reconcile old runners first: ${(error as Error).message}`);});
+  try {return await lease.run(async()=>{
+    await lease.assertHeld();
+    const [target]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;if(!target) throw new NotFound("Flow not found");
+    return sql.begin(async tx=>{
+      await lockDocument(tx,target.document_id);
+      const [row]=await tx`SELECT *,updated_at::text AS execution_updated_at FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
+      const state=await reconciliationState(row!,tx,true);
+      if(data.snapshotHash!==state.snapshotHash||data.expectedStatus!==state.status||data.executionFingerprint!==state.executionFingerprint) throw new Conflict("Execution snapshot/fingerprint changed; reload all task, queue, receipt and cost states");
+      if(!state.eligible) throw new Conflict(state.reasons.join("; "));
+      if((state.activeJobId??undefined)!==data.cancelActiveJobId) throw new Conflict("Explicit exact old active job acknowledgement required; no job is cancelled implicitly");
+      await lease.assertHeld();
+      if(state.activeJobId) {
+        const boss=await getBoss({schedule:false,supervise:false}).catch(error=>{throw new Conflict(`Controlled queue instance requires schedule:false/supervise:false; stop old runners and reconcile instance mode: ${(error as Error).message}`);});
+        await boss.cancel(flowQueue.name,state.activeJobId,{db:{executeSql:async(text:string,values?:unknown[])=>({rows:await tx.unsafe(text,(values??[]) as never[])})}});
+        const [cancelled]=await tx`SELECT state FROM pgboss.job WHERE name='fishery.flow' AND id=${state.activeJobId}::uuid`;
+        if(cancelled?.state!=="cancelled") throw new Conflict("Old active job changed; cancellation refused");
+        await audit(actor,"fishery.flow.reconcile.cancel_job",`fishery:${row!.document_id}`,data.reason,{id:state.activeJobId,state:"active"},{id:state.activeJobId,state:"cancelled",taskId:id},{db:tx});
+      }
+      const error={code:"FISHERY_INTERRUPTED_BEFORE_REQUEST",stage:row!.stage,phase:"interrupted_before_request",reason:data.reason,receiptId:null,noAutomaticRetry:true,nextStageRequiresNewCharge:true,newCallsOnResume:state.newCallsOnResume,reusableGenerationReceiptId:state.reusableGenerationReceiptId};
+      await lease.assertHeld();
+      await tx`UPDATE fishery_flow_tasks SET status='failed',error=${tx.json(error)},updated_at=now() WHERE id=${id}`;
+      await audit(actor,"fishery.flow.reconcile",`fishery:${row!.document_id}`,data.reason,{...executionState(row!),executionFingerprint:state.executionFingerprint},{id,status:"failed",error,leaseBackendPid:lease.backendPid,leaseInstanceId:lease.instanceId,acknowledgeRunnerStopped:true,cancelledJobId:state.activeJobId,checkedLedger:state.ledger,checkedReceipts:state.receipts,currentSourceRevision:state.currentSourceRevision,currentObservationRevision:state.currentObservationRevision,modelCalls:0,published:false},{db:tx});
+      await lease.assertHeld();
+      return {id,status:"failed",stage:row!.stage,modelCalls:0,published:false,newCallsOnResume:state.newCallsOnResume};
+    });
+  });}finally{await lease.release();}
+}
 export async function flowDetail(id:string,now=new Date()):Promise<Record<string,any>> {
-  const [row]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${id}`;if(!row) throw new NotFound("Flow not found");
+  const [row]=await sql`SELECT *,updated_at::text AS execution_updated_at FROM fishery_flow_tasks WHERE id=${id}`;if(!row) throw new NotFound("Flow not found");
   let staleReason:string|null=null;try{await inputFor(row.document_id,hash(row.snapshot));}catch(error){staleReason=(error as Error).message;}
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
   const authoritative=latest?.id===id,timeline=await flowTimeline(row,now),materialDecision=await currentMaterialDecision(row.document_id),materialRejected=materialDecision==="rejected",materialApproved=materialDecision==="approved";
-  return {...row,authoritative,timeline,materialRejected,materialApproved,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
+  const reconciliation=await reconciliationState(row);
+  return {...row,authoritative,timeline,materialRejected,materialApproved,reconciliation,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
     internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&materialApproved&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
@@ -204,7 +311,7 @@ async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,st
   });
   return invoke(options);
 }
-export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>Promise<void>)=>Promise<void>=run=>run()) {
+export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>Promise<void>)=>Promise<void>=run=>run(),options:{requireProcessingLease?:boolean}={}) {
   const [task]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;
   if(!task) throw new NotFound("Flow not found");
   const claimed=await sql.begin(async tx=>{
@@ -212,6 +319,7 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
     await assertDocumentSettled(task.document_id,tx);
     const [latest]=await tx`SELECT id FROM fishery_flow_tasks WHERE document_id=${task.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
     if(latest?.id!==id) throw new Conflict("A newer authoritative task supersedes this task");
+    if(options.requireProcessingLease||invoke===chatJson) await assertProcessingLease();
     const [row]=await tx`UPDATE fishery_flow_tasks SET status='running',updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
     if(!row) throw new Conflict("Flow is not queued; running/failed/unknown outcomes require explicit operator reconciliation");
     return row;
@@ -265,6 +373,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
     await assertDocumentSettled(target.document_id,tx,id);
     const currentDetail=await flowDetail(id);if(currentDetail.stale||!currentDetail.authoritative) throw new Conflict(currentDetail.staleReason??"Task superseded");
     if(!row||!["failed","needs_evidence","running"].includes(row.status)) throw new Conflict("Only failed, needs-evidence or reconciled interrupted flows can resume");
+    if(row.error?.code==="FISHERY_INTERRUPTED_BEFORE_REQUEST"&&(!acknowledgeNewCharge||mode!=="resume")) throw new Conflict("Reconciled stage had no request; explicitly acknowledge new stage charges and resume without regenerating saved output");
     const stage=row.draft?.provenance?.origin==="human_revision"?"review":row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stage==="review"?row.review_attempt:row.generation_attempt;
     const bound=row.stage_requests[`${stage}:${oldAttempt}`];
     const [receipt]=bound?await tx`SELECT id,status FROM receipts WHERE subject=${bound.subject} AND purpose=${bound.purpose} ORDER BY id DESC LIMIT 1`:[];
@@ -278,7 +387,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
     const attempt=oldAttempt+(mode==="regenerate"?1:0);
     if(attempt>3) throw new Conflict("Three explicit paid attempts per stage exhausted");
     await tx`UPDATE fishery_flow_tasks SET status='queued',stage=${stage},generation_attempt=${stage==="generation"?attempt:row.generation_attempt},review_attempt=${stage==="review"?attempt:row.review_attempt},quality_review=NULL,error=NULL,updated_at=now() WHERE id=${id}`;
-    await audit(actor,"fishery.flow.retry",`fishery:${row.document_id}`,note,null,{id,stage,attempt,mode,receiptId:receipt?.id??null},{db:tx});
+    await audit(actor,"fishery.flow.retry",`fishery:${row.document_id}`,note,null,{id,stage,attempt,mode,receiptId:receipt?.id??null,acknowledgeNewCharge,newStageAfterReconciliation:row.error?.code==="FISHERY_INTERRUPTED_BEFORE_REQUEST",preservedGenerationReceiptId:row.draft?.receiptId??null},{db:tx});
     return {id,status:"queued",stage,attempt,mode};
   });
 }
@@ -325,7 +434,7 @@ export async function runQueuedFlows(jobs:{id:string}[],invoke:FisheryInvoke=cha
     const result=await runFlow(job.id,invoke,async run=>{
       if(!config.modelCallsEnabled) throw new Conflict("MODEL_CALLS_ENABLED is closed; 模型调用开关关闭，未发送请求");
       await withFisheryAuthorization(async()=>{await assertFisheryCapacity(await flowRequiredCalls(job.id));await run();});
-    });
+    },{requireProcessingLease:true});
     // runFlow persists business failures so the UI remains authoritative. Throw as well so
     // pg-boss cannot report a failed task as a successfully completed queue job.
     if(result.status==="failed") throw new Error(`任务 ${job.id} 执行失败 [${result.stage}/${result.error?.phase}]: ${result.error?.reason??"未知错误"}`);

@@ -30,14 +30,18 @@ export interface FlowTimeline {
   sourceCapturedAt:string|null;generatedAt:string|null;checkedAt:string|null;taskCreatedAt:string;taskUpdatedAt:string;
   referenceDate:string;originalAgeDays:number|null;isOriginalDay:boolean|null;historical:boolean;label:string;
 }
+export interface FlowReconciliation {
+  version:string;eligible:boolean;reasons:string[];executionFingerprint:string;snapshotHash:string;status:string;stage:string;currentSourceRevision:number|null;currentObservationRevision:number|null;currentMaterialApproved:boolean;stageRequestCount:number;candidateHash:string;reusableGenerationReceiptId:number|null;newCallsOnResume:number;
+  ledger:{id:string|null;valid:boolean;entryCount:number;reservedMicroCny:number;states:string[]};receipts:{id:number;status:string;purpose:string;subject:string|null;responsePresent:boolean}[];jobs:{id:string;taskId:string;state:string}[];activeJobId:string|null;
+}
 export interface FlowView {
   id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;materialRejected:boolean;materialApproved:boolean;stale:boolean;staleReason:string|null;
-  timeline:FlowTimeline;
+  timeline:FlowTimeline;reconciliation?:FlowReconciliation;
   generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
   draft:{receiptId:number|null;promptVersion:string;model:string;provenance?:{origin:"human_revision";candidateHash:string;originalTaskId:string;receiptId:number;responseHash:string;reason:string;actor:string;at:string;diff:unknown};draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
   quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
   human_decision:{decision:string;actor:string;at:string;note:string}|null;
-  error:{stage:string;phase?:string;reason:string;receiptId:number|null}|null;
+  error:{code?:string;nextStageRequiresNewCharge?:boolean;newCallsOnResume?:number;stage:string;phase?:string;reason:string;receiptId:number|null}|null;
   internalArticle:{summaryZh:{sentence:string}[];qualifiedBy:string;timeline:FlowTimeline}|null;
 }
 

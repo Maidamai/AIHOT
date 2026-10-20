@@ -10,7 +10,7 @@ import { config } from "@aihot/backend/config";
 import { batchIdSchema, listBatches } from "./backend/column-batches.ts";
 import { importBatch } from "./backend/import-batch.ts";
 
-import { revisionContext, createHumanRevision, createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
+import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
 
 import { readerPage, readerItem, READER_CATEGORIES } from "./backend/reader.ts";
 
@@ -34,6 +34,7 @@ export default defineServerModule({
     app.get("/api/admin/fishery/flows/:id/revision", guarded(async req=>revisionContext(param(req))));
     app.post("/api/admin/fishery/flows/:id/revision", guarded(async(req,reply,admin)=>reply.code(201).send(await createHumanRevision(param(req),req.body,admin.name))));
     app.post("/api/admin/fishery/flows/:id/run", guarded(async req=>enqueueFlow(param(req))));
+    app.post("/api/admin/fishery/flows/:id/reconcile", guarded(async(req,_reply,admin)=>reconcileFlow(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/retry", guarded(async(req,_reply,admin)=>retryFlow(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/decision", guarded(async(req,_reply,admin)=>decideFlow(param(req),req.body,admin.name)));
     app.get("/api/admin/fishery/workbench", guarded(async req => workbench(z.object({ page:z.coerce.number().int().positive().max(100000).optional(),q:z.string().max(200).optional(),scope:z.enum(["real","test","all"]).optional(),state:z.enum(["pending","failed","unverified","stale","rejected","approved","withdrawn"]).optional().or(z.literal("")) }).parse(req.query))));

@@ -22,11 +22,13 @@ import { collectColumns,readCapturedText } from "../backend/column-batches.ts";
 import { importBatch } from "../backend/import-batch.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
-import { paidRequest } from "@aihot/backend/providers/receipts";
-import { revisionContext, createHumanRevision, createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
+import { paidRequest, completeReceipt } from "@aihot/backend/providers/receipts";
+import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
 
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { authorizationKey } from "../backend/authorization.ts";
+import { prepareFisheryDraft, buildFisheryDraftRequest } from "../backend/ai-draft.ts";
+import { acquireProcessingLease } from "../backend/processing-lease.ts";
 import { TRIAL } from "../backend/trial-transport.ts";
 
 import { readerPage, readerItem } from "../backend/reader.ts";
@@ -879,4 +881,119 @@ test("a verified irrelevant recapture supersedes qualified evidence while 404 an
   assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`)[0]!.n,1,"Reimporting the same archive does not fabricate another acquisition");
   const newIrrelevant=await capture("recapture-new-irrelevant",newUrl,"irrelevant");await importBatch(newIrrelevant.id,"tester");
   assert.equal((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${newUrl}`).length,0,"A new irrelevant URL is not registered as a fishery material");
+});
+
+test("synthetic interrupted-before-request reconciliation is leased, fingerprinted, zero-call and preserves saved generation",async()=>{
+  const boss=await getBoss({schedule:false,supervise:false});await boss.createQueue(flowQueue.name,flowQueue.options);
+  const ledger={id:TRIAL.id,entries:[] as {id:number;state:string;reservedMicroCny:number}[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny};
+  const setLedger=async()=>sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json(ledger)}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
+  await setLedger();
+  const body="合成远洋渔业中断恢复测试原文。",evidence=["p1s1"],date={date:{precision:"unknown",value:null},evidence:[]};
+  const wire={relevance:{decision:"relevant",reason:"Synthetic source",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]};
+  async function task(identity:string) {
+    const f=await fixture({unknownRights:true});
+    await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-reconcile/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+    await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/reconcile-${f.id}`,title:"SYNTHETIC RECONCILIATION FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+    await approve(f.id,2,1);
+    return createFlow(f.id,{identity},"fixture-admin");
+  }
+  const request=(state:any)=>({snapshotHash:state.snapshotHash,executionFingerprint:state.executionFingerprint,expectedStatus:"running",acknowledgeRunnerStopped:true,reason:"Synthetic operator verified all old runners stopped",...state.activeJobId?{cancelActiveJobId:state.activeJobId}:{}});
+  const zero=await task("synthetic-zero-request");
+  // Local fault injection: claim commits, the authorization callback stands in for a process that never reaches its stage request.
+  await runFlow(zero.id,async()=>{throw new Error("No synthetic request is allowed");},async()=>{});
+  let detail=await flowDetail(zero.id);assert.equal(detail.reconciliation.eligible,true,detail.reconciliation.reasons.join(";"));
+  const oldRunner=await acquireProcessingLease();
+  try {await assert.rejects(reconcileFlow(zero.id,request(detail.reconciliation),"fixture-admin"),/lease unavailable/);}finally{await oldRunner.release();}
+  assert.equal((await flowDetail(zero.id)).status,"running");
+  const stale=request(detail.reconciliation);await sql`UPDATE fishery_flow_tasks SET review_attempt=2,updated_at=now() WHERE id=${zero.id}`;
+  await assert.rejects(reconcileFlow(zero.id,stale,"fixture-admin"),/fingerprint changed/);
+  detail=await flowDetail(zero.id);
+  const receiptCount=(await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,ledgerBefore=(await sql`SELECT value FROM settings WHERE key=${authorizationKey}`)[0]!.value,reviewBefore=(await documentHistory(zero.document_id)).reviews;
+  config.devAdmin=null;assert.equal((await app.inject({method:"POST",url:`/api/admin/fishery/flows/${zero.id}/reconcile`,payload:request(detail.reconciliation)})).statusCode,401);
+  config.devAdmin={displayName:"Synthetic recovery operator"};
+  try {
+    assert.equal((await app.inject({method:"POST",url:`/api/admin/fishery/flows/${zero.id}/reconcile`,payload:request(detail.reconciliation)})).statusCode,403);
+    const recovered=await app.inject({method:"POST",url:`/api/admin/fishery/flows/${zero.id}/reconcile`,headers:{"x-csrf-token":"dev"},payload:request(detail.reconciliation)});
+    assert.equal(recovered.statusCode,200,recovered.body);assert.equal(recovered.json().modelCalls,0);assert.equal(recovered.json().status,"failed");
+  }finally{config.devAdmin=null;}
+  assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,receiptCount);assert.deepEqual((await sql`SELECT value FROM settings WHERE key=${authorizationKey}`)[0]!.value,ledgerBefore);assert.deepEqual((await documentHistory(zero.document_id)).reviews,reviewBefore);
+  await assert.rejects(reconcileFlow(zero.id,request(detail.reconciliation),"fixture-admin"),/fingerprint changed/);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.flow.reconcile' AND after->>'id'=${zero.id}`)[0]!.n,1);
+  await assert.rejects(retryFlow(zero.id,{note:"No hidden first call acknowledgement"},"fixture-admin"),/acknowledge new stage charges/);
+  await retryFlow(zero.id,{note:"Explicitly accept future first-stage calls",acknowledgeNewCharge:true},"fixture-admin");
+  await decideFlow(zero.id,{decision:"rejected",snapshotHash:detail.snapshotHash,note:"Synthetic cleanup, no business qualification"},"fixture-admin");
+
+  const saved=await task("synthetic-generation-saved"),input={documentId:saved.document_id,observationRevision:2,body,bodySha256:sha256(body),language:"en"};let generationCalls=0,reviewCalls=0;
+  const generationRequest=buildFisheryDraftRequest(input,"default"),subject=generationRequest.subject+`:snapshot:${hash(saved.snapshot)}:generation:1`,attemptTag=`fishery-flow:${hash(saved.snapshot)}:generation:1`;
+  const draft=await prepareFisheryDraft(input,"default",async options=>{
+    const response=await paidRequest({service:"reconcile-local-mock",model:"mock",purpose:options.purpose,subject,identity:{input:options.user},attemptTag},async()=>{generationCalls++;return {response:wire};});
+    return {data:options.schema.parse(response.response),receiptId:response.receiptId,reused:response.reused,model:"mock",usage:null};
+  });
+  await completeReceipt(sql,draft.receiptId);ledger.entries=[{id:1,state:"received",reservedMicroCny:TRIAL.reserveMicroCny}];await setLedger();
+  // Local DB fault fixture: the generation transaction is durable, but the process dies before recording its first review request.
+  await sql`UPDATE fishery_flow_tasks SET status='running',stage='review',draft=${sql.json(draft)},stage_requests=${sql.json({'generation:1':{subject,purpose:'fishery_draft',attemptTag,promptVersion:generationRequest.promptVersion}})} WHERE id=${saved.id}`;
+  const [originalReceipt]=await sql`SELECT * FROM receipts WHERE id=${draft.receiptId}`;
+  detail=await flowDetail(saved.id);assert.equal(detail.reconciliation.eligible,true,detail.reconciliation.reasons.join(";"));assert.equal(detail.reconciliation.reusableGenerationReceiptId,draft.receiptId);
+  for(const state of ["pending","unknown","refused"]) {ledger.entries[0]!.state=state;await setLedger();const blocked=await flowDetail(saved.id);assert.equal(blocked.reconciliation.eligible,false);await assert.rejects(reconcileFlow(saved.id,request(blocked.reconciliation),"fixture-admin"),/pending\/unknown\/refused/);}
+  ledger.entries[0]!.state="received";await setLedger();
+  await sql`UPDATE receipts SET response=NULL WHERE id=${draft.receiptId}`;detail=await flowDetail(saved.id);await assert.rejects(reconcileFlow(saved.id,request(detail.reconciliation),"fixture-admin"),/response missing|Generation receipt/);
+  await sql`UPDATE receipts SET response=${sql.json(wire)} WHERE id=${draft.receiptId}`;
+  detail=await flowDetail(saved.id);await reconcileFlow(saved.id,request(detail.reconciliation),"fixture-admin");
+  await assert.rejects(retryFlow(saved.id,{note:"Resume must not silently send the first review"},"fixture-admin"),/acknowledge new stage charges/);
+  const resumed=await retryFlow(saved.id,{note:"Explicit first review charge acknowledgement",acknowledgeNewCharge:true},"fixture-admin");assert.equal(resumed.stage,"review");assert.equal(resumed.attempt,1);
+  const invoke=async(options:any)=>{
+    assert.equal(options.purpose,"fishery_quality_review");
+    const received=await paidRequest({service:"reconcile-local-mock",model:"mock",purpose:options.purpose,subject:options.subject,identity:{user:options.user},attemptTag:options.attemptTag},async()=>{reviewCalls++;return {response:{decision:"supported",coverage:"complete_input",findings:JSON.parse(options.user).claims.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic review only",evidence:c.evidenceIds}))}};});
+    return {data:options.schema.parse(received.response),receiptId:received.receiptId,reused:received.reused,model:"mock",usage:null};
+  };
+  assert.equal((await runFlow(saved.id,invoke)).status,"needs_human_review");assert.equal(generationCalls,1);assert.equal(reviewCalls,1);
+  await assert.rejects(runFlow(saved.id,invoke),/not queued/);assert.equal(reviewCalls,1);assert.deepEqual((await sql`SELECT * FROM receipts WHERE id=${draft.receiptId}`)[0],originalReceipt);
+  await sql`UPDATE fishery_flow_tasks SET status='running' WHERE id=${saved.id}`;
+  detail=await flowDetail(saved.id);await assert.rejects(reconcileFlow(saved.id,request(detail.reconciliation),"fixture-admin"),/durable request|already has a receipt/);
+  await retryFlow(saved.id,{note:"Original completed review receipt resumes without another charge"},"fixture-admin");assert.equal((await runFlow(saved.id,invoke)).status,"needs_human_review");assert.equal(reviewCalls,1);
+
+  const intent=await task("synthetic-intent-no-receipt");await sql`UPDATE fishery_flow_tasks SET status='running',stage_requests=${sql.json({'generation:1':{subject:`fishery:${intent.document_id}:missing`,purpose:'fishery_draft'}})} WHERE id=${intent.id}`;
+  detail=await flowDetail(intent.id);await assert.rejects(reconcileFlow(intent.id,request(detail.reconciliation),"fixture-admin"),/durable request|prior stage request/);
+  await decideFlow(intent.id,{decision:"rejected",snapshotHash:detail.snapshotHash,note:"Cannot decide running task"},"fixture-admin").then(()=>assert.fail("running decision must reject"),error=>assert.match(error.message,/Running/));
+
+  const duplicate=await task("synthetic-duplicate-jobs");await runFlow(duplicate.id,async()=>{throw new Error("No request");},async()=>{});
+  const activeId=await boss.send(flowQueue.name,{id:duplicate.id});await boss.fetch(flowQueue.name);const queuedId=await boss.send(flowQueue.name,{id:duplicate.id});
+  detail=await flowDetail(duplicate.id);assert.equal(detail.reconciliation.eligible,false);await assert.rejects(reconcileFlow(duplicate.id,request(detail.reconciliation),"fixture-admin"),/Queued\/retry|duplicate/);
+  await boss.cancel(flowQueue.name,[activeId!,queuedId!]);
+  const sole=await boss.send(flowQueue.name,{id:duplicate.id});await boss.fetch(flowQueue.name);detail=await flowDetail(duplicate.id);assert.equal(detail.reconciliation.activeJobId,sole);assert.equal(detail.reconciliation.eligible,true,detail.reconciliation.reasons.join(";"));
+  await assert.rejects(reconcileFlow(duplicate.id,{...request(detail.reconciliation),cancelActiveJobId:undefined},"fixture-admin"),/exact old active job/);
+  await reconcileFlow(duplicate.id,request(detail.reconciliation),"fixture-admin");assert.equal((await boss.getJobById(flowQueue.name,sole!))?.state,"cancelled");
+  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.flow.reconcile.cancel_job' AND after->>'taskId'=${duplicate.id}`)[0]!.n,1);
+  const oldSnapshot=await task("synthetic-stale-pre-request");await runFlow(oldSnapshot.id,async()=>{throw new Error("No request");},async()=>{});
+  const history=await documentHistory(oldSnapshot.document_id);
+  await observe(oldSnapshot.document_id,{...history.observations.find(o=>o.revision===2)!.payload,expectedRevision:2,title:"Synthetic current observation after interrupted old task"},"fixture-admin");await approve(oldSnapshot.document_id,3,1);
+  detail=await flowDetail(oldSnapshot.id);assert.equal(detail.stale,true);assert.equal(detail.reconciliation.eligible,true,detail.reconciliation.reasons.join(";"));
+  await reconcileFlow(oldSnapshot.id,request(detail.reconciliation),"fixture-admin");assert.equal((await flowDetail(oldSnapshot.id)).status,"failed");
+  await assert.rejects(retryFlow(oldSnapshot.id,{note:"Never resume a stale task",acknowledgeNewCharge:true},"fixture-admin"),/changed|superseded/);
+  await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
+});
+
+test("synthetic old lease owner cannot claim after waiting for a document lock",async()=>{
+  const f=await fixture({unknownRights:true}),body="合成远洋渔业租约领取故障测试。";
+  await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-claim-lease/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+  await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/claim-${f.id}`,title:"SYNTHETIC LEASE CLAIM FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+  const task=await createFlow(f.id,{identity:"synthetic-lease-claim"},"fixture-admin");
+  const [before]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${task.id}`,ledgerBefore=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`,receiptCount=(await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+  let releaseDocument!:()=>void,documentLocked!:()=>void;
+  const gate=new Promise<void>(resolve=>{releaseDocument=resolve;}),locked=new Promise<void>(resolve=>{documentLocked=resolve;});
+  const editing=sql.begin(async tx=>{await tx`SELECT id FROM fishery_documents WHERE id=${f.id} FOR UPDATE`;documentLocked();await gate;});await locked;
+  const ownerA=await acquireProcessingLease();let ownerB:Awaited<ReturnType<typeof acquireProcessingLease>>|undefined,calls=0;
+  try {
+    const abandoned=ownerA.run(()=>runFlow(task.id,async()=>{calls++;throw new Error("Lost owner must not send");},undefined,{requireProcessingLease:true})).then(value=>({value,error:null}),error=>({value:null,error}));
+    const until=Date.now()+5000;let waiting=false;
+    while(Date.now()<until) {const [row]=await sql`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FROM fishery_documents%'`;if(row!.n){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,20));}
+    assert.equal(waiting,true,"old production claim reached the held document lock");
+    // Kill only this test's own retained lease session, never PostgreSQL or another application's session.
+    await sql`SELECT pg_terminate_backend(${ownerA.backendPid})`;ownerB=await acquireProcessingLease();
+    releaseDocument();await editing;
+    const stopped=await abandoned;assert.ok(stopped.error);assert.match(stopped.error.message,/lease/);assert.equal(calls,0);
+    assert.deepEqual((await sql`SELECT * FROM fishery_flow_tasks WHERE id=${task.id}`)[0],before);
+    assert.deepEqual(await sql`SELECT value FROM settings WHERE key=${authorizationKey}`,ledgerBefore);assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,receiptCount);
+    await ownerB.assertHeld();
+  }finally{releaseDocument();await editing;await ownerB?.release();await ownerA.release();}
 });
