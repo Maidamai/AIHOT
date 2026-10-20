@@ -52,14 +52,29 @@ async function inputFor(documentId:string,expectedHash:string):Promise<DraftInpu
   const pages=c.attachmentPages?pdfPages(body,c.attachmentPages):undefined;
   return {pages,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
 }
+async function assertDocumentSettled(documentId:string,db:Db=sql,exceptRunningId:string|null=null) {
+  const [running]=await db`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} AND status='running' AND (${exceptRunningId}::text IS NULL OR id<>${exceptRunningId}) LIMIT 1`;
+  if(running) throw new Conflict(`Document task ${running.id} is running, not queued; reconcile before replacing or dispatching`);
+  const [uncertain]=await db`SELECT r.id FROM fishery_flow_tasks t CROSS JOIN LATERAL jsonb_each(t.stage_requests) b
+    JOIN receipts r ON r.subject=b.value->>'subject' AND r.purpose=b.value->>'purpose'
+    WHERE t.document_id=${documentId} AND r.status IN ('pending','unknown') LIMIT 1`;
+  if(uncertain) throw new Conflict(`Document has pending/unknown receipt ${uncertain.id}; reconcile before any new candidate or dispatch`);
+}
+async function assertNoQueuedReplacement(documentId:string,db:Db) {
+  const [queued]=await db`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} AND status='queued' LIMIT 1`;
+  if(queued) throw new Conflict(`Document task ${queued.id} is queued; explicitly reject it before creating a different candidate`);
+}
 export async function createFlow(documentId:string,raw:unknown,actor:string) {
   const data=z.strictObject({identity}).parse(raw),current=await snapshot(documentId);
   return sql.begin(async tx=>{
     await lockDocument(tx,documentId);
+    await assertDocumentSettled(documentId,tx);
+    if((await snapshot(documentId)).hash!==current.hash) throw new Conflict("Source changed while creating task");
     const [old]=await tx`SELECT * FROM fishery_flow_tasks WHERE document_id=${documentId} AND identity=${data.identity}`;
     if(old) {if(hash(old.snapshot)!==current.hash) throw new Conflict("Attempt identity belongs to old evidence");return old;}
     const [sameEvidence]=await tx`SELECT * FROM fishery_flow_tasks WHERE document_id=${documentId} AND snapshot=${tx.json(current.value)} ORDER BY created_at DESC,id DESC LIMIT 1`;
     if(sameEvidence) return sameEvidence;
+    await assertNoQueuedReplacement(documentId,tx);
     const [row]=await tx`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor) VALUES (${randomUUID()},${documentId},${data.identity},${tx.json(current.value)},'queued','generation',${actor}) RETURNING *`;
     await audit(actor,"fishery.flow.create",`fishery:${documentId}`,null,null,{id:row!.id,snapshotHash:current.hash},{db:tx});return row!;
   });
@@ -68,6 +83,7 @@ export async function createFlow(documentId:string,raw:unknown,actor:string) {
 export async function revisionContext(id:string) {
   const [original]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${id}`;
   if(!original) throw new NotFound("Original flow not found");
+  await assertDocumentSettled(original.document_id);
   const manual=original.draft?.provenance?.origin==="human_revision";
   if(!(manual?["failed","needs_evidence","rejected"]:["failed","needs_evidence"]).includes(original.status)) throw new Conflict("Only settled failed or needs-evidence candidates, or rejected manual revisions, can be revised");
   for(const request of Object.values(original.stage_requests??{}) as {subject:string;purpose:string}[]) {
@@ -116,11 +132,13 @@ export async function createHumanRevision(id:string,raw:unknown,actor:string) {
   const draft={receiptId:null,model:"human_revision",promptVersion:buildFisheryDraftRequest(input,"default").promptVersion,schemaVersion:parsed.schemaVersion,evidenceCatalog:parsed.evidenceCatalog,draft:candidate,provenance};
   return sql.begin(async tx=>{
     await lockDocument(tx,context.documentId);
+    await assertDocumentSettled(context.documentId,tx);
     if((await snapshot(context.documentId)).hash!==context.snapshotHash) throw new Conflict("Snapshot changed while saving revision");
     const [old]=await tx`SELECT * FROM fishery_flow_tasks WHERE document_id=${context.documentId} AND identity=${data.identity}`;
     if(old) {if(old.draft?.provenance?.candidateHash!==candidateHash||hash(old.snapshot)!==context.snapshotHash) throw new Conflict("Revision identity already belongs to a different candidate");return old;}
     const [same]=await tx`SELECT * FROM fishery_flow_tasks WHERE document_id=${context.documentId} AND snapshot=${tx.json(current.value)} AND draft->'provenance'->>'candidateHash'=${candidateHash} ORDER BY created_at DESC,id DESC LIMIT 1`;
     if(same) return same;
+    await assertNoQueuedReplacement(context.documentId,tx);
     const [row]=await tx`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor,draft) VALUES (${randomUUID()},${context.documentId},${data.identity},${tx.json(current.value)},'queued','review',${actor},${tx.json(JSON.parse(JSON.stringify(draft)))}) RETURNING *`;
     await audit(actor,"fishery.flow.human_revision",`fishery:${context.documentId}`,data.reason,null,{id:row!.id,snapshotHash:context.snapshotHash,...provenance},{db:tx});
     return row!;
@@ -187,9 +205,17 @@ async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,st
   return invoke(options);
 }
 export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>Promise<void>)=>Promise<void>=run=>run()) {
-  if(!(await flowDetail(id)).authoritative) throw new Conflict("A newer authoritative task supersedes this task");
-  const [claimed]=await sql`UPDATE fishery_flow_tasks SET status='running',updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
-  if(!claimed) throw new Conflict("Flow is not queued; running/failed/unknown outcomes require explicit operator reconciliation");
+  const [task]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;
+  if(!task) throw new NotFound("Flow not found");
+  const claimed=await sql.begin(async tx=>{
+    await lockDocument(tx,task.document_id);
+    await assertDocumentSettled(task.document_id,tx);
+    const [latest]=await tx`SELECT id FROM fishery_flow_tasks WHERE document_id=${task.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
+    if(latest?.id!==id) throw new Conflict("A newer authoritative task supersedes this task");
+    const [row]=await tx`UPDATE fishery_flow_tasks SET status='running',updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
+    if(!row) throw new Conflict("Flow is not queued; running/failed/unknown outcomes require explicit operator reconciliation");
+    return row;
+  });
   let stage=claimed.stage as string,phase="authorization",receiptId:number|null=null;
   try {
     await authorize(async()=>{
@@ -232,8 +258,12 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
 export async function retryFlow(id:string,raw:unknown,actor:string) {
   const {note,mode,acknowledgeNewCharge}=z.strictObject({note:z.string().trim().min(1).max(2000),mode:z.enum(["resume","regenerate"]).default("resume"),acknowledgeNewCharge:z.boolean().default(false)}).parse(raw);
   const detail=await flowDetail(id);if(detail.stale||!detail.authoritative) throw new Conflict(detail.staleReason??"Task superseded");
+  const [target]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;if(!target) throw new NotFound("Flow not found");
   return sql.begin(async tx=>{
+    await lockDocument(tx,target.document_id);
     const [row]=await tx`SELECT * FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
+    await assertDocumentSettled(target.document_id,tx,id);
+    const currentDetail=await flowDetail(id);if(currentDetail.stale||!currentDetail.authoritative) throw new Conflict(currentDetail.staleReason??"Task superseded");
     if(!row||!["failed","needs_evidence","running"].includes(row.status)) throw new Conflict("Only failed, needs-evidence or reconciled interrupted flows can resume");
     const stage=row.draft?.provenance?.origin==="human_revision"?"review":row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stage==="review"?row.review_attempt:row.generation_attempt;
     const bound=row.stage_requests[`${stage}:${oldAttempt}`];
@@ -254,9 +284,10 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
 }
 export async function decideFlow(id:string,raw:unknown,actor:string) {
   const data=qualification.parse(raw);
+  const [target]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;if(!target) throw new NotFound("Flow not found");
   return sql.begin(async tx=>{
+    await lockDocument(tx,target.document_id);
     const [row]=await tx`SELECT * FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;if(!row) throw new NotFound("Flow not found");
-    await lockDocument(tx,row.document_id);
     if(data.snapshotHash!==hash(row.snapshot)) throw new Conflict("Review snapshot changed");
     if(row.status==="running") throw new Conflict("Running task must finish or be reconciled before a human decision");
     if(data.decision==="qualified") {
@@ -303,4 +334,11 @@ export async function runQueuedFlows(jobs:{id:string}[],invoke:FisheryInvoke=cha
   return rows;
 }
 export const flowQueue=defineQueue<{id:string}>({name:"fishery.flow",options:{policy:"short",retryLimit:0,expireInSeconds:600},worker:{batchSize:1,localConcurrency:1},run:runQueuedFlows});
-export async function enqueueFlow(id:string) {const detail=await flowDetail(id);if(detail.stale||!detail.authoritative||detail.status!=="queued") throw new Conflict("Current queued task required");return {id,jobId:await enqueueOn(flowQueue,{id}),status:"queued"};}
+export async function enqueueFlow(id:string) {
+  const [task]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;if(!task) throw new NotFound("Flow not found");
+  return sql.begin(async tx=>{
+    await lockDocument(tx,task.document_id);await assertDocumentSettled(task.document_id,tx);
+    const detail=await flowDetail(id);if(detail.stale||!detail.authoritative||detail.status!=="queued") throw new Conflict("Current queued task required");
+    return {id,jobId:await enqueueOn(flowQueue,{id},{},tx),status:"queued"};
+  });
+}
