@@ -20,7 +20,7 @@ export default function Batches({loaderData:data}:ComponentProps<typeof loader>)
       {b.reparse&&<p className="mt-2 text-[13px] text-ink-3">处理时间不是原文获取时间；原获取时间保持不变。正文版本变化后需要重新审核。</p>}
       <ul className="my-3 space-y-2 text-[13px]">{b.sources.map(s=><li key={s.id}>{s.id}：栏目链接 {s.listed}，标题排除 {s.titleFiltered}，文章请求 {s.attempted}{s.error&&<span className="text-hot"> · {s.error}</span>}</li>)}</ul>
       <ul className="mb-4 space-y-3 text-[13px]">{b.items.map(i=><li key={i.archiveId}><a href={i.url} target="_blank" rel="noreferrer" className="text-accent">{i.discoveryTitle}</a> · {i.state} · 发布 {i.prepared?.dates.published.value??"未知"} · 地域待核{b.reparse&&<> · 原获取 {i.prepared?.sourceCapture.capturedAt??"未记录"}</>}{i.error&&<p className="break-words text-hot">{i.error}</p>}</li>)}</ul>
-      <Button disabled={busy||b.status!=="complete"||!b.items.some(i=>i.state==="ready")} onClick={()=>run("POST",`/api/admin/fishery/batches/${b.id}/import`,{}, {success:"已导入；新材料待审，相同证据不重复入库"})}>导入待审材料</Button>
+      <Button disabled={busy||b.status!=="complete"||!b.items.length} onClick={()=>run("POST",`/api/admin/fishery/batches/${b.id}/import`,{}, {success:"已记录采集结果；新材料待审，正文变化使旧审核失效，失败不等于撤稿"})}>导入或记录采集结果</Button>
     </Card>)}{!data.rows.length&&<Empty>尚无手动采集或归档重解析记录。</Empty>}</div>
   </AdminPage>;
 }

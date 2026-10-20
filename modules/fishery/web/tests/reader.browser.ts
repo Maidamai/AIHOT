@@ -14,6 +14,10 @@ const api=fakeApi((url,res)=>{
   apiPaths.push(url.pathname);
   if(url.pathname==="/api/admin/me") {if(mode==="unauthorized")res.statusCode=401;return {name:"synthetic-admin",csrf:"synthetic-test-only",dev:false};}
   if(url.pathname==="/api/admin/nav-counts")return {};
+  if(url.pathname==="/api/admin/fishery/batches") {
+    const batch=(id:string,status:string,states:string[])=>({id,status,startedAt:"2026-10-20T00:00:00Z",finishedAt:status==="complete"?"2026-10-20T00:01:00Z":null,sources:[],items:states.map((state,i)=>({archiveId:`${id}_${i}`,url:`https://example.org/${id}/${i}`,discoveryTitle:`Synthetic ${state} capture`,state,prepared:null,error:state==="failed"?"Synthetic unavailable capture":null}))});
+    return {rows:[batch("synthetic-irrelevant","complete",["irrelevant"]),batch("synthetic-unavailable","complete",["failed"]),batch("synthetic-running","running",["irrelevant"]),batch("synthetic-empty","complete",[]),{id:"synthetic-unreadable",status:"unreadable",error:"Synthetic truncated manifest"}]};
+  }
   if(url.pathname==="/api/admin/fishery/flows/synthetic-failed") {const unknown={precision:"unknown",value:null};return {id:"synthetic-failed",document_id:"synthetic-policy",identity:"synthetic-failed",status:unapprovedSupportedFlow?"needs_human_review":"failed",stage:"generation",authoritative:true,materialRejected:false,materialApproved:false,stale:false,snapshotHash:"a".repeat(64),generation_attempt:1,review_attempt:1,draft:unapprovedSupportedFlow?{receiptId:999,promptVersion:"synthetic",model:"mock",draft:{relevance:{decision:"relevant"},summaryZh:[{sentence:"合成已核查候选，原素材仍未审核。",evidence:[]}]}}:null,quality_review:unapprovedSupportedFlow?{receiptId:999,promptVersion:"synthetic",model:"mock",status:"needs_human_review",review:{decision:"supported",coverage:"complete_input",findings:[]},missingFields:[]}:null,human_decision:null,internalArticle:null,error:{stage:"generation",reason:"Synthetic failure",receiptId:null},timeline:{label:"合成失败任务",referenceDate:"2026-10-20",originalAgeDays:null,sourcePublished:unknown,sourceEvent:unknown,candidateEvent:unknown,taskCreatedAt:"2026-10-20T00:00:00Z",taskUpdatedAt:"2026-10-20T00:00:00Z"}};}
   if(url.pathname.startsWith("/api/admin/fishery/reader")) {
     if(mode==="unauthorized") {res.statusCode=401;return {code:"unauthorized"};}
@@ -85,5 +89,23 @@ test("administrator saves synthetic manual revision separately from explicit mod
     assert.deepEqual(requests.map(r=>r.method),["GET","POST"]);assert.equal(requests[1]!.body.evidenceHash,"b".repeat(64));
     assert.equal(requests[1]!.body.reason,"Synthetic revision reason");assert.equal(apiPaths.some(p=>p.endsWith("/run")),false);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  } finally {await page.close();}
+});
+
+
+test("administrator can record an irrelevant-only or failed-only capture without enabling incomplete or unreadable batches",async()=>{
+  mode="ready";const page=await browser.newPage(),imports:string[]=[];
+  await page.route("**/api/admin/fishery/batches/*/import",async route=>{imports.push(route.request().url());await route.fulfill({json:{rows:[],evidenceUpdates:[],acquisitions:[],published:false}});});
+  try {
+    await visit(page,web.origin+"/admin/fishery/collect");
+    const card=(id:string)=>page.locator("section").filter({has:page.getByRole("heading",{name:id,exact:true})});
+    for(const id of ["synthetic-irrelevant","synthetic-unavailable"]) {
+      const action=card(id).getByRole("button",{name:"导入或记录采集结果",exact:true});
+      await expect(action).toBeEnabled();await action.click();
+      await expect(action).toBeEnabled();
+    }
+    for(const id of ["synthetic-running","synthetic-empty"]) await expect(card(id).getByRole("button",{name:"导入或记录采集结果",exact:true})).toBeDisabled();
+    await expect(card("synthetic-unreadable").getByRole("button")).toHaveCount(0);
+    assert.equal(imports.length,2);assert.ok(imports[0]!.endsWith("/synthetic-irrelevant/import"));assert.ok(imports[1]!.endsWith("/synthetic-unavailable/import"));
   } finally {await page.close();}
 });
