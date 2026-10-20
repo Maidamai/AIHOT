@@ -2,7 +2,7 @@ import { z } from "zod";
 import { sha256 } from "./source-adapters.ts";
 
 // Bump whenever segmentation, page binding or catalog serialization changes. Never replay an old wire response under a new version.
-export const EVIDENCE_VERSION="fishery-spans-v1";
+export const EVIDENCE_VERSION="fishery-spans-v2";
 export interface EvidenceInput {body:string;bodySha256:string;observationRevision:number;pages?:{page:number;text:string}[]}
 export interface EvidenceSpan {id:string;quote:string;paragraph:number;page:number|null;start:number;end:number}
 export interface EvidenceCatalog {version:string;hash:string;bodySha256:string;observationRevision:number;spans:EvidenceSpan[];pages:{page:number;start:number;end:number}[]}
@@ -63,8 +63,8 @@ export function anchorIds(catalog:EvidenceCatalog,anchors:{quote:string;paragrap
   return anchors.map(anchor=>catalog.spans.find(s=>s.quote===anchor.quote&&s.paragraph===anchor.paragraph&&s.page===anchor.page)?.id??null);
 }
 export function catalogSource(input:EvidenceInput,catalog:EvidenceCatalog) {
-  // Full source exactly once; index points into it using UTF-16 code-unit offsets. Pages are intervals, never another full-text copy.
-  return {body:input.body,offsetUnit:"UTF-16",evidenceCatalog:{...evidenceBinding(catalog),spans:catalog.spans.map(({quote,...index})=>index)},paragraphs:sourceParagraphs(input.body).map(({text,...index})=>index),pages:catalog.pages};
+  // Keep the complete source context and readable, literal quotes next to their IDs. Pages remain verified intervals.
+  return {body:input.body,offsetUnit:"UTF-16",evidenceCatalog:{...evidenceBinding(catalog),spans:catalog.spans},paragraphs:sourceParagraphs(input.body).map(({text,...index})=>index),pages:catalog.pages};
 }
 
 export function assertSavedEvidenceArtifact(input:EvidenceInput,artifact:{evidenceCatalog?:ReturnType<typeof evidenceBinding>;promptVersion?:string;schemaVersion?:string},expected:{promptVersion:string;schemaVersion:string}) {

@@ -78,7 +78,7 @@ try {
         const request=buildFisheryDraftRequest(input,"default");
         request.subject+=`:attempt:${values.attempt}`;
         request.attemptTag=`fishery-trial:${values.attempt}:generation`;
-        request.system+="\n本轮输出简短JSON：摘要最多2句，每句只陈述一条有完整所附引证支持的具体事实，允许每句最多2引句，每条证据仅选择完整目录ID，地点最多4条。不确定就保留未知。";
+        request.system+="\n本轮输出简短JSON：摘要最多2句，每句只陈述一条有完整所附引证支持的具体事实，允许每句最多4引句，每条证据仅选择完整目录ID，地点最多4条。不确定就保留未知。";
         request.promptVersion=`${request.promptVersion}:trial:${sha256(request.system)}`;
         const [saved]=await sql<{value:{draft:unknown;bodySha256:string;promptVersion:string;schemaVersion:string;evidenceCatalog:ReturnType<typeof evidenceBinding>}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
         if(saved) assertSavedEvidenceArtifact(input,saved.value,{promptVersion:request.promptVersion,schemaVersion:"fishery-draft-wire-v5"});

@@ -527,7 +527,7 @@ test("v5 strict ID wire expands complete evidence without repairing original rec
   const canonical=validateFisheryDraft(input,request.schema.parse(wire));
   assert.equal(canonical.eventStatus.value,"reported_occurred");assert.equal(canonical.locations[0]!.value,"上海");assert.deepEqual(canonical.dates.event.date,unknownDate);
   assert.equal(canonical.locations[0]!.evidence[0]!.quote,catalog.spans[0]!.quote);
-  const source=JSON.parse(request.user as string);assert.equal(source.body,input.body);assert.ok(source.evidenceCatalog.spans.every((s:any)=>!("quote" in s)));
+  const source=JSON.parse(request.user as string);assert.equal(source.body,input.body);assert.ok(source.evidenceCatalog.spans.every((s:any)=>s.quote===input.body.slice(s.start,s.end)));
   for(const evidence of [null,{id:"p1s1"},[{quote:catalog.spans[0]!.quote,paragraph:1,page:null}],["p999s1"],["p1s1","p1s1"],Array(5).fill("p1s1")]) assert.equal(request.schema.safeParse({...wire,eventStatus:{value:"reported_occurred",evidence}}).success,false);
   assert.equal(request.schema.safeParse({...wire,eventStatus:{...wire.eventStatus,page:null}}).success,false);
   assert.throws(()=>buildEvidenceCatalog({...input,body:input.body+"变"}),/changed source body/);
@@ -603,4 +603,48 @@ test("saved generation and review cannot inherit a new prompt/schema or catalog 
     assert.throws(()=>assertSavedEvidenceArtifact(input,{},expected),/preserve the old attempt/);
     assert.deepEqual(saved,{...expected,evidenceCatalog:evidenceBinding(catalog)},"Version checks never rewrite saved results");
   }
+});
+
+async function iotcEntry9Fixture() {
+  const fixture=JSON.parse(await readFile(new URL("./fixtures/ai-iotc-entry9-20261020.json",import.meta.url),"utf8"));
+  const input={...idTestInput(fixture.body),documentId:"offline-original-entry9",language:"en",pages:fixture.pageRanges.map((p:{page:number;start:number;end:number})=>({page:p.page,text:fixture.body.slice(p.start,p.end).trim()}))};
+  return {fixture,input};
+}
+
+test("readable IOTC ID catalog preserves complete source and original entry9 wrong-anchor rejection",async()=>{
+  const {fixture,input}=await iotcEntry9Fixture(),original=JSON.stringify(fixture),catalog=buildEvidenceCatalog(input),request=buildFisheryDraftRequest(input,"mock"),source=JSON.parse(request.user as string);
+  assert.equal(input.bodySha256,fixture.bodySha256);assert.equal(Buffer.byteLength(input.body),19598);assert.equal(input.pages.length,6);
+  assert.equal(source.body,input.body);assert.deepEqual(source.evidenceCatalog.spans,catalog.spans);
+  for(const span of source.evidenceCatalog.spans) assert.equal(span.quote,input.body.slice(span.start,span.end),span.id);
+  const quote=(id:string)=>catalog.spans.find(s=>s.id===id)!.quote;
+  assert.match(quote("p2s1"),/RESOLUTION 26\/03/);assert.match(quote("p5s1"),/Keywords/);assert.match(quote("p6s1"),/Indian Ocean Tuna Commission/);
+  assert.match(quote("p46s1"),/means all fisheries/);assert.match(quote("p47s1"),/Subsistence fisheries/);assert.match(quote("p50s1"),/Artisanal fisheries/);
+  assert.match(quote("p59s1"),/prohibit.*targeted fishing/);assert.match(quote("p60s1"),/mobulid rays/);
+  assert.match(quote("p66s1"),/extent practicable.*safety/);assert.match(quote("p67s1"),/crew and observers/);
+  const wrong=JSON.parse(fixture.rawContent);
+  assert.deepEqual(wrong.organizations[0].evidence,["p2s1"]);
+  assert.throws(()=>validateFisheryDraft(input,request.schema.parse(wrong)),/Role value lacks literal evidence: policy_issuer/);
+  assert.throws(()=>assertEvidenceBinding(input,{...evidenceBinding(catalog),version:fixture.protocol.evidenceVersion}),/cannot be reinterpreted/);
+  const sizes=assertFisheryPairFits(input,request);
+  assert.ok(sizes.generationBytes<96000);assert.ok(sizes.reviewEnvelopeBytes<96000);assert.equal(sizes.maxWireBytes,96000);
+  assert.throws(()=>assertFisheryPairFits(input,{...request,system:request.system+"界".repeat(7000)}),/zero-call manual/);
+  // A fresh synthetic case proves readable ID expansion only. It is not a repair of entry9 or a real model result.
+  const synthetic=validateFisheryDraft(input,request.schema.parse({...idTestDraft(),summaryZh:[{sentence:"CPCs须禁止其悬旗船故意设置任何渔具定向捕捞蝠鲼科鳐类。",evidence:["p59s1","p60s1"]}],organizations:[{role:"policy_issuer",value:"Indian Ocean Tuna Commission (IOTC)",evidence:["p6s1"]}]}));
+  assert.deepEqual(synthetic.summaryZh[0]!.evidence.map(e=>e.quote),[quote("p59s1"),quote("p60s1")]);
+  assert.equal(JSON.stringify(fixture),original,"Never rewrite the old wrong-ID response or its evidence bindings");
+});
+
+test("IOTC release claim missing safety qualifications cannot be repaired by supported review IDs",async()=>{
+  const {input}=await iotcEntry9Fixture(),generation=buildFisheryDraftRequest(input,"mock");
+  // Deliberately incomplete synthetic candidate: its bound line omits release, practicability and crew/observer safety.
+  const draft=validateFisheryDraft(input,generation.schema.parse({...idTestDraft(),summaryZh:[{sentence:"CPCs须要求悬旗渔船尽快活体释放意外捕获的蝠鲼科鳐类。",evidence:["p65s1"]}]})),request=buildFisheryReviewRequest(input,draft,"mock");
+  const finding={field:"summaryZh.0",verdict:"supported",reason:"Synthetic attempted repair",evidence:["p65s1","p66s1","p67s1"]};
+  assert.equal(request.schema.safeParse({decision:"supported",coverage:"complete_input",findings:[finding]}).success,false,"Readable source must not authorize adding omitted safety anchors");
+  assert.equal(request.schema.safeParse({decision:"supported",coverage:"complete_input",findings:[{...finding,evidence:["p66s1","p67s1"]}]}).success,false);
+  const result=await reviewFisheryDraft(input,draft,"mock",async options=>{
+    const source=JSON.parse(options.user as string).source;
+    assert.match(source.body,/extent practicable/);assert.match(source.body,/crew and observers/);
+    return {data:options.schema.parse({decision:"needs_evidence",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"not_found",reason:"Synthetic complete-context review: bound line lacks release, practicability and crew/observer safety; do not supplement anchors",evidence:[]}]}),receiptId:9999,reused:false,model:"mock",usage:null};
+  });
+  assert.equal(result.status,"needs_evidence");assert.deepEqual(result.missingFields,["summaryZh.0"]);assert.equal(result.approved,false);
 });
