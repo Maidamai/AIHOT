@@ -15,6 +15,7 @@ import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, vali
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
 import {reviewFisheryDraft} from "../backend/ai-review.ts";
 import { createHash } from "node:crypto";
+import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 
 test("saved DeepSeek responses preserve strict evidence arrays and the accepted draft's source anchors",async()=>{
   const {fixtures}=JSON.parse(await readFile(new URL("./fixtures/ai-trial-responses-20261020.json",import.meta.url),"utf8"));
@@ -304,6 +305,68 @@ test("IOTC missing/failed/unverified PDF and conflicting status or deadline stay
   }
 });
 
+function iotcList(rows: Array<[string, string, string, string]> = [[ioUrl, "26/01", "Pending", "2026"]]) {
+  return Buffer.from(`<table class="views-table"><tbody>${rows.map(([url, number, status, year]) => `<tr><td class="views-field-title-1"><a href="${url}">Resolution ${number} Synthetic measure</a></td><td class="views-field-nothing"><b>${status.replaceAll("&", "&amp;")} </b><br>Supersedes: <a href="/cmm/resolution-1601-synthetic-old">Resolution 16/01</a></td><td class="views-field-field-cmm-adoption-date"><span class="date-display-single" content="${year}-01-01T00:00:00+04:00">${year}</span></td></tr>`).join("")}</tbody></table>`);
+}
+
+test("IOTC current-list discovery keeps list order, deduplicates URLs and reads current identities", () => {
+  const active = "https://iotc.org/cmm/resolution-2803-synthetic", pending = "https://iotc.org/cmm/resolution-2801-synthetic";
+  const html = iotcList([[active,"28/03","Active & supersedes","2028"],[active,"28/03","Active & supersedes","2028"],[pending,"28/01","Pending","2028"],["https://example.org/cmm/resolution-2804-no","28/04","Active","2028"],["https://iotc.org/cmm/resolution-2501-old","25/01","Superseded","2025"]]);
+  const result = discoverIotc(html.toString());
+  assert.equal(result.listed,3); assert.equal(result.rejected,1);
+  assert.deepEqual(result.candidates.map(c => [c.url,c.number,c.status,c.adoptionYear]),[[active,"28/03","Active & supersedes","2028"],[pending,"28/01","Pending","2028"]]);
+  assert.deepEqual(discoverColumn("iotc",html.toString()),result);
+  const candidate = discoverIotc(iotcList().toString()).candidates[0]!;
+  const raw = ioHtml(), good = prepareIotc(candidate,receipt(raw,ioUrl),raw,syntheticPdf());
+  assert.equal(good.readyForReview,true); assert.equal(good.policyContext?.entryIntoForce,"pending");
+  for (const mismatch of [{number:"26/02"},{status:"Active"},{adoptionYear:"2025"},{url:active}]) {
+    const result = prepareIotc({...candidate,...mismatch},receipt(raw,ioUrl),raw,syntheticPdf());
+    assert.equal(result.readyForReview,false); assert.equal(result.body,null); assert.equal(result.sourceCapture.bodySha256,null);
+  }
+  assert.equal(iotcAttachment(raw,ioUrl),pdfUrl);
+  assert.throws(() => iotcAttachment(Buffer.from(raw.toString().replace(pdfUrl,"https://example.org/document.pdf")),ioUrl),/same-origin PDF/);
+});
+
+test("IOTC batch captures a selected current Active measure and verifies original listing/PDF/body", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(),"fishery-iotc-test-"));
+  // Public inspected robots policy fixture; every article, listing and PDF in this test is synthetic.
+  const robots = await readFile(new URL("./fixtures/iotc-robots.txt",import.meta.url));
+  const activeUrl = "https://iotc.org/cmm/resolution-2603-synthetic", list = iotcList([[ioUrl,"26/01","Pending","2026"],[activeUrl,"26/03","Active & supersedes","2026"]]);
+  const html = Buffer.from(ioHtml("Active &amp; supersedes").toString().replace("26/01","26/03").replace(/Entry into force pending[^<]+/,"Synthetic active metadata; applicability unknown."));
+  const pdf = pdfFixture(false,false,"RESOLUTION 26/03. Synthetic current fishery measure."), calls: string[] = [], waits: number[] = [];
+  const fetch = async (url:string) => {
+    calls.push(url);
+    const body = url.endsWith("robots.txt") ? robots : url === COLUMNS.iotc.url ? list : url === activeUrl ? html : url === pdfUrl ? pdf : Buffer.from("not found");
+    return {url,status:200,body,headers:{get:()=>url.endsWith(".pdf") ? "application/pdf" : "text/html"}};
+  };
+  try {
+    const batch = await collectColumns({id:"iotc-current",dataDir,columns:["iotc"],limit:1,iotcSelect:["26/03"],fetch,wait:async ms=>{waits.push(ms);}});
+    assert.equal(batch.sources[0]!.error,null); assert.equal(batch.items.length,1);
+    const item = batch.items[0]!; assert.equal(item.state,"ready",item.error ?? "Expected full measure");
+    assert.deepEqual(calls,["https://iotc.org/robots.txt",COLUMNS.iotc.url,activeUrl,pdfUrl]); assert.deepEqual(waits,[10000,10000,10000]);
+    const stored = await readBatch(dataDir,batch.id), verified = await verifyBatchItem(dataDir,stored,stored.items[0]!);
+    assert.equal(verified.readyForReview,true); assert.equal(verified.sourceCapture.attachmentPages,1);
+    assert.equal(verified.sourceCapture.attachmentSha256,sha256(pdf)); assert.match(verified.body!,/--- Page 1 ---/);
+    assert.ok("policyContext" in verified); if (!("policyContext" in verified)) throw new Error("Missing policy context");
+    assert.equal(verified.policyContext?.entryIntoForce,"unknown"); assert.deepEqual(verified.dates.effectiveFrom,unknownDate);
+    assert.equal(verified.evidence.find(e=>e.url===COLUMNS.iotc.url)?.sha256,sha256(list));
+    observationSchema.parse({...observationFixture,rawSha256:verified.sourceCapture.rawSha256,dates:verified.dates,sourceCapture:verified.sourceCapture,policyContext:verified.policyContext,evidence:verified.evidence});
+    const root = path.join(dataDir,"fishery-batches",batch.id);
+    await writeFile(path.join(root,"raw","iotc-list.bin"),iotcList());
+    await assert.rejects(verifyBatchItem(dataDir,stored,item),/raw hash mismatch/);
+    await writeFile(path.join(root,"raw","iotc-list.bin"),list);
+    await writeFile(path.join(root,"raw",`${item.archiveId}-pdf.bin`),Buffer.from("tampered"));
+    await assert.rejects(verifyBatchItem(dataDir,stored,item),/raw hash mismatch/);
+    calls.length=0; waits.length=0;
+    const missing = await collectColumns({id:"iotc-selection-missing",dataDir,columns:["iotc"],limit:1,iotcSelect:["29/01"],fetch,wait:async ms=>{waits.push(ms);}});
+    assert.equal(missing.items.length,0); assert.match(missing.sources[0]!.error!,/absent from current listing/);
+    assert.deepEqual(calls,["https://iotc.org/robots.txt",COLUMNS.iotc.url]);
+    calls.length=0;
+    const changed = await collectColumns({id:"iotc-policy-changed",dataDir,columns:["iotc"],limit:1,fetch:async url=>{calls.push(url);return {url,status:200,body:Buffer.from("User-agent: *\nCrawl-delay: 10\n"),headers:{get:()=>"text/plain"}};},wait:async()=>{throw new Error("Must stop before another request");}});
+    assert.equal(changed.items.length,0); assert.match(changed.sources[0]!.error!,/policy inspection/); assert.deepEqual(calls,["https://iotc.org/robots.txt"]);
+  } finally { await rm(dataDir,{recursive:true,force:true}); }
+});
+
 test("observation and export gates refuse pending-as-effective or failed capture, even after approval", () => {
   const raw = ioHtml(), result = prepareOfficial("iotc", receipt(raw, ioUrl), raw, syntheticPdf());
   const input = { ...observationFixture, rawSha256: sha256(raw), dates: result.dates, sourceCapture: result.sourceCapture, policyContext: result.policyContext! };
@@ -319,7 +382,7 @@ test("observation and export gates refuse pending-as-effective or failed capture
 });
 
 // Generated PDF 1.4 fixtures: no third-party documents or persisted passwords.
-function pdfFixture(blank = false, encrypted = false): Buffer {
+function pdfFixture(blank = false, encrypted = false, text = "Synthetic fishery evidence"): Buffer {
   const md5 = (b: Buffer) => createHash("md5").update(b).digest();
   const rc4 = (key: Buffer, input: Buffer) => {
     const s = Array.from({ length: 256 }, (_, i) => i); let j = 0;
@@ -332,7 +395,7 @@ function pdfFixture(blank = false, encrypted = false): Buffer {
   const id = md5(Buffer.from("synthetic-fishery-test")), p = Buffer.alloc(4); p.writeInt32LE(-4);
   const owner = rc4(md5(pad("fixture-owner")).subarray(0, 5), pad("fixture-user"));
   const key = md5(Buffer.concat([pad("fixture-user"), owner, p, id])).subarray(0, 5);
-  let content = Buffer.from(blank ? "" : "BT /F1 12 Tf 40 100 Td (Synthetic fishery evidence) Tj ET");
+  let content = Buffer.from(blank ? "" : `BT /F1 12 Tf 40 100 Td (${text}) Tj ET`);
   if (encrypted) content = rc4(md5(Buffer.concat([key, Buffer.from([5, 0, 0, 0, 0])])).subarray(0, 10), content);
   const objects = [
     Buffer.from("<< /Type /Catalog /Pages 2 0 R >>"),

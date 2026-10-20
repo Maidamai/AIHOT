@@ -14,9 +14,10 @@ export async function importBatch(id: string, actor: string) {
     const capture = r.sourceCapture;
     rows.push(await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,{
       expectedRevision:0,originalTitle:r.title,title:r.title,summaryZh:"待人工核对原文；尚未生成业务摘要，关键词命中仅是检索线索。",
-      language:"zh",rawSha256:capture.rawSha256,dates:r.dates,policyStatus:"unknown",sourceCapture:capture,
+      language:item.column === "iotc" ? "en" : "zh",rawSha256:capture.rawSha256,dates:r.dates,policyStatus:"unknown",sourceCapture:capture,
+      ...("policyContext" in r && r.policyContext ? {policyContext:r.policyContext} : {}),
       scope:{regions:[],species:[],flags:[],activities:[],unknownFields:["regions","species","flags","activities"]},
-      evidence:[{url:capture.sourceUrl,sha256:capture.rawSha256,page:null,section:"官方栏目正文；日期、地域及政策适用性待核"}],
+      evidence:"evidence" in r ? r.evidence : [{url:capture.sourceUrl,sha256:capture.rawSha256,page:null,section:"官方栏目正文；日期、地域及政策适用性待核"}],
     },actor));
   }
   return { batchId:id,rows,reviewState:"unreviewed",published:false };

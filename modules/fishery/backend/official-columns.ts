@@ -1,10 +1,11 @@
-// Two inspected official columns. Discovery uses their current lists, never a fixed article list.
+// Inspected official columns. Discovery uses their current lists, never a fixed article list.
 import * as cheerio from "cheerio";
 import { z } from "zod";
 import { readPublicationDate } from "@aihot/backend/sources/dates";
 import { beijingDate } from "@aihot/contracts/time";
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { archiveReceiptSchema, sha256 } from "./source-adapters.ts";
+import { discoverIotc } from "./iotc-columns.ts";
 
 export const COLUMNS = {
   moa: {
@@ -15,8 +16,12 @@ export const COLUMNS = {
     name: "福建省海洋与渔业局 · 省局动态", url: "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/",
     list: ".xw-list-1.gl_list li a", body: "#detailCont", issuer: "福建省海洋与渔业局",
   },
+  iotc: {
+    name: "IOTC · Current Conservation and Management Measures", url: "https://iotc.org/cmms/basic",
+    list: "table.views-table tbody tr", body: "#content .node-cmm", issuer: "Indian Ocean Tuna Commission (IOTC)",
+  },
 } as const;
-export const columnIdSchema = z.enum(["moa", "fujian"]);
+export const columnIdSchema = z.enum(["moa", "fujian", "iotc"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
 export const unknownDate = () => ({ precision: "unknown" as const, value: null });
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -32,6 +37,7 @@ export function titlePriority(title: string): Candidate["priority"] | null {
 }
 
 export function discoverColumn(id: ColumnId, html: string): { candidates: Candidate[]; rejected: number; listed: number } {
+  if (id === "iotc") return discoverIotc(html);
   const column = COLUMNS[id], base = new URL(column.url), $ = cheerio.load(html), seen = new Set<string>();
   const candidates: Candidate[] = []; let rejected = 0, listed = 0;
   for (const anchor of $(column.list).toArray()) {
@@ -57,7 +63,7 @@ export function relevanceEvidence(body: string): string[] {
   }).slice(0, 8);
 }
 
-export function prepareColumnArticle(id: ColumnId, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
+export function prepareColumnArticle(id: Exclude<ColumnId, "iotc">, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
   const receipt = archiveReceiptSchema.parse(receiptInput), column = COLUMNS[id], origin = new URL(column.url).origin;
   const conflicts: string[] = [], warnings: string[] = [];
   if (sha256(raw) !== receipt.sha256) conflicts.push("Raw bytes differ from the HTTP receipt");

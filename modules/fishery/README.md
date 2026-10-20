@@ -59,6 +59,10 @@ DATABASE_URL=postgres://aihot_test@127.0.0.1:55437/fishery_mvp_test \
 
 IOTC保留Pending、异议截止、可见通过年份；不把隐藏的1月1日当精确通过日期。PDF和页面的文号、Pending及截止日须一致。捕捞限额条款年份单独记入policyContext.provisionYears，不搬到抓取当年。未核发布日期及effectiveFrom保持unknown，异议截止不是生效日；未映射状态保留unknown和警告。
 
+IOTC当前CMM也可进入现有栏目批次：`node modules/fishery/scripts/collect-columns.ts --id <新批次> --data-dir <私有目录> --columns iotc --limit 1 --iotc-select 26/03`。`--iotc-select`接受当前首页实际发现的文号或完整URL，可逗号分隔；省略时依当前列表顺序选取，不固定旧决议。当前首页并不代表全部历史CMM。只从标题列发现身份、从可见年份取年份，状态列的Supersedes链接不作为新候选；Superseded条目不进入当前候选。列表和落地页文号、年份、状态必须一致，Active不自动转为已生效或法律适用。
+
+批次先保存并核验已检查的robots原始字节指纹，变化即停，所有IOTC请求之间至少等待10秒；随后保存当前列表、落地页和同源PDF的原始响应与回执。PDF须完整逐页提取，缺失、解析失败或超限均明确失败。批次导入会重新验证robots/列表身份、重读原PDF并重新解析，同时核对落地页/PDF/列表证据及正文哈希；不信任manifest里的可编辑标题或提取结果。正文仍进入同一管理员批次导入和待审核链路，转载权、法律适用性和发布均待人工核定。
+
 sourceCapture单列原件hash、获取状态/时间/URL、解析器、页数和正文hash。macOS使用系统Swift/PDFKit；Linux使用已安装的Poppler `pdfinfo`/`pdftotext`，专用试验镜像从Debian发行版安装并记录两者版本。缺解析器或不支持的平台为unverified，不静默安装或转OCR/付费服务。全部解析只读同一份私有字节快照：10MiB原件、200页、共享60秒、每次及累计文本4MiB上限；空白/扫描、加密、诊断、损坏和超限不会放行。获取失败、缺失/未核正文、字段冲突、PDF获取/解析不全会被附加导出门槛拒绝，人工批准也不能替代该门槛。原权利、当前版本审核、撤回、publication检查仍先执行。服务器隔离试验的边界与启停见[server-pilot.md](../../docs/fishery-center/server-pilot.md)。
 
 policyContext/sourceCapture为可选JSON元数据，旧手工观察兼容，无数据库迁移；私有素材导出版本为fishery-material/0.2，无新增公开出口。

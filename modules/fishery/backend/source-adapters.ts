@@ -102,8 +102,8 @@ export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pd
           if (parseStatus === "parsed") {
             body = pdf.parsed.text;
             const flat = collapse(body);
-            const pageNumber = /Resolution\s+(\d{2}\/\d{2})/i.exec(title ?? "")?.[1];
-            const pdfNumber = /RESOLUTION\s+(\d{2}\/\d{2})/i.exec(flat)?.[1];
+            const pageNumber = /(?:Resolution|Recommendation)\s+(\d{2}\/\d{2})/i.exec(title ?? "")?.[1];
+            const pdfNumber = /(?:RESOLUTION|RECOMMENDATION)\s+(\d{2}\/\d{2})/i.exec(flat)?.[1];
             if (pageNumber && pdfNumber !== pageNumber) conflicts.push("PDF resolution number missing or differs from page");
             const pdfPending = /Entry into force pending extended objection deadline/i.test(flat);
             if (pdfPending !== pending) conflicts.push("PDF and landing page entry-into-force states disagree");
