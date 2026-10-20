@@ -93,3 +93,13 @@ IOTC26/03完整6页正文（约19.6KiB，页面结构作为正文+页锚发送�
 任务先原子认领，再检查模型开关、固定模型/端点授权和剩余容量。确定性阻断记录为failed，保留task id、stage、authorization phase和原因；模型/落盘失败同样以业务任务记录为准，并让对应pg-boss job失败，避免队列假成功。重复排队不能重新认领running或已完成任务，不能新增模型请求。成功生成和隔离核查只进入needs_human_review，仍需管理员决定，仍不发布。
 
 生成产物的relevance为irrelevant/unknown或没有非空摘要时，保存草稿后直接needs_evidence并记FISHERY_ARTICLE_INELIGIBLE，跳过第二遍模型调用。人工qualified也再次检查relevant和非空摘要。此类草稿可人工拒绝，或对账后明确regenerate生成新尝试；普通resume只复用原生成回执，不能偷偷新增收费，也不永久否定来源。
+
+## 生成v5 / 核查v3证据ID协议
+
+原receipt6保持原响应，其eventStatus和上海会址引句截在会议名称，仍因缺锚失败；不得从摘要引证补尾、换引文或把它当成v5结果。v5只接受当前目录中的严格evidence ID数组（如`["p1s1"]`）；动态白名单拒绝对象/null、额外quote/page/offset、未知/重复ID及超过原有数组长度。程序先解析ID，再确定性展开为既有`{quote,paragraph,page}`领域结构，执行原有事实门禁与8192bytes展开上限。回执继续保留模型原始wire响应，最终产物另外保存catalog版本/hash、正文hash、观察revision、schema和prompt版本，不改写旧回执。
+
+目录`fishery-spans-v1`绑定完整body/hash和观察revision；段号沿用非空原行。中文只按明确句末“。！？”保守分句；英文缩写、小数、编号及PDF行不按`.`粗拆，不跨段或页拼接。quote为UTF-16 offset所指的连续原文切片，保留空白与标点；超过1200字符的句段整任务零请求退人工，不截短。同段完全重复句段无法在既有quote/paragraph/page领域结构中保留唯一ID身份，也整任务退人工；跨段/跨页相同文本按各自位置保留。PDF必须有顺序完整的`--- Page N ---`标记，且逐页区间与已验证input.pages完全对应；重复内容不靠includes猜页。模型输入保留完整body一次，另给句段/段落/页的索引，不重复发送整份pages文本。
+
+核查仍逐claim完整核对主体、限定、数值/单位、日期、角色、否定/条件及状态；supported须有非空ID子集且只能复用该claim原始绑定ID，不能从正文别处补锚。其他源ID只允许用于contradicted。空/漏/重/额外claim不通过；合法unknown不是断言。reported_occurred新增否定、取消、延期、条件和计划的保守拒绝门禁。`FISHERY_RULES_VERSION`纳入生成/核查promptVersion及任务配置指纹：schema、确定性校验规则或证据算法变化均须递增相应版本，旧qualified/回执不能按新规则静默继承。
+
+离线合成ID案例可证明上海/召开解引用正确、年份仍unknown，不代表真实模型成功或统计质量。ID仅确保引用身份，不证明语义蕴含：复杂否定、跨句指代、机构角色和政策适用性仍依赖完整上下文核查及人工审核；保守分句会把PDF换行保留为独立证据行，因此跨行事实可能退待补证。supported仍只到needs_human_review，approved/published始终false。当前6页IOTC完整19,598bytes的零请求预检为生成约53kbytes、核查最大包络约72kbytes（规则文案更新会轻微变化），均低于96,000；100,000输入tokens、2048输出tokens、禁thinking/tools/redirect、每次0.40元及累计20次/10元不变。

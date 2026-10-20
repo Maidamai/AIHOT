@@ -14,6 +14,7 @@ import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
 import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
+import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding} from "../backend/evidence.ts";
 import { createHash } from "node:crypto";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 
@@ -151,7 +152,7 @@ test("fishery AI mock yields only version-bound drafts; false anchors and Pendin
   const anchor={quote:"Resolution status: Pending.",paragraph:1,page:null};
   const unknown={date:unknownDate,evidence:[]};
   const output={relevance:{decision:"unknown",reason:"Needs original review",evidence:[]},summaryZh:[{sentence:"该决议仍待生效。",evidence:[anchor]}],dates:{published:unknown,event:unknown,adopted:unknown,effective:unknown,objectionDeadline:unknown},entryIntoForce:{value:"pending",evidence:[anchor]},locations:[],uncertainties:["No vessel registration evidence"]};
-  const result=await prepareFisheryDraft(input,"mock",async options=>{assert.equal(options.purpose,"fishery_draft");return {data:options.schema.parse(output),receiptId:123,reused:false,model:"mock",usage:null};});
+  const result=await prepareFisheryDraft(input,"mock",async options=>{assert.equal(options.purpose,"fishery_draft");return {data:fisheryDraftSchema.parse(output),receiptId:123,reused:false,model:"mock",usage:null};});
   assert.equal(result.status,"needs_review");assert.equal(result.observationRevision,2);assert.equal(result.bodySha256,input.bodySha256);
   assert.throws(()=>validateFisheryDraft(input,{...output,summaryZh:[{sentence:"False",evidence:[{...anchor,quote:"In force"}]}]}),/continuous/);
   assert.throws(()=>validateFisheryDraft(input,{...output,entryIntoForce:{value:"pending",evidence:[{...anchor,page:4}]}}),/page anchor/);
@@ -477,8 +478,9 @@ test("real review-v1 identifiers and absent optional fields fail the explicit cl
   const request=buildFisheryReviewRequest(input,candidate,"mock"),manifest=JSON.parse(request.user as string).claims;
   assert.ok(manifest.some((c:any)=>c.id==="summaryZh.0"));assert.ok(!manifest.some((c:any)=>c.id.startsWith("dates.")));
   assert.equal(request.schema.safeParse(fixture.review).success,false,"Do not normalize legacy paths or remove real conflicting findings");
-  const evidence=[{quote:fixture.sourceExcerpts[0].text.slice(0,40),paragraph:1,page:null}],findings=manifest.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic contract-only example, not a factual endorsement",evidence}));
-  assert.equal(request.schema.safeParse({decision:"supported",coverage:"complete_input",findings}).success,true);
+  const findings=manifest.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic contract-only example, not a factual endorsement",evidence:[]}));
+  const contractFindings=findings.map((f:any)=>({...f,verdict:"not_found"}));
+  assert.equal(request.schema.safeParse({decision:"needs_evidence",coverage:"complete_input",findings:contractFindings}).success,true);
   for(const invalid of [findings.slice(1),[...findings,findings[0]],[...findings.slice(1),findings[1]],findings.map((f:any,i:number)=>i?f:{...f,field:"summaryZh[0].sentence"})]) assert.equal(request.schema.safeParse({decision:"supported",coverage:"complete_input",findings:invalid}).success,false);
   assert.deepEqual(fixture,original);
 });
@@ -502,8 +504,87 @@ test("numeric checks preserve signs, thousands separators and opaque domain unit
 
 
 test("full-source generation and bounded review envelopes are checked before any send",()=>{
-  const body="--- Page 1 ---\n"+"International fisheries governance full source evidence. ".repeat(150),input={documentId:"full-pdf",observationRevision:1,body,bodySha256:sha256(body),language:"en",pages:[{page:1,text:body}]};
+  const body="--- Page 1 ---\n"+Array.from({length:150},()=>"International fisheries governance full source evidence.").join("\n"),input={documentId:"full-pdf",observationRevision:1,body,bodySha256:sha256(body),language:"en",pages:[{page:1,text:body.slice("--- Page 1 ---\n".length)}]};
   const sizes=assertFisheryPairFits(input);assert.ok(sizes.generationBytes<96000);assert.ok(sizes.reviewEnvelopeBytes<96000);assert.equal(sizes.maxWireBytes,96000);
-  const oversized="完整原文。".repeat(7000);
+  const oversized=Array.from({length:4000},(_,i)=>`完整原文${i}。`).join("\n");
   assert.throws(()=>assertFisheryPairFits({...input,body:oversized,bodySha256:sha256(oversized),pages:[]}),/zero-call manual/);
+});
+
+function idTestDraft() {
+  const date={date:unknownDate,evidence:[]};
+  return {relevance:{decision:"unknown",reason:"Synthetic protocol test only",evidence:[]},summaryZh:[],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]};
+}
+function idTestInput(body:string) {return {documentId:"synthetic-id-protocol",observationRevision:1,body,bodySha256:sha256(body),language:"zh"};}
+
+test("v5 strict ID wire expands complete evidence without repairing original receipt6",async()=>{
+  const fixture=JSON.parse(await readFile(new URL("./fixtures/ai-v4-receipt6-20261020.json",import.meta.url),"utf8")),original=JSON.stringify(fixture);
+  const input=idTestInput(fixture.body),catalog=buildEvidenceCatalog(input),request=buildFisheryDraftRequest(input,"mock");
+  assert.equal(input.bodySha256,fixture.bodySha256);
+  assert.throws(()=>validateFisheryDraft(input,fixture.response),/Role value lacks literal evidence/);
+  assert.equal(request.schema.safeParse(fixture.response).success,false,"Old quotes cannot be interpreted as ID wire");
+  assert.equal(catalog.spans[0]!.id,"p1s1");assert.match(catalog.spans[0]!.quote,/在上海召开。$/);
+  const wire={...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]},locations:[{role:"meeting_location",value:"上海",evidence:["p1s1"]}],dates:{...idTestDraft().dates,event:{date:unknownDate,evidence:["p1s1"]}}};
+  const canonical=validateFisheryDraft(input,request.schema.parse(wire));
+  assert.equal(canonical.eventStatus.value,"reported_occurred");assert.equal(canonical.locations[0]!.value,"上海");assert.deepEqual(canonical.dates.event.date,unknownDate);
+  assert.equal(canonical.locations[0]!.evidence[0]!.quote,catalog.spans[0]!.quote);
+  const source=JSON.parse(request.user as string);assert.equal(source.body,input.body);assert.ok(source.evidenceCatalog.spans.every((s:any)=>!("quote" in s)));
+  for(const evidence of [null,{id:"p1s1"},[{quote:catalog.spans[0]!.quote,paragraph:1,page:null}],["p999s1"],["p1s1","p1s1"],Array(5).fill("p1s1")]) assert.equal(request.schema.safeParse({...wire,eventStatus:{value:"reported_occurred",evidence}}).success,false);
+  assert.equal(request.schema.safeParse({...wire,eventStatus:{...wire.eventStatus,page:null}}).success,false);
+  assert.throws(()=>buildEvidenceCatalog({...input,body:input.body+"变"}),/changed source body/);
+  const binding=evidenceBinding(catalog);
+  assert.doesNotThrow(()=>assertEvidenceBinding(input,{hash:binding.hash,version:binding.version,observationRevision:binding.observationRevision,bodySha256:binding.bodySha256}));
+  assert.throws(()=>assertEvidenceBinding(input,{...binding,version:"fishery-spans-v0"}),/cannot be reinterpreted/);
+  assert.throws(()=>assertEvidenceBinding({...input,observationRevision:2},binding),/cannot be reinterpreted/);
+  assert.throws(()=>assertEvidenceBinding(idTestInput(input.body+"变"),binding),/cannot be reinterpreted/);
+  assert.equal(JSON.stringify(fixture),original);
+});
+
+test("catalog preserves literal offsets, conservative English boundaries and verified PDF page intervals",()=>{
+  const body="--- Page 1 ---\nRepeated evidence.\nNo. 1: Dr. A reports 1.5 tonnes.\n--- Page 2 ---\nRepeated evidence.\n会议已召开。第二会拟召开！";
+  const pages=[{page:1,text:"Repeated evidence.\nNo. 1: Dr. A reports 1.5 tonnes."},{page:2,text:"Repeated evidence.\n会议已召开。第二会拟召开！"}],input={...idTestInput(body),pages};
+  const catalog=buildEvidenceCatalog(input);
+  assert.equal(catalog.spans[0]!.page,1);assert.equal(catalog.spans[2]!.page,2);assert.equal(catalog.spans[1]!.quote,"No. 1: Dr. A reports 1.5 tonnes.");
+  for(const span of catalog.spans) assert.equal(body.slice(span.start,span.end),span.quote);
+  const evidence=[{quote:"Repeated evidence.",paragraph:5,page:1}];
+  assert.throws(()=>validateFisheryDraft(input,{...idTestDraft(),summaryZh:[{sentence:"Repeated evidence.",evidence}]}),/page anchor/);
+  for(const badPages of [[pages[1]!,pages[0]!],[pages[0]!],pages.map(p=>({...p,text:"Repeated evidence."}))]) assert.throws(()=>buildEvidenceCatalog({...input,pages:badPages}),/page intervals/);
+  assert.throws(()=>buildEvidenceCatalog({...idTestInput("Repeated evidence."),pages:[{page:1,text:"Repeated evidence."}]}),/page intervals/);
+  assert.throws(()=>buildEvidenceCatalog({...idTestInput(body.replace("Page 2","Page 1")),pages}),/page intervals/);
+  assert.throws(()=>buildEvidenceCatalog(idTestInput("重复句。重复句。")),/Ambiguous repeated span/);
+  assert.throws(()=>buildEvidenceCatalog(idTestInput("x".repeat(1201))),/source not truncated/);
+  const whitespace="  完整原句。  后一句！\r\nEnglish e.g. 1.5. ";
+  for(const span of buildEvidenceCatalog(idTestInput(whitespace)).spans) assert.equal(whitespace.slice(span.start,span.end),span.quote);
+});
+
+test("ID expansion retains occurrence, date, unit, role and expanded review-envelope gates",()=>{
+  const body="会议A已召开。会议B拟召开。会议未召开。如果会议召开则另行通知。公海是治理领域。船队10艘。会议于5月16日召开。",input=idTestInput(body),request=buildFisheryDraftRequest(input,"mock");
+  const parse=(patch:object)=>validateFisheryDraft(input,request.schema.parse({...idTestDraft(),...patch}));
+  assert.doesNotThrow(()=>parse({eventStatus:{value:"reported_occurred",evidence:["p1s1"]}}));
+  for(const text of ["会议未举行。","工作未完成。","会议取消召开。","会议延期举行。","若条件具备会议召开。","会议A已召开，会议B拟召开。","The meeting was not held.","The meeting was held if conditions were met.","The meeting was held but cancelled."]) {
+    const negative=idTestInput(text),negativeRequest=buildFisheryDraftRequest(negative,"mock");
+    assert.throws(()=>validateFisheryDraft(negative,negativeRequest.schema.parse({...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]}})),/Reported occurrence/,text);
+  }
+  for(const id of ["p1s2","p1s3","p1s4"]) assert.throws(()=>parse({eventStatus:{value:"reported_occurred",evidence:[id]}}),/Reported occurrence/);
+  assert.throws(()=>parse({locations:[{role:"fishing_area",value:"公海",evidence:["p1s5"]}]}),/Actual fishing area/);
+  assert.throws(()=>parse({summaryZh:[{sentence:"船队10吨。",evidence:["p1s6"]}]}),/Numeric value\/unit/);
+  assert.throws(()=>parse({dates:{...idTestDraft().dates,event:{date:{precision:"day",value:"2026-05-16"},evidence:["p1s7"]}}}),/components are not explicit/);
+  assert.throws(()=>parse({organizations:[{role:"page_publisher",value:"会议A",evidence:["p1s1"]}]}),/publisher role/);
+  const longInput=idTestInput(Array.from({length:4},(_,i)=>"源".repeat(1149)+i+"。").join("")),longRequest=buildFisheryDraftRequest(longInput,"mock");
+  assert.throws(()=>validateFisheryDraft(longInput,longRequest.schema.parse({...idTestDraft(),summaryZh:[{sentence:"合成包络",evidence:["p1s1","p1s2","p1s3","p1s4"]}]})),/bounded review envelope/);
+});
+
+test("review wire only supports original claim ID subsets and preserves complete unique claim manifests",async()=>{
+  const input=idTestInput("船队10艘。另有另一船队10艘。"),catalog=buildEvidenceCatalog(input),generation=buildFisheryDraftRequest(input,"mock");
+  const draft=validateFisheryDraft(input,generation.schema.parse({...idTestDraft(),summaryZh:[{sentence:"船队10艘。",evidence:["p1s1"]}]})),request=buildFisheryReviewRequest(input,draft,"mock");
+  const finding={field:"summaryZh.0",verdict:"supported",reason:"Synthetic only",evidence:["p1s1"]},wire={decision:"supported",coverage:"complete_input",findings:[finding]};
+  assert.equal(request.schema.safeParse(wire).success,true);
+  for(const evidence of [[],["p1s2"],["unknown"],null,{id:"p1s1"}]) assert.equal(request.schema.safeParse({...wire,findings:[{...finding,evidence}]}).success,false);
+  for(const findings of [[],[finding,finding],[{...finding,field:"invented"}]]) assert.equal(request.schema.safeParse({...wire,findings}).success,false);
+  const contradicted={...wire,decision:"needs_evidence",findings:[{...finding,verdict:"contradicted",evidence:["p1s2"]}]};
+  assert.equal(request.schema.safeParse(contradicted).success,true,"Other source IDs can identify contradictions");
+  const review=await reviewFisheryDraft(input,draft,"mock",async o=>({data:o.schema.parse(wire),receiptId:999,reused:false,model:"mock",usage:null}));
+  assert.equal(review.status,"needs_human_review");assert.equal(review.approved,false);assert.deepEqual(review.evidenceCatalog,evidenceBinding(catalog));
+  const empty=validateFisheryDraft(input,generation.schema.parse(idTestDraft())),emptyRequest=buildFisheryReviewRequest(input,empty,"mock");
+  const result=await reviewFisheryDraft(input,empty,"mock",async()=>({data:emptyRequest.schema.parse({...wire,findings:[]}),receiptId:1000,reused:false,model:"mock",usage:null}));
+  assert.equal(result.status,"needs_evidence");
 });

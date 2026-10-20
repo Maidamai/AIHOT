@@ -1,0 +1,176 @@
+{
+  "description": "Public receipt 6 original v4 response; retained verbatim as JSON, never repair or reinterpret as v5 wire. Synthetic ID cases live in tests and are not real-model results.",
+  "receiptId": 6,
+  "body": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。研讨会聚焦《协定》实施对公海渔业的机遇与挑战，围绕《协定》主要内容和履约义务、现有国际渔业法律文书在《协定》实施中的作用、区域渔业组织与《协定》的合作与协调等议题展开深入研讨。\n研讨指出，公海渔业是《协定》实施的重点领域，《协定》的生效实施将对公海渔业发展与治理产生深远影响。海洋生物多样性养护和渔业可持续发展密切相关，应相互促进、协调发展、相得益彰，既实现海洋生物多样性的有效养护，又促进公海渔业的长期可持续发展。\n研讨认为，《协定》实施是一项长期、复杂的系统工程，具体规则仍有待后续谈判制定。推动《协定》有效实施应坚持“不损害”原则和协商一致的决策机制，充分尊重区域渔业组织职权，加强与联合国粮农组织和《协定》缔约方沟通协调，不削弱现行有效的公海渔业管理措施。科学、务实、稳妥推进包括保护区在内的划区管理工具、渔业活动环境影响评价，合理认定区域渔业组织相关养护管理措施的等效性。\n研讨期间，中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作、加强公海渔业资源调查、主动实施公海自主休渔等情况。\n《协定》是《联合国海洋法公约》框架下的国际条约，旨在确保国家管辖范围以外区域海洋生物多样性长期养护和可持续利用，主要包括海洋遗传资源、划区管理工具、环境影响评价、能力建设和海洋技术转让等制度安排。我国于2025年10月批准加入《协定》，《协定》于2026年1月生效。截至目前，《协定》共有89个缔约方。",
+  "bodySha256": "118f3a16ac388b150c82ba7c7f3755713dc67dd48f9fac4fbf653775d62fb401",
+  "rawResponse": {
+    "id": "a14d15a8-5058-405f-9e5b-9515547f8d4d",
+    "model": "deepseek-flash",
+    "usage": {
+      "total_tokens": 2239,
+      "prompt_tokens": 1509,
+      "completion_tokens": 730,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 1509
+    },
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "{\"relevance\":{\"decision\":\"relevant\",\"reason\":\"正文报道《海洋生物多样性协定》与公海渔业治理国际研讨会，涉及公海渔业履约义务、区域渔业组织协调及中方远洋渔业规范管理，具备公海渔业与国际渔业履约证据。\",\"evidence\":[{\"quote\":\"6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。\",\"paragraph\":1,\"page\":null},{\"quote\":\"研讨期间，中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作\",\"paragraph\":4,\"page\":null}]},\"summaryZh\":[{\"sentence\":\"《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。\",\"evidence\":[{\"quote\":\"6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。\",\"paragraph\":1,\"page\":null}]},{\"sentence\":\"研讨指出公海渔业是《协定》实施的重点领域。\",\"evidence\":[{\"quote\":\"研讨指出，公海渔业是《协定》实施的重点领域，《协定》的生效实施将对公海渔业发展与治理产生深远影响。\",\"paragraph\":2,\"page\":null}]}],\"dates\":{\"published\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]},\"event\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[{\"quote\":\"6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。\",\"paragraph\":1,\"page\":null}]},\"adopted\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]},\"effective\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[{\"quote\":\"我国于2025年10月批准加入《协定》，《协定》于2026年1月生效。\",\"paragraph\":5,\"page\":null}]},\"objectionDeadline\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]}},\"entryIntoForce\":{\"value\":\"unknown\",\"evidence\":[{\"quote\":\"我国于2025年10月批准加入《协定》，《协定》于2026年1月生效。\",\"paragraph\":5,\"page\":null}]},\"eventStatus\":{\"value\":\"reported_occurred\",\"evidence\":[{\"quote\":\"6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会\",\"paragraph\":1,\"page\":null}]},\"validityStatus\":\"unknown\",\"organizations\":[],\"locations\":[{\"role\":\"meeting_location\",\"value\":\"上海\",\"evidence\":[{\"quote\":\"6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会\",\"paragraph\":1,\"page\":null}]},{\"role\":\"policy_scope\",\"value\":\"公海渔业\",\"evidence\":[{\"quote\":\"研讨指出，公海渔业是《协定》实施的重点领域\",\"paragraph\":2,\"page\":null}]}],\"uncertainties\":[\"正文仅写“6月8日至9日”，未明确年份，event日期保留unknown。\",\"正文未明确标注本页面发布机构，也未明确研讨会主办方或政策发文机关，organizations留空。\",\"正文提及“我国于2025年10月批准加入《协定》”，未明确“我国”所指国家全称，按原文保留。\",\"正文称《协定》于2026年1月生效，但未提供独立核实现行有效性的证据，validityStatus为unknown。\"]}"
+        },
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "created": 1792519073,
+    "_latencyMs": 2877,
+    "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501"
+  },
+  "response": {
+    "relevance": {
+      "decision": "relevant",
+      "reason": "正文报道《海洋生物多样性协定》与公海渔业治理国际研讨会，涉及公海渔业履约义务、区域渔业组织协调及中方远洋渔业规范管理，具备公海渔业与国际渔业履约证据。",
+      "evidence": [
+        {
+          "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。",
+          "paragraph": 1,
+          "page": null
+        },
+        {
+          "quote": "研讨期间，中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作",
+          "paragraph": 4,
+          "page": null
+        }
+      ]
+    },
+    "summaryZh": [
+      {
+        "sentence": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。",
+        "evidence": [
+          {
+            "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。",
+            "paragraph": 1,
+            "page": null
+          }
+        ]
+      },
+      {
+        "sentence": "研讨指出公海渔业是《协定》实施的重点领域。",
+        "evidence": [
+          {
+            "quote": "研讨指出，公海渔业是《协定》实施的重点领域，《协定》的生效实施将对公海渔业发展与治理产生深远影响。",
+            "paragraph": 2,
+            "page": null
+          }
+        ]
+      }
+    ],
+    "dates": {
+      "published": {
+        "date": {
+          "precision": "unknown",
+          "value": null
+        },
+        "evidence": []
+      },
+      "event": {
+        "date": {
+          "precision": "unknown",
+          "value": null
+        },
+        "evidence": [
+          {
+            "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。",
+            "paragraph": 1,
+            "page": null
+          }
+        ]
+      },
+      "adopted": {
+        "date": {
+          "precision": "unknown",
+          "value": null
+        },
+        "evidence": []
+      },
+      "effective": {
+        "date": {
+          "precision": "unknown",
+          "value": null
+        },
+        "evidence": [
+          {
+            "quote": "我国于2025年10月批准加入《协定》，《协定》于2026年1月生效。",
+            "paragraph": 5,
+            "page": null
+          }
+        ]
+      },
+      "objectionDeadline": {
+        "date": {
+          "precision": "unknown",
+          "value": null
+        },
+        "evidence": []
+      }
+    },
+    "entryIntoForce": {
+      "value": "unknown",
+      "evidence": [
+        {
+          "quote": "我国于2025年10月批准加入《协定》，《协定》于2026年1月生效。",
+          "paragraph": 5,
+          "page": null
+        }
+      ]
+    },
+    "eventStatus": {
+      "value": "reported_occurred",
+      "evidence": [
+        {
+          "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会",
+          "paragraph": 1,
+          "page": null
+        }
+      ]
+    },
+    "validityStatus": "unknown",
+    "organizations": [],
+    "locations": [
+      {
+        "role": "meeting_location",
+        "value": "上海",
+        "evidence": [
+          {
+            "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会",
+            "paragraph": 1,
+            "page": null
+          }
+        ]
+      },
+      {
+        "role": "policy_scope",
+        "value": "公海渔业",
+        "evidence": [
+          {
+            "quote": "研讨指出，公海渔业是《协定》实施的重点领域",
+            "paragraph": 2,
+            "page": null
+          }
+        ]
+      }
+    ],
+    "uncertainties": [
+      "正文仅写“6月8日至9日”，未明确年份，event日期保留unknown。",
+      "正文未明确标注本页面发布机构，也未明确研讨会主办方或政策发文机关，organizations留空。",
+      "正文提及“我国于2025年10月批准加入《协定》”，未明确“我国”所指国家全称，按原文保留。",
+      "正文称《协定》于2026年1月生效，但未提供独立核实现行有效性的证据，validityStatus为unknown。"
+    ]
+  }
+}

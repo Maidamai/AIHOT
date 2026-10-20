@@ -4,6 +4,7 @@ import {TRIAL,installTrialTransport,trialCapacity,trialUsage} from "../backend/t
 import {buildFisheryDraftRequest,validateFisheryDraft} from "../backend/ai-draft.ts";
 import {reviewFisheryDraft,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {readBatch,verifyBatchItem} from "../backend/column-batches.ts";
+import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding} from "../backend/evidence.ts";
 import {sha256} from "../backend/source-adapters.ts";
 function assertReusable(previous:{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>},options:{attemptTag?:string;promptVersion:string;system:string;user:unknown;temperature?:number;maxTokens?:number}) {
   if(!["received","completed"].includes(previous.status)) throw new Error(`Existing ${previous.status} receipt ${previous.id}; no blind retry`);
@@ -77,9 +78,10 @@ try {
         const request=buildFisheryDraftRequest(input,"default");
         request.subject+=`:attempt:${values.attempt}`;
         request.attemptTag=`fishery-trial:${values.attempt}:generation`;
-        request.system+="\n本轮输出简短JSON：摘要最多2句，每句只陈述一条有完整所附引证支持的具体事实，允许每句最多2引句，每引句不超过160字符，地点最多4条。不确定就保留未知。";
-        request.promptVersion=`fishery-trial-v2:${sha256(request.system)}`;
-        const [saved]=await sql<{value:{draft:unknown;bodySha256:string}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
+        request.system+="\n本轮输出简短JSON：摘要最多2句，每句只陈述一条有完整所附引证支持的具体事实，允许每句最多2引句，每条证据仅选择完整目录ID，地点最多4条。不确定就保留未知。";
+        request.promptVersion=`${request.promptVersion}:trial:${sha256(request.system)}`;
+        const [saved]=await sql<{value:{draft:unknown;bodySha256:string;evidenceCatalog:ReturnType<typeof evidenceBinding>}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
+        if(saved) assertEvidenceBinding(input,saved.value.evidenceCatalog);
         let draft=saved?validateFisheryDraft(input,saved.value.draft):undefined;
         if(saved&&saved.value.bodySha256!==input.bodySha256) throw new Error("Attempt source changed; use a new explicit attempt identity");
         const [previous]=!draft?await sql<{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>}[]>`SELECT id,status,logical_key,model,request FROM receipts WHERE subject=${request.subject} AND purpose='fishery_draft' ORDER BY id DESC LIMIT 1`:[];
@@ -92,7 +94,7 @@ try {
         }
         if(!draft&&values.stage!=="review") {
           const answer=await chatJson(request);draft=validateFisheryDraft(input,answer.data);
-          const value={status:"needs_review",sourceUrl:item.url,bodySha256:input.bodySha256,promptVersion:request.promptVersion,receiptId:answer.receiptId,model:answer.model,draft};
+          const value={status:"needs_review",sourceUrl:item.url,bodySha256:input.bodySha256,observationRevision:input.observationRevision,evidenceCatalog:evidenceBinding(buildEvidenceCatalog(input)),schemaVersion:"fishery-draft-wire-v5",promptVersion:request.promptVersion,receiptId:answer.receiptId,model:answer.model,draft};
           await sql.begin(async tx=>{
             await tx`INSERT INTO settings(key,value) VALUES (${sourceKey+".generation"},${tx.json(value)})`;
             await completeReceipt(tx,answer.receiptId);
