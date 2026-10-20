@@ -5,7 +5,7 @@ import { sql, type Db } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
 import { config } from "@aihot/backend/config";
 import { defineQueue } from "@aihot/backend/modules";
-import { enqueueOn } from "@aihot/backend/jobs/queue";
+import { enqueueOn, getBoss } from "@aihot/backend/jobs/queue";
 import { chatJson, type ChatJsonOptions, type ChatJsonResult } from "@aihot/backend/providers/llm";
 import { completeReceipt } from "@aihot/backend/providers/receipts";
 import { itemAvailability } from "@aihot/backend/publication/availability";
@@ -339,6 +339,9 @@ export async function enqueueFlow(id:string) {
   return sql.begin(async tx=>{
     await lockDocument(tx,task.document_id);await assertDocumentSettled(task.document_id,tx);
     const detail=await flowDetail(id);if(detail.stale||!detail.authoritative||detail.status!=="queued") throw new Conflict("Current queued task required");
+    // This manual API only produces jobs. Do not start pg-boss's default scheduler/supervisor
+    // or silently change the mode of an instance already started by another caller.
+    await getBoss({schedule:false,supervise:false});
     return {id,jobId:await enqueueOn(flowQueue,{id},{},tx),status:"queued"};
   });
 }

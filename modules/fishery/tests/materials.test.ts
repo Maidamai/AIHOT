@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { after, before, test } from "node:test";
 import { marked } from "marked";
 import { config } from "@aihot/backend/config";
@@ -529,6 +531,54 @@ test("stage persistence failures resume the same received receipt; only explicit
   } finally {await sql.unsafe('DROP TRIGGER fishery_test_persist_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION fishery_test_persist_fault()');await sql`DELETE FROM settings WHERE key='flow-test-fault'`;}
 });
 
+test("manual flow API starts producer-only queues, reuses that mode and refuses a default-mode instance",async t=>{
+  const body="合成公海远洋渔业生产者门禁材料。",jobs:string[]=[];
+  t.mock.method(globalThis,"fetch",async()=>{throw new Error("Producer-only API must not send external requests");});
+  async function task(identity:string) {
+    const f=await fixture({unknownRights:true});
+    await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
+    await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/private-${f.id}`,title:"Synthetic producer evidence",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+    return createFlow(f.id,{identity},"tester");
+  }
+  const previousAdmin=config.devAdmin;
+  config.devAdmin={displayName:"ISOLATED TEST MANUAL PRODUCER"};
+  try {
+    for(const identity of ["producer-first","producer-again"]) {
+      const flow=await task(identity),response=await app.inject({method:"POST",url:`/api/admin/fishery/flows/${flow.id}/run`,headers:{"x-csrf-token":"dev"},payload:{}});
+      assert.equal(response.statusCode,200,response.body);assert.equal(response.json().status,"queued");assert.ok(response.json().jobId,response.body);jobs.push(response.json().jobId);
+      const boss=await getBoss({schedule:false,supervise:false});
+      assert.equal((await boss.getJobById(flowQueue.name,jobs.at(-1)!))?.state,"created");
+      await assert.rejects(getBoss({schedule:true}),/schedule mode differs/);
+      await assert.rejects(getBoss({supervise:true}),/supervise mode differs/);
+      assert.equal((await flowDetail(flow.id)).status,"queued");
+      // Free the existing short-policy pending slot without starting a business consumer.
+      await boss.cancel(flowQueue.name,jobs.at(-1)!);
+    }
+    assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.schedule`)[0]!.n,0);
+    const conflict=await task("producer-existing-default");
+    // A fresh process models an API whose shared instance already uses framework defaults;
+    // leave the parent queue and its process-wide shutdown signal untouched.
+    await promisify(execFile)(process.execPath,["--input-type=module","-e",`
+      import assert from "node:assert/strict";
+      import {getBoss,stopBoss} from "@aihot/backend/jobs/queue";
+      import {closeDb} from "@aihot/backend/db";
+      import {enqueueFlow,flowDetail,flowQueue} from "./modules/fishery/backend/flow.ts";
+      globalThis.fetch=async()=>{throw new Error("Mode conflict must not send external requests");};
+      try {
+        const boss=await getBoss();
+        assert.equal(await getBoss({schedule:true,supervise:true}),boss);
+        const before=(await boss.findJobs(flowQueue.name)).length;
+        await assert.rejects(enqueueFlow(process.argv[1]),/schedule mode differs/);
+        assert.equal((await boss.findJobs(flowQueue.name)).length,before);
+        assert.equal((await flowDetail(process.argv[1])).status,"queued");
+      } finally {await stopBoss();await closeDb();}
+    `,conflict.id],{env:process.env,timeout:30000});
+  } finally {
+    config.devAdmin=previousAdmin;
+    if(jobs.length) await (await getBoss({schedule:false,supervise:false})).cancel(flowQueue.name,jobs);
+  }
+});
+
 test("manual processor only consumes explicit flows, persists blocks and failures, and never resends duplicate tasks",async()=>{
   const boss=await getBoss({schedule:false,supervise:false});
   await assert.rejects(getBoss({schedule:true}),/mode differs/);
@@ -564,7 +614,8 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     throw new Error(`Queue job ${jobId} did not settle`);
   };
   try {
-    await boss.createQueue(flowQueue.name,{...flowQueue.options,retryLimit:1});
+    await boss.createQueue(flowQueue.name,flowQueue.options);
+    await boss.updateQueue(flowQueue.name,{retryLimit:1});
     await assert.rejects(registerManualFlowConsumer(boss),/reconcile deployed queue/);
     await boss.updateQueue(flowQueue.name,{retryLimit:0,expireInSeconds:600});
     release=await registerManualFlowConsumer(boss,jobs=>runQueuedFlows(jobs,invoke));
