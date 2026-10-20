@@ -10,6 +10,7 @@
     "@aihot/backend": "*",
     "@aihot/contracts": "*",
     "@aihot/api": "*",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "cheerio": "1.2.0"
   }
 }

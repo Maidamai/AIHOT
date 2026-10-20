@@ -93,3 +93,8 @@ MVP完成的判断：一批真实公开样本可追溯、可审核、能带许�
 最初完整测试因尚无web构建产物、PATH缺少`pg_dump`及一处新增Markdown安全测试失败；修正后完整重跑全部通过，未改核心测试绕过。首次web测试因缺锁定版本WebKit而悬挂，精确停止本任务父子进程后，在 `/tmp/aihot-fishery-playwright` 安装锁定测试浏览器，重跑59项全部通过；未改用户浏览器配置或缓存。初始失败日志和最终成功日志均保留于本任务工作目录，不提交仓库。
 
 可核验日志名：`fishery-npm-ci.log`、`fishery-lock.log`、`fishery-typecheck.log`、`fishery-module-tests.log`、`fishery-all-tests.log`、`fishery-web-build.log`、`fishery-web-tests.log`、`fishery-browser-install.log`、`fishery-smoke-migrations.log`、`fishery-smoke.log`、`fishery-smoke-guards.json`、`fishery-demo.log`。合成实物保存在同一任务目录的 `fishery-demo/fishery-fixture.json` 与 `.md`，不上传或提交。主线程最终复核并单独处理本地commit；本记录不宣称push、部署、真实来源准确率、Easel创作/发布或下游撤回通过。
+
+
+## 官方原件离线适配续办
+
+补充晋江可见日期、IOTC Pending/异议截止/年份与PDF取证，以及失败证据导出门槛；无在线采集、自动审核或调度。最新类型检查及三份原件离线回放已获明确批准并执行通过。239项无DB回归、36项非浏览器Web回归不代表全部集成验收；数据库端到端、完整浏览器及整站smoke未跑。详见[来源适配验证](source-adapter-validation.md)，不将前一期944/59项结果算作本轮结果。

@@ -7,8 +7,8 @@
 - `fishery_sources` 引用原有 `sources`，不重复创建信源实体；许可默认 `unknown`，所有用途默认关闭。许可为 `permitted` 需填写核验时间、证据链接和复核期限。健康列表显示原系统 `health / last_fetch_at / last_ok_at / last_error`，并通过现有 `sourceHealth` 扩展提示许可待办；不按一天无更新判死源。
 - 文书保存来源、发布机关、源文号（未知为 `null`）、原文 URL、可选 article 关联。没有标题相似自动合并。相同来源同 URL 重复登记返回409；后续在原文书上追加观察。
 - 每次手动观察都追加新 revision，即使哈希曾在历史出现；A→B→A 不吞掉第三次观察。原文哈希与每个附件的哈希分别保存，附件单独变化也改变观察内容哈希。`observed_at` 是服务端登记时刻，不充当发布或生效日期。
-- **原文/附件 SHA-256 是管理员声明的值，当前没有抓取字节核验。** 输出 `hashAssurance=admin_declared_not_fetched`。观察的 `content_hash` 和素材的 `contentHash` 则由系统对元数据计算：递归按对象键的字典序排序，数组保持顺序，JSON UTF-8后SHA-256。没有存储或下载原件、正文、摘句、译文服务；schema拒绝额外全文字段。
-- 发布、通过、生效起止各自保存 `{precision: unknown|month|day, value}`，未知不能补日，日不能补时间。`effectiveDateState` 只按显式 `dateComparisonReference` 的 UTC 日比较日期进度，`reached` 不能解释为当地法定生效时刻、当前仍适用或作业许可；当月及更早的月份精度仍返回 `unknown`。
+- **管理员API中的原文/附件 SHA-256 仍是声明值。** 新增离线来源工具可核对本地归档文件与HTTP收据中的hash，但不认证远端HTTP，也不自动采集或批准。 输出 `hashAssurance=admin_declared_not_fetched`。观察的 `content_hash` 和素材的 `contentHash` 则由系统对元数据计算：递归按对象键的字典序排序，数组保持顺序，JSON UTF-8后SHA-256。管理员API不保存原文、正文或译文；schema拒绝额外全文字段。离线工具的正文仅写入用户指定的本地待审目录。
+- 发布、通过、生效起止各自保存 `{precision: unknown|year|month|day, value}`，未知不能补日，日不能补时间。`effectiveDateState` 只按显式 `dateComparisonReference` 的 UTC 日比较日期进度，`reached` 不能解释为当地法定生效时刻、当前仍适用或作业许可；当年/当月及更早的年/月精度仍返回 `unknown`。
 - 审核追加记录绑定精确 observation revision 和 source revision。新观察、任何来源资料更新、最新审核驳回都会使旧批准失效。`applicabilityReviewed=false` 会原样输出，不伪称全部适用范围已核验。来源许可可未知但仍可登记内部待审元数据；此时导出始终关闭。
 - 每次导出都重新检查当前许可、核验时间不在未来、复核期限、来源参与模式、文书撤回和最新审核。关联 article 时经共享 `publication/itemAvailability` 读取层仅允许 `public` 或 `summary-only`；已撤回、删除、未知或其他状态阻断。旧revision不能回读绕过当前限制。
 - 只导人工摘要与来源/附件链接、哈希和日期元数据。即使来源登记了全文/翻译许可，输出 `fulltextExport=false / translationExport=false`；许可字段是用途登记，不是已实现对应导出服务。`allowedSummary` 与 `allowedPublication` 都须打开。外部附件链接不等于获准交付原件。
@@ -46,6 +46,29 @@ DATABASE_URL=postgres://aihot_test@127.0.0.1:55437/fishery_mvp_test \
 
 ## 后续边界
 
-仍未实现：去重前真实抓取hook、HTTP失败/304观察、附件下载与字节hash核验、解析与OCR、政策关系/条款证据、完整法律适用性审核、校准后的渔业新闻taxonomy/提示词、实际源批量入库、GUI、机器只读认证、固定清单snapshot/changes/tombstone、Easel拉取及下游处置台账、传播后撤回、真实样本准确率/性能/成本、部署和恢复演练。手工导出不能保证下游已经保存的包自动撤销；使用前须重核，`revalidateBy`只规定最迟复核期限，不保证此前权利不变。
+仍未实现：去重前在线抓取hook、HTTP失败/304持久化观察、自动附件下载、生产环境PDF解析与OCR、政策关系/条款证据、完整法律适用性审核、校准后的渔业新闻taxonomy/提示词、实际源批量入库、GUI、机器只读认证、固定清单snapshot/changes/tombstone、Easel拉取及下游处置台账、传播后撤回、真实样本准确率/性能/成本、部署和恢复演练。手工导出不能保证下游已经保存的包自动撤销；使用前须重核，`revalidateBy`只规定最迟复核期限，不保证此前权利不变。
 
 安装：在 `site/modules/index.ts` 与 `server.ts` 注册，`site/package.json` 依赖模块包，Dockerfile包含模块包清单；无Web部分，无需在web清单登记空模块。迁移每个文件一条在线语句，新增表非破坏性；移除清单可关闭模块路由与健康扩展，保留档案数据，不改历史迁移。请勿删除许可/审核记录来“恢复”导出。
+
+
+## 官方原件离线适配（素材格式0.2）
+
+`scripts/prepare-official.ts`读取已有HTTP收据及响应文件，不自行联网、不加载.env、不查询数据库、不调用模型、不建立调度、不批准或发布。输出capture.json；只有正文可验证时另写body.txt。readyForReview=true仅表示原文可送人工复核，不表示已审核或已获转载许可。第三方HTML/PDF不提交仓库，测试只用最小合成结构。
+
+晋江从.article_time按+08:00读取真实时间，保留sourceCapture.publicationLiteral/publishedAt；仅meta日期时保留day精度。无日期不从URL或事件日期补齐；不从出发港推断企业归属。日期冲突时关闭可用材料输出。
+
+IOTC保留Pending、异议截止、可见通过年份；不把隐藏的1月1日当精确通过日期。PDF和页面的文号、Pending及截止日须一致。捕捞限额条款年份单独记入policyContext.provisionYears，不搬到抓取当年。未核发布日期及effectiveFrom保持unknown，异议截止不是生效日；未映射状态保留unknown和警告。
+
+sourceCapture单列原件hash、获取状态/时间/URL、解析器、页数和正文hash。本机macOS使用现成Swift/PDFKit；其他平台或缺解析器时为unverified，不安装或静默转OCR/付费服务。获取失败、缺失/未核正文、字段冲突、PDF获取/解析不全会被附加导出门槛拒绝，人工批准也不能替代该门槛。原权利、当前版本审核、撤回、publication检查仍先执行。
+
+policyContext/sourceCapture为可选JSON元数据，旧手工观察兼容，无数据库迁移；私有素材导出版本为fishery-material/0.2，无新增公开出口。
+
+```bash
+node modules/fishery/scripts/prepare-official.ts --source jinjiang \
+  --receipt /path/jinjiang-request.json --html /path/jinjiang.html --output /tmp/fishery-review/jinjiang
+node modules/fishery/scripts/prepare-official.ts --source iotc \
+  --receipt /path/iotc-request.json --html /path/iotc.html \
+  --pdf-receipt /path/iotc-pdf-request.json --pdf /path/iotc.pdf --output /tmp/fishery-review/iotc
+```
+
+收据至少含requestedUrl/finalUrl/status/finishedAt/sha256。它们是已归档记录，不能伪造为新请求。--source fuzhou可重放获取失败，不能用搜索缓存补正文。工具不会调用observe/review/export API；人工摘要、用途许可与业务审核仍走既有管理员流程。[本轮验证记录](../../docs/fishery-center/source-adapter-validation.md)。

@@ -14,6 +14,7 @@ export const linkSchema = z.url().max(2000).refine((value) => {
 const instant = z.iso.datetime({ offset: true });
 export const dateSchema = z.discriminatedUnion("precision", [
   z.strictObject({ precision: z.literal("unknown"), value: z.null() }),
+  z.strictObject({ precision: z.literal("year"), value: z.string().regex(/^(19|20|21)\d{2}$/) }),
   z.strictObject({ precision: z.literal("month"), value: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) }),
   z.strictObject({ precision: z.literal("day"), value: z.iso.date() }),
 ]);
@@ -45,11 +46,29 @@ export const documentSchema = z.strictObject({
   sourceId: idSchema, articleId: idSchema.nullable().default(null),
   issuer: text.max(300), documentNumber: text.max(200).nullable().default(null), canonicalUrl: linkSchema,
 });
+export const policyContextSchema = z.strictObject({
+  entryIntoForce: z.enum(["unknown", "pending", "in_force"]),
+  objectionDeadline: dateSchema,
+  nonApplicationMentioned: z.array(text.max(100)).max(20),
+  provisionYears: z.array(z.int().min(1900).max(2199)).max(20),
+});
+export const captureSchema = z.strictObject({
+  adapter: z.enum(["jinjiang", "iotc", "fuzhou"]), sourceUrl: linkSchema, capturedAt: instant,
+  httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  parser: text.max(100), parseStatus: z.enum(["parsed", "missing", "failed", "unverified"]),
+  attachmentSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  attachmentUrl: linkSchema.nullable().default(null), attachmentHttpStatus: z.int().min(100).max(599).nullable().default(null),
+  attachmentCapturedAt: instant.nullable().default(null), attachmentPages: z.int().positive().nullable().default(null),
+  publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
+  conflicts: z.array(text.max(300)).max(20),
+});
 export const observationSchema = z.strictObject({
   expectedRevision: z.int().nonnegative(), originalTitle: text.max(500), title: text.max(500),
   summaryZh: text.max(4000), language: text.max(30), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
   dates: z.strictObject({ published: dateSchema, adopted: dateSchema, effectiveFrom: dateSchema, effectiveUntil: dateSchema }),
   policyStatus: z.enum(["unknown", "draft", "adopted", "repealed", "superseded"]),
+  policyContext: policyContextSchema.optional(), sourceCapture: captureSchema.optional(),
   scope: z.strictObject({
     regions: z.array(z.enum(["NPFC", "SE_PACIFIC", "WCPFC", "CHINA", "OTHER"])).max(5),
     species: z.array(text.max(150)).max(20), flags: z.array(text.max(80)).max(20),
@@ -65,6 +84,11 @@ export const observationSchema = z.strictObject({
     url: linkSchema, sha256: z.string().regex(/^[a-f0-9]{64}$/),
     page: z.int().positive().nullable(), section: text.max(200).nullable(),
   })).min(1).max(20),
+}).superRefine((o, ctx) => {
+  if (o.policyContext?.entryIntoForce === "pending" && o.dates.effectiveFrom.precision !== "unknown")
+    ctx.addIssue({ code: "custom", path: ["dates", "effectiveFrom"], message: "Pending entry into force cannot supply an effective date" });
+  if (o.sourceCapture && o.sourceCapture.rawSha256 !== o.rawSha256)
+    ctx.addIssue({ code: "custom", path: ["rawSha256"], message: "Capture and observation hashes must match" });
 });
 export type Observation = Omit<z.infer<typeof observationSchema>, "expectedRevision">;
 export const reviewSchema = z.strictObject({
@@ -76,6 +100,7 @@ export const exportSchema = z.strictObject({ revision: z.int().positive(), forma
 
 export function effectiveState(date: z.infer<typeof dateSchema>, today: string): "unknown" | "future" | "reached" {
   if (date.precision === "unknown") return "unknown";
+  if (date.precision === "year") return date.value > today.slice(0, 4) ? "future" : "unknown";
   if (date.precision === "month") return date.value > today.slice(0, 7) ? "future" : "unknown";
   return date.value > today ? "future" : "reached";
 }

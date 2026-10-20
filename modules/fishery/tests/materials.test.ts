@@ -204,3 +204,16 @@ test("material size limits and Markdown escaping prevent unsafe or oversized man
   const [after] = await sql`SELECT count(*) AS n FROM audit_log WHERE subject = ${`fishery:${id}`} AND action = 'fishery.export'`;
   assert.equal(Number(after.n), Number(before.n), "failed oversized export must not record success");
 });
+
+
+test("an approved observation cannot export a failed source capture", async () => {
+  const { id } = await fixture();
+  await observe(id, { ...observationFixture, expectedRevision: 1, sourceCapture: {
+    adapter: "fuzhou", sourceUrl: "https://hyj.fuzhou.gov.cn/fixture.htm", capturedAt: "2026-10-20T00:00:00Z",
+    httpStatus: 404, rawSha256: observationFixture.rawSha256, bodySha256: null, parser: "none", parseStatus: "failed",
+    attachmentSha256: null, conflicts: [],
+  } }, "tester");
+  await assert.rejects(exportMaterial(id, 2, "tester", now), /approved/);
+  await approve(id, 2);
+  await assert.rejects(exportMaterial(id, 2, "tester", now), /prevent export/);
+});

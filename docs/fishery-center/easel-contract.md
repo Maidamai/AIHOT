@@ -1,5 +1,7 @@
 # Easel 素材合同与同步验收（提案 v0.1）
 
+当前本地模块私有素材导出已扩为`fishery-material/0.2`，仍无Easel联调；下文0.1示例保留为完整同步合同规划，不代表已实现。见[来源适配验证](source-adapter-validation.md)。
+
 本文件描述待实现接口，不表示这些 `/api/fishery/` 路由已经存在。AIHOT基线 `5633b648b9ca6453caec5bcf70a76785a794286f`；Easel读到的公开源码基线 `8d08b216105bd7c7057c84c97cd637cec44db609`。未修改现有Easel文件和AI早报调度，尚未进行端到端采集/创作/发布。
 
 主体保留长期合同草案。当前首期仅实现 `/api/admin/fishery/documents/:id/export` 的管理员手工JSON/Markdown下载：日期使用各自 `{value, precision}` 对象，附带UTC日期对照和声明hash说明；不实现下述机器snapshot/changes或Easel调用。见[模块实际合同](../../modules/fishery/README.md)。不创建任何凭据、回调、远程访问权限或新调度。
