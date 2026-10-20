@@ -16,6 +16,8 @@ import { sourceFixture, observationFixture } from "./fixtures.ts";
 import { materialDetail } from "../backend/workbench.ts";
 import { sha256 } from "../backend/source-adapters.ts";
 import { workbench } from "../backend/workbench.ts";
+import { collectColumns } from "../backend/column-batches.ts";
+import { COLUMNS } from "../backend/official-columns.ts";
 
 installModules([fishery]);
 const app = await buildApp();
@@ -32,6 +34,22 @@ async function fixture(options: { unknownRights?: boolean; articleId?: string; s
   return { id: String(doc.id), sourceId };
 }
 const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { revision, sourceRevision, decision: "approved", applicabilityReviewed: false, note: "Manual fixture review" }, "reviewer");
+
+test("archived batch imports through the guarded route and displays only its version-bound body",async()=>{
+  const url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_1.htm",body="合成远洋渔业与公海履约原文，仅用于隔离测试，不是真实资讯。".repeat(4);
+  await collectColumns({id:"synthetic-route-batch",dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>({url:request,status:request.endsWith("robots.txt")?404:200,headers:{get:()=>"text/html"},body:Buffer.from(request.endsWith("robots.txt")?"missing":request===COLUMNS.moa.url?`<ul class="sj_e_tonzhi_list"><li><a href="${url}">合成公海材料</a></li></ul>`:`<meta name="ArticleTitle" content="合成公海材料"><meta name="PubDate" content="2026-10-20"><div class="sj_arc_body"><div class="TRS_Editor"><p>${body}</p></div></div>`)})});
+  config.devAdmin={displayName:"ISOLATED TEST IMPORT ONLY"};
+  try {
+    const response=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-route-batch/import",headers:{"x-csrf-token":"dev"},payload:{}});
+    assert.equal(response.statusCode,200,response.body);assert.equal(response.headers["cache-control"],"no-store");
+    const id=response.json().rows[0].id,detail=await materialDetail(id);
+    assert.equal(detail.state,"pending");assert.equal(detail.reviews.length,0);assert.equal(detail.text?.body,body);assert.equal(detail.text?.hashMatches,true);
+    assert.equal(detail.source.profile.rightsStatus,"unknown");assert.equal(detail.source.enabled,false);
+    const again=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-route-batch/import",headers:{"x-csrf-token":"dev"},payload:{}});
+    assert.equal(again.statusCode,200,again.body);assert.equal(again.json().rows[0].unchanged,true);
+    assert.equal((await documentHistory(id)).observations.length,1);
+  } finally {config.devAdmin=null;}
+});
 
 test("captured imports are unreviewed, unchanged captures deduplicate and A→B→A invalidates review",async()=>{
   const column={id:"synthetic-import",name:"Synthetic column",issuer:"Synthetic official issuer"};
