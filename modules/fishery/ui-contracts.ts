@@ -11,7 +11,7 @@ export interface MaterialSource {
 export interface MaterialObservation { revision: number; observedAt: string; actor: string; contentHash: string; payload: Observation; }
 export interface MaterialReview { revision: number; sourceRevision: number; decision: "approved" | "rejected"; note: string; actor: string; reviewedAt: string; applicabilityReviewed: boolean; }
 export interface MaterialRow {
-  id: string; sourceId: string; title: string; issuer: string; canonicalUrl: string; documentNumber: string | null;
+  id: string; sourceId: string; title: string; issuer: string; sourceAttribution:string;legacyIssuerMeaning:"source_attribution_only";canonicalUrl: string; documentNumber: string | null;
   articleId: string | null; withdrawnReason: string | null; source: MaterialSource; latest: MaterialObservation | null;
   review: MaterialReview | null; state: MaterialState; blockers: Blocker[]; testOnly: boolean;
 }
@@ -23,12 +23,19 @@ export interface MaterialDetail extends MaterialRow {
 
 
 export const FLOW_STATES:Record<string,string>={queued:"待处理",running:"处理中",failed:"失败，待人工核对",needs_evidence:"待补证",needs_human_review:"待人工审核",qualified:"内部合格",rejected:"已拒绝"};
+export interface FlowTimeline {
+  sourcePublished:Observation["dates"]["published"];sourcePublishedAt:string|null;publicationLiteral:string|null;
+  sourceEvent:Observation["dates"]["published"];candidateEvent:Observation["dates"]["published"];
+  sourceCapturedAt:string|null;generatedAt:string|null;checkedAt:string|null;taskCreatedAt:string;taskUpdatedAt:string;
+  referenceDate:string;originalAgeDays:number|null;isOriginalDay:boolean|null;historical:boolean;label:string;
+}
 export interface FlowView {
   id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;stale:boolean;staleReason:string|null;
+  timeline:FlowTimeline;
   generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
   draft:{receiptId:number;promptVersion:string;model:string;draft:{summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
   quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
   human_decision:{decision:string;actor:string;at:string;note:string}|null;
   error:{stage:string;phase?:string;reason:string;receiptId:number|null}|null;
-  internalArticle:{summaryZh:{sentence:string}[];qualifiedBy:string}|null;
+  internalArticle:{summaryZh:{sentence:string}[];qualifiedBy:string;timeline:FlowTimeline}|null;
 }

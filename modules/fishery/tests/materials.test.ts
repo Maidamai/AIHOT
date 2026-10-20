@@ -511,15 +511,45 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     assert.equal((await settled(goodJob)).state,"completed");assert.equal((await flowDetail(good.id)).status,"needs_human_review");assert.equal(calls,3);
     const duplicate=await enqueueOn(flowQueue,{id:good.id});
     assert.equal((await settled(duplicate)).state,"failed");assert.equal((await flowDetail(good.id)).status,"needs_human_review");assert.equal(calls,3);
+    const goodTask=await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"));
+    assert.deepEqual(goodTask.timeline.sourcePublished,{precision:"day",value:"2026-04-17"});
+    assert.equal(goodTask.timeline.originalAgeDays,186);assert.equal(goodTask.timeline.historical,true);assert.equal(goodTask.timeline.isOriginalDay,false);
+    assert.equal(goodTask.timeline.candidateEvent.precision,"unknown");assert.equal(goodTask.timeline.sourceEvent.precision,"unknown");
+    assert.ok(goodTask.timeline.generatedAt);assert.ok(goodTask.timeline.checkedAt);assert.equal(goodTask.timeline.sourceCapturedAt,"2026-10-20T00:00:00Z");
+    await decideFlow(good.id,{decision:"qualified",snapshotHash:goodTask.snapshotHash,note:"Synthetic historical internal article"},"reviewer");
+    const article=(await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"))).internalArticle;
+    assert.equal(article.timeline.historical,true);assert.equal(article.timeline.originalAgeDays,186);assert.equal(article.timeline.candidateEvent.precision,"unknown");
+    const [goodObservation]=await sql`SELECT payload FROM fishery_observations WHERE document_id=${goodTask.document_id} AND revision=2`;
+    for(const published of [{precision:"month",value:"2026-04"},{precision:"year",value:"2025"},{precision:"unknown",value:null}]) {
+      const payload={...goodObservation!.payload,dates:{...goodObservation!.payload.dates,published}};
+      await sql`UPDATE fishery_observations SET payload=${sql.json(payload)} WHERE document_id=${goodTask.document_id} AND revision=2`;
+      const timeline=(await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"))).timeline;
+      assert.deepEqual(timeline.sourcePublished,published);assert.equal(timeline.originalAgeDays,null);assert.equal(timeline.isOriginalDay,null);
+      assert.equal(timeline.historical,published.precision!=="unknown");
+      if(published.precision==="unknown") assert.match(timeline.label,/发布日期未知/);
+    }
+    for(const [value,age,historical] of [["2026-10-20",0,false],["2026-10-19",1,false],["2026-10-13",7,true]] as const) {
+      const payload={...goodObservation!.payload,dates:{...goodObservation!.payload.dates,published:{precision:"day",value}}};
+      await sql`UPDATE fishery_observations SET payload=${sql.json(payload)} WHERE document_id=${goodTask.document_id} AND revision=2`;
+      const timeline=(await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"))).timeline;
+      assert.equal(timeline.originalAgeDays,age);assert.equal(timeline.isOriginalDay,age===0);assert.equal(timeline.historical,historical);
+      if(age===1) assert.equal(timeline.label,"非当日原文");
+    }
+    await sql`UPDATE fishery_observations SET payload=${sql.json(goodObservation!.payload)} WHERE document_id=${goodTask.document_id} AND revision=2`;
+    await observe(goodTask.document_id,{...observationFixture,expectedRevision:2,dates:{...observationFixture.dates,published:{precision:"day",value:"2026-10-20"}}},"tester");
+    const oldTimeline=(await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"))).timeline;
+    assert.deepEqual(oldTimeline.sourcePublished,{precision:"day",value:"2026-04-17"},"a later observation cannot rewrite the article's original publication date");
+    assert.equal(oldTimeline.generatedAt,goodTask.timeline.generatedAt,"human qualification and newer metadata do not rewrite generation time");
     const interrupted=await task("manual-interrupted");await sql`UPDATE fishery_flow_tasks SET status='running' WHERE id=${interrupted.id}`;
     const interruptedJob=await enqueueOn(flowQueue,{id:interrupted.id});assert.equal((await settled(interruptedJob)).state,"failed");assert.equal((await flowDetail(interrupted.id)).status,"running");assert.equal(calls,3);
     ineligible=true;
     const unknown=await task("manual-unknown"),unknownJob=await enqueueOn(flowQueue,{id:unknown.id});
     assert.equal((await settled(unknownJob)).state,"completed");const unknownTask=await flowDetail(unknown.id);assert.equal(unknownTask.status,"needs_evidence");assert.equal(unknownTask.error.code,"FISHERY_ARTICLE_INELIGIBLE");assert.equal(calls,4,"unknown relevance skips paid review");
     await assert.rejects(decideFlow(unknown.id,{decision:"qualified",snapshotHash:unknownTask.snapshotHash,note:"Unknown cannot qualify"},"reviewer"),/relevant/);
-    await sql`UPDATE fishery_flow_tasks SET status='qualified' WHERE id=${unknown.id}`;
-    assert.equal((await flowDetail(unknown.id)).internalArticle,null,"legacy unknown qualified tasks have no internal article preview");
-    await sql`UPDATE fishery_flow_tasks SET status='needs_evidence' WHERE id=${unknown.id}`;
+    await sql`UPDATE fishery_flow_tasks SET status='qualified',quality_review=${sql.json({status:"needs_human_review",receiptId:999999,review:{decision:"supported",coverage:"complete_input",findings:[]},missingFields:[]})},human_decision=${sql.json({actor:"legacy-reviewer",decision:"qualified"})} WHERE id=${unknown.id}`;
+    assert.equal((await flowDetail(unknown.id)).internalArticle,null,"legacy unknown qualified tasks have no internal article preview even with a formerly passing review");
+    await assert.rejects(decideFlow(unknown.id,{decision:"qualified",snapshotHash:unknownTask.snapshotHash,note:"Legacy passing review cannot qualify unknown relevance"},"reviewer"),/relevant/);
+    await sql`UPDATE fishery_flow_tasks SET status='needs_evidence',quality_review=NULL,human_decision=NULL WHERE id=${unknown.id}`;
     ineligible=false;
     await retryFlow(unknown.id,{note:"Explicit regeneration of unknown draft",mode:"regenerate",acknowledgeNewCharge:true},"tester");
     assert.equal(await flowRequiredCalls(unknown.id),2);

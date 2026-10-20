@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { FlowTimeline } from "../ui-contracts.ts";
 import { z } from "zod";
 import { sql } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
@@ -60,13 +61,33 @@ export async function createFlow(documentId:string,raw:unknown,actor:string) {
     await audit(actor,"fishery.flow.create",`fishery:${documentId}`,null,null,{id:row!.id,snapshotHash:current.hash},{db:tx});return row!;
   });
 }
-export async function flowDetail(id:string):Promise<Record<string,any>> {
+async function flowTimeline(row:Record<string,any>,now:Date):Promise<FlowTimeline> {
+  // Read the task's bound revision, never a newer observation or the model's publication guess.
+  const [observation]=await sql`SELECT payload FROM fishery_observations WHERE document_id=${row.document_id} AND revision=${row.snapshot.observationRevision}`;
+  const unknown={precision:"unknown" as const,value:null},payload=observation?.payload,capture=payload?.sourceCapture;
+  const sourcePublished=payload?.dates.published??unknown;
+  const [times]=await sql`SELECT
+    max(created_at) FILTER (WHERE action='fishery.flow.generated' AND after->>'receiptId'=${String(row.draft?.receiptId??"")}) AS generated_at,
+    max(created_at) FILTER (WHERE action='fishery.flow.checked' AND after->>'receiptId'=${String(row.quality_review?.receiptId??"")}) AS checked_at
+    FROM audit_log WHERE subject=${`fishery:${row.document_id}`} AND after->>'id'=${row.id}`;
+  const iso=(value:Date|string|null|undefined)=>value?new Date(value).toISOString():null;
+  const referenceDate=now.toISOString().slice(0,10),dayMs=86_400_000,referenceMs=Date.parse(referenceDate);
+  const originalAgeDays=sourcePublished.precision==="day"?Math.floor((referenceMs-Date.parse(sourcePublished.value))/dayMs):null;
+  const latestDay=sourcePublished.precision==="year"?`${sourcePublished.value}-12-31`:sourcePublished.precision==="month"?new Date(Date.UTC(Number(sourcePublished.value.slice(0,4)),Number(sourcePublished.value.slice(5,7)),0)).toISOString().slice(0,10):sourcePublished.value;
+  const historical=latestDay!==null&&(referenceMs-Date.parse(latestDay))/dayMs>=7;
+  const label=sourcePublished.precision==="unknown"?"原文资料 · 发布日期未知":historical?"7日及更早原文资料":originalAgeDays===0?"当日原文 · 不代表最新消息":originalAgeDays!==null&&originalAgeDays>0?"非当日原文":originalAgeDays!==null&&originalAgeDays<0?"原文日期晚于核对日，需核验":`原文仅有${sourcePublished.precision==="year"?"年":"月"}精度，是否当日未知`;
+  return {sourcePublished,sourcePublishedAt:capture?.publishedAt??null,publicationLiteral:capture?.publicationLiteral??null,
+    sourceEvent:payload?.dates.event??unknown,candidateEvent:row.draft?.draft.dates?.event?.date??unknown,
+    sourceCapturedAt:capture?.capturedAt??null,generatedAt:iso(times?.generated_at),checkedAt:iso(times?.checked_at),taskCreatedAt:iso(row.created_at)!,taskUpdatedAt:iso(row.updated_at)!,
+    referenceDate,originalAgeDays,isOriginalDay:originalAgeDays===null?null:originalAgeDays===0,historical,label};
+}
+export async function flowDetail(id:string,now=new Date()):Promise<Record<string,any>> {
   const [row]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${id}`;if(!row) throw new NotFound("Flow not found");
   let staleReason:string|null=null;try{await inputFor(row.document_id,hash(row.snapshot));}catch(error){staleReason=(error as Error).message;}
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
-  const authoritative=latest?.id===id;
-  return {...row,authoritative,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
-    internalArticle:row.status==="qualified"&&!staleReason&&authoritative&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor}:null};
+  const authoritative=latest?.id===id,timeline=await flowTimeline(row,now);
+  return {...row,authoritative,timeline,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
+    internalArticle:row.status==="qualified"&&!staleReason&&authoritative&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
 async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,stage:string,attempt:number,options:ChatJsonOptions<S>,invoke:FisheryInvoke) {

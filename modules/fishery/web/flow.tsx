@@ -4,10 +4,17 @@ import { adminGet } from "@aihot/web/lib/admin.server";
 import type { ComponentProps, LoaderArgs } from "@aihot/web/lib/route-types";
 import { useAdminAction } from "@aihot/web/features/admin/action";
 import { AdminPage, Badge, Button, Card, KV, ReasonDialog } from "@aihot/web/features/admin/ui";
-import { FLOW_STATES, type FlowView } from "../ui-contracts.ts";
-import { noStore, useFreshMaterial } from "./shared.tsx";
+import { FLOW_STATES, type FlowTimeline, type FlowView } from "../ui-contracts.ts";
+import { dateLabel, noStore, useFreshMaterial } from "./shared.tsx";
 export const headers=noStore;
 export async function loader({request,params}:LoaderArgs) {return adminGet<FlowView>(request,`/api/admin/fishery/flows/${encodeURIComponent(params.id!)}`);}
+function Timeline({value:t}:{value:FlowTimeline}) {
+  return <div className="mb-4 space-y-3 rounded-control bg-bg-sunk p-3 text-[12px] text-ink-3">
+    <p><strong>{t.label}</strong> · 时效核对日 {t.referenceDate}（UTC）{t.originalAgeDays!==null&&t.originalAgeDays>=0?` · 原文距今${t.originalAgeDays}日`:""}</p>
+    <KV items={[["原文发布日期（绑定观察）",dateLabel(t.sourcePublished)],["原始发布时刻",t.sourcePublishedAt??"未知"],["原文日期字面",t.publicationLiteral??"未知"],["原文事件日期（记录）",dateLabel(t.sourceEvent)],["候选事件日期（模型，待核验）",dateLabel(t.candidateEvent)],["原文采集时间",t.sourceCapturedAt??"未记录"],["生成结果入库时间",t.generatedAt??"未记录"],["核查结果入库时间",t.checkedAt??"未记录"],["任务建立 / 最近更新",`${t.taskCreatedAt} / ${t.taskUpdatedAt}`]]}/>
+    <p>采集、生成、核查和任务更新时间均不是新闻发生或原文发布日期。历史资料新生成不变成最新消息；日期未知保持未知，文载状态不代表独立核实现行有效或法律适用。</p>
+  </div>;
+}
 export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
   const {run,busy}=useAdminAction(),fresh=useFreshMaterial();
   const [command,setCommand]=useState<{kind:"resume"|"regenerate"|"qualified"|"rejected";snapshotHash:string}|null>(null),[ack,setAck]=useState(false);
@@ -19,6 +26,7 @@ export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-5">
         <Card title="候选文章与逐句证据">
+          <Timeline value={d.timeline}/>
           {d.draft?<><p className="mb-3 text-[12px] text-ink-3">生成回执 {d.draft.receiptId} · 配置模型别名 {d.draft.model} · {d.draft.promptVersion}</p><ol className="space-y-4">{d.draft.draft.summaryZh.map((fact,i)=><li key={i}><p className="text-[14px] leading-relaxed">{fact.sentence}</p>{fact.evidence.map((a,j)=><blockquote key={j} className="mt-2 border-l-2 border-line pl-3 text-[12px] text-ink-3">{a.quote}<footer className="mt-1">原段 {a.paragraph} · PDF页 {a.page??"未提供"}</footer></blockquote>)}</li>)}</ol><details className="mt-4 text-[12px]"><summary className="cursor-pointer text-accent">查看日期、机构角色、海域和全部生成字段</summary><pre className="mt-2 max-h-[600px] overflow-auto whitespace-pre-wrap break-words rounded-control bg-bg-sunk p-3">{JSON.stringify(d.draft.draft,null,2)}</pre></details></>:<p className="text-[13px] text-ink-3">尚无成功生成产物。</p>}
         </Card>
         <Card title="隔离第二遍证据核查">
@@ -26,7 +34,7 @@ export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
           {d.quality_review?<><p className="text-[12px] text-ink-3">核查回执 {d.quality_review.receiptId} · 配置模型别名 {d.quality_review.model} · {d.quality_review.review.decision} · 输入覆盖 {d.quality_review.review.coverage}</p><ul className="mt-3 space-y-4">{d.quality_review.review.findings.map((f,i)=><li key={i} className="rounded-control bg-bg-sunk p-3 text-[13px]"><strong>{f.field} · {f.verdict}</strong><p className="mt-1">{f.reason}</p>{f.evidence.map((a,j)=><blockquote key={j} className="mt-2 border-l-2 border-line pl-3 text-[12px] text-ink-3">{a.quote}（原段 {a.paragraph}，PDF页 {a.page??"未提供"}）</blockquote>)}</li>)}</ul>{!!d.quality_review.missingFields.length&&<p className="mt-3 text-[13px] text-hot">缺少完整支持：{d.quality_review.missingFields.join("、")}</p>}</>:<p className="text-[13px] text-ink-3">尚无成功核查结果。</p>}
           {d.error&&<p role="alert" className="mt-4 break-words text-[13px] text-hot">失败阶段 {d.error.stage}：{d.error.reason}；回执 {d.error.receiptId??"未提供"}。不会自动重试。</p>}
         </Card>
-        {d.internalArticle&&<Card title="当前内部合格文章预览"><div className="space-y-3 text-[14px] leading-relaxed">{d.internalArticle.summaryZh.map((s,i)=><p key={i}>{s.sentence}</p>)}</div><p className="mt-3 text-[12px] text-ink-3">审核者：{d.internalArticle.qualifiedBy}。仅当前快照内部预览，原许可保持不变。</p></Card>}
+        {d.internalArticle&&<Card title="当前快照内部合格文章预览"><Timeline value={d.internalArticle.timeline}/><div className="space-y-3 text-[14px] leading-relaxed">{d.internalArticle.summaryZh.map((s,i)=><p key={i}>{s.sentence}</p>)}</div><p className="mt-3 text-[12px] text-ink-3">审核者：{d.internalArticle.qualifiedBy}。仅当前快照内部预览，原许可保持不变。</p></Card>}
       </div>
       <aside className="space-y-5 xl:sticky xl:top-5">
         <Card title="人工决定"><p className="text-[13px] text-ink-3">核对原文、每条证据和适用边界后，记录内部决定。内部合格不会公开文章或开放全文导出。</p><div className="mt-4 flex flex-wrap gap-2"><Button tone="primary" disabled={busy||!canDecide} onClick={()=>open("qualified")}>记录内部合格</Button><Button tone="danger" disabled={busy||d.status==="running"} onClick={()=>open("rejected")}>拒绝 / 撤销内部合格</Button></div>{d.human_decision&&<div className="mt-4 text-[13px]"><p>{d.human_decision.actor} · {d.human_decision.at}</p><p className="mt-1 whitespace-pre-wrap break-words">{d.human_decision.note}</p></div>}</Card>

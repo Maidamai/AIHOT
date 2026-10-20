@@ -5,8 +5,14 @@ services:
   fishery-manual-processor:
     image: ${FISHERY_PROCESSOR_IMAGE:?existing application image required}
     env_file:
-      - ${FISHERY_PRIVATE_ENV_FILE:?existing private env_file required}
+      - path: ${FISHERY_PRIVATE_ENV_FILE:?existing private env_file required}
+        format: raw
     environment:
+      NODE_ENV: production
+      AIHOT_ENVIRONMENT: production
+      DATABASE_URL: ${FISHERY_PROCESSOR_DATABASE_URL:?existing production database URL required}
+      SITE_URL: ${SITE_URL:?existing site URL required}
+      AIHOT_CREDENTIALS_DIR: /nonexistent-processor-credentials
       AIHOT_DATA_DIR: /data
       MODEL_CALLS_ENABLED: "true"
       COLLECT_ENABLED: "false"

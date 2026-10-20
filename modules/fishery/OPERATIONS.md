@@ -86,7 +86,7 @@ IOTC26/03完整6页正文（约19.6KiB，页面结构作为正文+页锚发送�
 
 后台的 `POST flows/:id/run` 只排队。要让该按钮实际执行，使用专用入口 `node modules/fishery/scripts/consume-flows.ts`；只订阅 `fishery.flow`，每批1项、并发1项，并用保留的数据库session advisory锁拒绝第二实例。它不启动 `apps/worker`，不注册采集/通知/成刊/维护调度，不运行业务恢复扫描或回执释放重试。pg-boss自身的schedule和supervise也关闭，因此库中既有cron不会由这个进程触发；进程中断和过期任务仍须显式对账，不宣称自动恢复。
 
-`deploy/manual-processing.yaml` 是叠加既有私有生产Compose的示例：指定既有镜像 `FISHERY_PROCESSOR_IMAGE` 和既有私有env_file路径 `FISHERY_PRIVATE_ENV_FILE`，沿用同一DB、data volume和网络。正常env_file机制加载原密钥，不读取/打印值，不生成新密钥，不初始化或复制授权账本。此片段仅打开processor的MODEL_CALLS_ENABLED，API继续关闭；无公网端口，采集、推送、IndexNow均关闭。部署前核对合并后的镜像、数据库、data路径及私有网络与现有服务一致，并先检查管理员已明确排入的任务；启动即可能消费这些既有手动任务，空队列启动零模型请求。
+`deploy/manual-processing.yaml` 是叠加既有私有生产Compose的示例：明确指定既有镜像 `FISHERY_PROCESSOR_IMAGE`、同一生产数据库 `FISHERY_PROCESSOR_DATABASE_URL`、既有 `SITE_URL` 和私有env_file路径 `FISHERY_PRIVATE_ENV_FILE`，沿用data volume和网络；私有LLM env_file本身不承担DB配置。环境显式为production，credentials目录为不含秘密的不存在路径，仅使用既有env_file。env_file采用format:raw保留密钥字面值（Compose须支持raw格式），不读取/打印值，不生成新密钥，不初始化或复制授权账本。此片段仅打开processor的MODEL_CALLS_ENABLED，API继续关闭；无公网端口，采集、推送、IndexNow均关闭。部署前核对合并后的镜像、数据库、data路径及私有网络与现有服务一致，并先检查管理员已明确排入的任务；启动即可能消费这些既有手动任务，空队列启动零模型请求。
 
 启动时先ensure唯一flow队列，再读取实际配置并要求retryLimit=0、expireInSeconds至少600秒；ensureQueue不会更新已有队列，不符合时进程拒绝启动，须操作者先核对配置。不会在启动时重置running、failed或pending/unknown回执。SIGTERM/SIGINT先停止取新任务并沿用stopBoss的470秒排空，再释放独占锁和DB；Compose留500秒stop grace。强杀后running仍保持原状，须按上文回执对账后显式恢复。
 
@@ -103,3 +103,5 @@ IOTC26/03完整6页正文（约19.6KiB，页面结构作为正文+页锚发送�
 核查仍逐claim完整核对主体、限定、数值/单位、日期、角色、否定/条件及状态；supported须有非空ID子集且只能复用该claim原始绑定ID，不能从正文别处补锚。其他源ID只允许用于contradicted。空/漏/重/额外claim不通过；合法unknown不是断言。reported_occurred新增否定、取消、延期、条件和计划的保守拒绝门禁。`FISHERY_RULES_VERSION`纳入生成/核查promptVersion及任务配置指纹：schema、确定性校验规则或证据算法变化均须递增相应版本，旧qualified/回执不能按新规则静默继承。
 
 离线合成ID案例可证明上海/召开解引用正确、年份仍unknown，不代表真实模型成功或统计质量。ID仅确保引用身份，不证明语义蕴含：复杂否定、跨句指代、机构角色和政策适用性仍依赖完整上下文核查及人工审核；保守分句会把PDF换行保留为独立证据行，因此跨行事实可能退待补证。supported仍只到needs_human_review，approved/published始终false。当前6页IOTC完整19,598bytes的零请求预检为生成约53kbytes、核查最大包络约72kbytes（规则文案更新会轻微变化），均低于96,000；100,000输入tokens、2048输出tokens、禁thinking/tools/redirect、每次0.40元及累计20次/10元不变。
+
+内部候选及合格文章预览同时提供绑定观察版本的原文发布日期/精度、原始时刻/日期字面、原文与候选事件日期、采集时间，以及各自独立的任务建立/更新、生成结果入库和核查结果入库时间。后两者从当前任务及回执匹配的审计记录读取，缺失则未记录，不能用较晚的人审更新时间冒充。时效核对日按UTC显示：日精度才计算距今日数；年/月精度保留原精度，只有该周期最晚日期也已达到7日才标“7日及更早原文资料”。昨日仅标非当日原文；未知发布日期不以今天采集/生成为今天新闻。这个7日窗口仅是可见资料年龄说明，不改变权利、事实或法律适用性门禁。
