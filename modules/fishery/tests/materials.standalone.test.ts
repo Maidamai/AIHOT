@@ -11,9 +11,52 @@ import path from "node:path";
 import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence, titlePriority } from "../backend/official-columns.ts";
 import { collectColumns, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
 import { evidenceIdentity } from "../backend/store.ts";
-import { buildFisheryDraftRequest, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
+import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
 import { createHash } from "node:crypto";
+
+test("saved DeepSeek responses preserve strict evidence arrays and the accepted draft's source anchors",async()=>{
+  const {fixtures}=JSON.parse(await readFile(new URL("./fixtures/ai-trial-responses-20261020.json",import.meta.url),"utf8"));
+  const input=(f:any)=>({documentId:`offline-receipt-${f.receiptId}`,observationRevision:1,body:f.body,bodySha256:f.bodySha256,language:"zh"});
+  const [first,accepted]=fixtures,original=structuredClone(first.response);
+  const failure=fisheryDraftSchema.safeParse(first.response);
+  assert.equal(failure.success,false);
+  if(!failure.success) assert.ok(failure.error.issues.some(i=>i.path.join(".")==="relevance.evidence"));
+  // An explicit test-only format correction demonstrates the desired contract. Runtime never coerces.
+  const corrected=structuredClone(first.response);
+  function arrays(v:any) {if(!v||typeof v!=="object") return;for(const [key,value]of Object.entries(v)){if(key==="evidence") v[key]=value===null?[]:Array.isArray(value)?value:[value];else arrays(value);}}
+  arrays(corrected);
+  assert.doesNotThrow(()=>validateFisheryDraft(input(first),corrected));
+  assert.deepEqual(first.response,original,"Never rewrite the original model response");
+  assert.doesNotThrow(()=>validateFisheryDraft(input(accepted),accepted.response));
+  assert.equal(accepted.response.dates.published.date.precision,"unknown");
+});
+
+test("saved partial event dates cannot become ISO dates or borrow the source publication date",async()=>{
+  const {fixtures}=JSON.parse(await readFile(new URL("./fixtures/ai-trial-responses-20261020.json",import.meta.url),"utf8"));
+  const f=fixtures[2],input={documentId:"offline-partial-date",observationRevision:1,body:f.body,bodySha256:f.bodySha256,language:"zh"};
+  assert.equal(f.response.dates.event.date.value,"--05-16");
+  assert.throws(()=>validateFisheryDraft(input,f.response),/Invalid ISO date/);
+  for(const value of ["2026-05-16",f.sourcePublication.value]) {
+    const invented=structuredClone(f.response);invented.dates.published={date:unknownDate,evidence:[]};invented.dates.event.date={precision:"day",value};
+    assert.throws(()=>validateFisheryDraft(input,invented),/components are not explicit/);
+  }
+  const partial=structuredClone(f.response);partial.dates.published={date:unknownDate,evidence:[]};partial.dates.event.date=unknownDate;
+  const result=validateFisheryDraft(input,partial);
+  assert.deepEqual(result.dates.event.date,unknownDate);assert.equal(result.dates.event.evidence[0]!.quote,"5月16日");
+  // This only passes structural/date gates; the saved location-role inferences still need human review.
+  const body="会议于2026年5月16日在福州举行。",anchor={quote:body,paragraph:1,page:null};
+  const complete={...partial,summaryZh:[],relevance:{decision:"unknown",reason:"Synthetic date test",evidence:[]},locations:[],dates:{...partial.dates,event:{date:{precision:"day",value:"2026-05-16"},evidence:[anchor]}}};
+  const fullInput={...input,body,bodySha256:sha256(body)};
+  assert.equal(validateFisheryDraft(fullInput,complete).dates.event.date.value,"2026-05-16");
+  assert.throws(()=>validateFisheryDraft(fullInput,{...complete,dates:{...complete.dates,published:complete.dates.event}}),/Publication metadata/);
+  for(const body of ["Meeting occurred on 16 May 2026.","会议记载2026-05-16T23:30:00Z。"]){
+    const event={date:{precision:"day",value:"2026-05-16"},evidence:[{quote:body,paragraph:1,page:null}]};
+    const dated={...complete,dates:{...complete.dates,event}},context={...input,body,bodySha256:sha256(body)};
+    assert.doesNotThrow(()=>validateFisheryDraft(context,dated));
+    assert.throws(()=>validateFisheryDraft(context,{...dated,dates:{...dated.dates,event:{...event,date:{precision:"day",value:"2026-05-17"}}}}),/components are not explicit/);
+  }
+});
 
 test("trial counts actual sends, refuses overrides and redirects, and stops after four reservations",async()=>{
   const entries:{state:string}[]=[],wire={model:TRIAL.model,messages:[{role:"system",content:"JSON only"},{role:"user",content:"Synthetic public article"}],max_tokens:2048,thinking:{type:"disabled"},response_format:{type:"json_object"},temperature:0};

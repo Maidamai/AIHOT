@@ -1,0 +1,562 @@
+{
+  "purpose": "Offline regression only. Original responses unchanged; excerpts verified against private full archives. No keys, headers or internal review data.",
+  "fixtures": [
+    {
+      "receiptId": 1,
+      "sourceUrl": "https://yyj.moa.gov.cn/gzdt/202606/t20260611_6484888.htm",
+      "originalBodySha256": "118f3a16ac388b150c82ba7c7f3755713dc67dd48f9fac4fbf653775d62fb401",
+      "sourcePublication": {
+        "precision": "day",
+        "value": "2026-06-11"
+      },
+      "bodyKind": "continuous cited excerpts with original paragraph numbering; not the complete article",
+      "body": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。研讨会聚焦《协定》实施对公海渔业的机遇与挑战\n公海渔业是《协定》实施的重点领域\n[Uncited paragraph omitted from this regression fixture]\n不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作\n《协定》于2026年1月生效",
+      "bodySha256": "c5eebc9c2965d97ea63bdce19fccb77bada8955fc9395c5dc9119d42e705eb65",
+      "verifiedAnchors": [
+        {
+          "quote": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "dbcb1a37a9f31a02a17f00d6c98737745a96a4679bc27e7d27792fb41325c9c4",
+          "startUtf8": 18,
+          "endUtf8": 102
+        },
+        {
+          "quote": "研讨会聚焦《协定》实施对公海渔业的机遇与挑战",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "dbcb1a37a9f31a02a17f00d6c98737745a96a4679bc27e7d27792fb41325c9c4",
+          "startUtf8": 105,
+          "endUtf8": 171
+        },
+        {
+          "quote": "不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作",
+          "paragraph": 4,
+          "page": null,
+          "sourceParagraphSha256": "c562aadecfb4c405af9afb3314eec3d19e9c54fb106452b81257a25eb23c7790",
+          "startUtf8": 108,
+          "endUtf8": 192
+        },
+        {
+          "quote": "6月8日至9日",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "dbcb1a37a9f31a02a17f00d6c98737745a96a4679bc27e7d27792fb41325c9c4",
+          "startUtf8": 0,
+          "endUtf8": 15
+        },
+        {
+          "quote": "6月8日至9日",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "dbcb1a37a9f31a02a17f00d6c98737745a96a4679bc27e7d27792fb41325c9c4",
+          "startUtf8": 0,
+          "endUtf8": 15
+        },
+        {
+          "quote": "《协定》于2026年1月生效",
+          "paragraph": 5,
+          "page": null,
+          "sourceParagraphSha256": "d878ac0a132d1e99c22970e44e5fdb77f8e7a0b82df47a0b6e46638c8d9bd518",
+          "startUtf8": 342,
+          "endUtf8": 374
+        },
+        {
+          "quote": "《协定》于2026年1月生效",
+          "paragraph": 5,
+          "page": null,
+          "sourceParagraphSha256": "d878ac0a132d1e99c22970e44e5fdb77f8e7a0b82df47a0b6e46638c8d9bd518",
+          "startUtf8": 342,
+          "endUtf8": 374
+        },
+        {
+          "quote": "在上海召开",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "dbcb1a37a9f31a02a17f00d6c98737745a96a4679bc27e7d27792fb41325c9c4",
+          "startUtf8": 87,
+          "endUtf8": 102
+        },
+        {
+          "quote": "公海渔业是《协定》实施的重点领域",
+          "paragraph": 2,
+          "page": null,
+          "sourceParagraphSha256": "7efa5ea6eb8b2ed3ead31d3687213224115ef91b210c64ddc6a3425824545950",
+          "startUtf8": 15,
+          "endUtf8": 63
+        }
+      ],
+      "modelAlias": "deepseek-flash",
+      "versionVerifiedAt": "2026-10-20",
+      "response": {
+        "relevance": {
+          "decision": "relevant",
+          "reason": "文本涉及公海渔业治理及《海洋生物多样性协定》履约义务，具备明确国际渔业履约证据。",
+          "evidence": {
+            "quote": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1,
+            "page": null
+          }
+        },
+        "summaryZh": [
+          {
+            "sentence": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开，聚焦《协定》实施对公海渔业的机遇与挑战。",
+            "evidence": {
+              "quote": "研讨会聚焦《协定》实施对公海渔业的机遇与挑战",
+              "paragraph": 1,
+              "page": null
+            }
+          },
+          {
+            "sentence": "中方代表介绍了中国加强远洋渔业规范管理、参与国际和区域渔业治理合作及公海自主休渔等情况。",
+            "evidence": {
+              "quote": "不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作",
+              "paragraph": 4,
+              "page": null
+            }
+          }
+        ],
+        "dates": {
+          "published": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": {
+              "quote": "6月8日至9日",
+              "paragraph": 1,
+              "page": null
+            }
+          },
+          "event": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": {
+              "quote": "6月8日至9日",
+              "paragraph": 1,
+              "page": null
+            }
+          },
+          "adopted": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": null
+          },
+          "effective": {
+            "date": {
+              "precision": "month",
+              "value": "2026-01"
+            },
+            "evidence": {
+              "quote": "《协定》于2026年1月生效",
+              "paragraph": 5,
+              "page": null
+            }
+          },
+          "objectionDeadline": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": null
+          }
+        },
+        "entryIntoForce": {
+          "value": "in_force",
+          "evidence": {
+            "quote": "《协定》于2026年1月生效",
+            "paragraph": 5,
+            "page": null
+          }
+        },
+        "locations": [
+          {
+            "role": "meeting_location",
+            "value": "上海",
+            "evidence": {
+              "quote": "在上海召开",
+              "paragraph": 1,
+              "page": null
+            }
+          },
+          {
+            "role": "fishing_area",
+            "value": "公海",
+            "evidence": {
+              "quote": "公海渔业是《协定》实施的重点领域",
+              "paragraph": 2,
+              "page": null
+            }
+          }
+        ],
+        "uncertainties": [
+          "发布日期未提供",
+          "事件具体日期仅知6月8日至9日，年份未知",
+          "通过日期未提供",
+          "异议截止日未提供",
+          "船队属地、出发港、船旗登记未提供"
+        ]
+      },
+      "expectedOriginalResult": "rejected"
+    },
+    {
+      "receiptId": 2,
+      "sourceUrl": "https://yyj.moa.gov.cn/gzdt/202609/t20260930_6488348.htm",
+      "originalBodySha256": "0760eaeba1e9ce6b676ab5365ad7a92a2a04a52aea8d98848c96a6e546c5d15f",
+      "sourcePublication": {
+        "precision": "day",
+        "value": "2026-09-30"
+      },
+      "bodyKind": "continuous cited excerpts with original paragraph numbering; not the complete article",
+      "body": "农业农村部、财政部联合印发\n[Uncited paragraph omitted from this regression fixture]\n远洋渔业转型升级\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]\n远洋渔业履约\n明确禁止对从事非法、不报告、不管制捕捞或支持非法、不报告、不管制捕捞相关活动的船舶或经营者予以补贴\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]",
+      "bodySha256": "670d1bbe46258aecb710f4c46e39b540c8db217e55d801b0859628c807ff3b55",
+      "verifiedAnchors": [
+        {
+          "page": null,
+          "quote": "农业农村部、财政部联合印发",
+          "paragraph": 1,
+          "sourceParagraphSha256": "9bc522f618c5ebb78f7256cbee52b27a911b9394cbfdb2c2948ad15692f9428a",
+          "startUtf8": 9,
+          "endUtf8": 48
+        },
+        {
+          "page": null,
+          "quote": "远洋渔业转型升级",
+          "paragraph": 3,
+          "sourceParagraphSha256": "c6a1203d42c9d3f8fb92f2a3561b00e9006ccdcafaed7abe472873217c639393",
+          "startUtf8": 345,
+          "endUtf8": 369
+        },
+        {
+          "page": null,
+          "quote": "远洋渔业履约",
+          "paragraph": 6,
+          "sourceParagraphSha256": "907d38fa7b2417a8089bd234c98d8e4e334b8dfb22a21466c572aaea60efad15",
+          "startUtf8": 375,
+          "endUtf8": 393
+        },
+        {
+          "page": null,
+          "quote": "明确禁止对从事非法、不报告、不管制捕捞或支持非法、不报告、不管制捕捞相关活动的船舶或经营者予以补贴",
+          "paragraph": 7,
+          "sourceParagraphSha256": "3765841ddb6e9a94872e5f9b63ba810049931b49d3fa76007c909bd570208e33",
+          "startUtf8": 489,
+          "endUtf8": 636
+        }
+      ],
+      "modelAlias": "deepseek-flash",
+      "versionVerifiedAt": "2026-10-20",
+      "response": {
+        "dates": {
+          "event": {
+            "date": {
+              "value": null,
+              "precision": "unknown"
+            },
+            "evidence": []
+          },
+          "adopted": {
+            "date": {
+              "value": null,
+              "precision": "unknown"
+            },
+            "evidence": []
+          },
+          "effective": {
+            "date": {
+              "value": null,
+              "precision": "unknown"
+            },
+            "evidence": []
+          },
+          "published": {
+            "date": {
+              "value": null,
+              "precision": "unknown"
+            },
+            "evidence": []
+          },
+          "objectionDeadline": {
+            "date": {
+              "value": null,
+              "precision": "unknown"
+            },
+            "evidence": []
+          }
+        },
+        "locations": [
+          {
+            "role": "issuer",
+            "value": "农业农村部、财政部",
+            "evidence": [
+              {
+                "page": null,
+                "quote": "农业农村部、财政部联合印发",
+                "paragraph": 1
+              }
+            ]
+          }
+        ],
+        "relevance": {
+          "reason": "文本提及远洋渔业转型升级、远洋渔业履约及禁止对IUU捕捞相关活动补贴，属明确国际渔业履约证据。",
+          "decision": "relevant",
+          "evidence": [
+            {
+              "page": null,
+              "quote": "远洋渔业转型升级",
+              "paragraph": 3
+            }
+          ]
+        },
+        "summaryZh": [
+          {
+            "evidence": [
+              {
+                "page": null,
+                "quote": "远洋渔业履约",
+                "paragraph": 6
+              }
+            ],
+            "sentence": "政策继续支持远洋渔业履约等内容。"
+          },
+          {
+            "evidence": [
+              {
+                "page": null,
+                "quote": "明确禁止对从事非法、不报告、不管制捕捞或支持非法、不报告、不管制捕捞相关活动的船舶或经营者予以补贴",
+                "paragraph": 7
+              }
+            ],
+            "sentence": "政策明确禁止对从事非法、不报告、不管制捕捞相关活动的船舶或经营者予以补贴。"
+          }
+        ],
+        "uncertainties": [
+          "发布日期未明确",
+          "事件日期未明确",
+          "通过日期未明确",
+          "生效日期未明确",
+          "异议截止日未明确",
+          "船队属地、出发港、作业海域、会议地点、船旗登记均未提及"
+        ],
+        "entryIntoForce": {
+          "value": "unknown",
+          "evidence": []
+        }
+      },
+      "expectedOriginalResult": "accepted_structure_only"
+    },
+    {
+      "receiptId": 3,
+      "sourceUrl": "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202605/t20260519_7149775.htm",
+      "originalBodySha256": "f4fc0fb5f6e36213265619363b8fcd72fd812e05b986fd69b1783c88995196a0",
+      "sourcePublication": {
+        "precision": "day",
+        "value": "2026-05-20"
+      },
+      "bodyKind": "continuous cited excerpts with original paragraph numbering; not the complete article",
+      "body": "5月16日，福建省海洋与渔业局联合福州市政府、福州市海洋与渔业局、厦门市海洋发展局共同召开推进海洋经济高质量发展百场项目对接之南极磷虾全产业链高质量发展\n[Uncited paragraph omitted from this regression fixture]\n加快推动南极磷虾全产业链高质量发展。推动捕捞、加工、技术、市场、政策、生态等领域协同发力，提升极地作业抗冰破冰及长航时自持力不足等难点卡点。突破船上即时保鲜、船载加工匹配度低、虾粉出成率不高、磷虾自溶等关键瓶颈。攻克磷虾油与蛋白肽高纯度提取、活性物质高效回收等精深加工与高值化技术短板。加快构建产品标准与认证体系，塑造“福建南极磷虾”区域品牌。强化顶层设计，加强政策保障，创新金融产品与服务。积极提升国际话语权，始终把生态保护放在首位，严格遵守国际公约，科学控制捕捞总量\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]\n[Uncited paragraph omitted from this regression fixture]",
+      "bodySha256": "03608e91551a999b46e9f3ba612e56a774e9ad0088d8482fc6111ce14c07b878",
+      "verifiedAnchors": [
+        {
+          "quote": "提升极地作业抗冰破冰及长航时自持力不足等难点卡点",
+          "paragraph": 3,
+          "page": null,
+          "sourceParagraphSha256": "f4b6977af3080143ae3465e92b3fb5eb139bc7436d139cdd18bad39b9be449a2",
+          "startUtf8": 177,
+          "endUtf8": 249
+        },
+        {
+          "quote": "加快推动南极磷虾全产业链高质量发展",
+          "paragraph": 3,
+          "page": null,
+          "sourceParagraphSha256": "f4b6977af3080143ae3465e92b3fb5eb139bc7436d139cdd18bad39b9be449a2",
+          "startUtf8": 42,
+          "endUtf8": 93
+        },
+        {
+          "quote": "严格遵守国际公约，科学控制捕捞总量",
+          "paragraph": 3,
+          "page": null,
+          "sourceParagraphSha256": "f4b6977af3080143ae3465e92b3fb5eb139bc7436d139cdd18bad39b9be449a2",
+          "startUtf8": 696,
+          "endUtf8": 747
+        },
+        {
+          "quote": "5月16日",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "4fa0354991fee499f17b774d40f733d6bed029f21a8d035beef6b5b795dc66b3",
+          "startUtf8": 0,
+          "endUtf8": 9
+        },
+        {
+          "quote": "5月16日",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "4fa0354991fee499f17b774d40f733d6bed029f21a8d035beef6b5b795dc66b3",
+          "startUtf8": 0,
+          "endUtf8": 9
+        },
+        {
+          "quote": "福建省海洋与渔业局联合福州市政府",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "4fa0354991fee499f17b774d40f733d6bed029f21a8d035beef6b5b795dc66b3",
+          "startUtf8": 12,
+          "endUtf8": 60
+        },
+        {
+          "quote": "福建省海洋与渔业局联合福州市政府",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "4fa0354991fee499f17b774d40f733d6bed029f21a8d035beef6b5b795dc66b3",
+          "startUtf8": 12,
+          "endUtf8": 60
+        },
+        {
+          "quote": "南极磷虾全产业链高质量发展",
+          "paragraph": 1,
+          "page": null,
+          "sourceParagraphSha256": "4fa0354991fee499f17b774d40f733d6bed029f21a8d035beef6b5b795dc66b3",
+          "startUtf8": 183,
+          "endUtf8": 222
+        }
+      ],
+      "modelAlias": "deepseek-flash",
+      "versionVerifiedAt": "2026-10-20",
+      "response": {
+        "relevance": {
+          "decision": "relevant",
+          "reason": "涉及南极磷虾远洋捕捞、极地作业及国际公约履约，具备远洋渔业证据。",
+          "evidence": [
+            {
+              "quote": "提升极地作业抗冰破冰及长航时自持力不足等难点卡点",
+              "paragraph": 3,
+              "page": null
+            }
+          ]
+        },
+        "summaryZh": [
+          {
+            "sentence": "福建召开南极磷虾全产业链推进会，聚焦极地捕捞与加工技术攻关。",
+            "evidence": [
+              {
+                "quote": "加快推动南极磷虾全产业链高质量发展",
+                "paragraph": 3,
+                "page": null
+              }
+            ]
+          },
+          {
+            "sentence": "会议要求严格遵守国际公约并科学控制捕捞总量。",
+            "evidence": [
+              {
+                "quote": "严格遵守国际公约，科学控制捕捞总量",
+                "paragraph": 3,
+                "page": null
+              }
+            ]
+          }
+        ],
+        "dates": {
+          "published": {
+            "date": {
+              "precision": "day",
+              "value": "--05-16"
+            },
+            "evidence": [
+              {
+                "quote": "5月16日",
+                "paragraph": 1,
+                "page": null
+              }
+            ]
+          },
+          "event": {
+            "date": {
+              "precision": "day",
+              "value": "--05-16"
+            },
+            "evidence": [
+              {
+                "quote": "5月16日",
+                "paragraph": 1,
+                "page": null
+              }
+            ]
+          },
+          "adopted": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": []
+          },
+          "effective": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": []
+          },
+          "objectionDeadline": {
+            "date": {
+              "precision": "unknown",
+              "value": null
+            },
+            "evidence": []
+          }
+        },
+        "entryIntoForce": {
+          "value": "unknown",
+          "evidence": []
+        },
+        "locations": [
+          {
+            "role": "issuer",
+            "value": "福建省海洋与渔业局等",
+            "evidence": [
+              {
+                "quote": "福建省海洋与渔业局联合福州市政府",
+                "paragraph": 1,
+                "page": null
+              }
+            ]
+          },
+          {
+            "role": "meeting_location",
+            "value": "福建省",
+            "evidence": [
+              {
+                "quote": "福建省海洋与渔业局联合福州市政府",
+                "paragraph": 1,
+                "page": null
+              }
+            ]
+          },
+          {
+            "role": "fishing_area",
+            "value": "南极",
+            "evidence": [
+              {
+                "quote": "南极磷虾全产业链高质量发展",
+                "paragraph": 1,
+                "page": null
+              }
+            ]
+          }
+        ],
+        "uncertainties": [
+          "发布日期年份未提供",
+          "会议具体城市未明确",
+          "船旗登记与出发港未提及"
+        ]
+      },
+      "expectedOriginalResult": "rejected"
+    }
+  ]
+}
