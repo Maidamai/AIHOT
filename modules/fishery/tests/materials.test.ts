@@ -30,6 +30,20 @@ async function fixture(options: { unknownRights?: boolean; articleId?: string; s
 }
 const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { revision, sourceRevision, decision: "approved", applicabilityReviewed: false, note: "Manual fixture review" }, "reviewer");
 
+test("isolated test exports keep the test-review warning in JSON, Markdown and their content hash", async () => {
+  const environment = config.environmentName;
+  config.environmentName = "test";
+  try {
+    const { id } = await fixture();
+    await approve(id);
+    const bundle = await exportMaterial(id, 1, "ISOLATED TEST ONLY", now);
+    assert.equal(bundle.editorial.confidence, "isolated_test_workflow_not_business_approval");
+    assert.ok(materialMarkdown(bundle).includes("不代表人工业务批准或真实转载授权"));
+    const { contentHash, ...payload } = bundle;
+    assert.equal(contentHash, hash(payload));
+  } finally { config.environmentName = environment; }
+});
+
 test("A→B→A and attachment-only replacements remain separate observations and invalidate approval", async () => {
   const { id } = await fixture();
   await approve(id);

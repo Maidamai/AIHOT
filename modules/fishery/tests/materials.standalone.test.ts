@@ -127,6 +127,13 @@ test("IOTC missing/failed/unverified PDF and conflicting status or deadline stay
   const pdf = syntheticPdf();
   assert.equal(prepareOfficial("iotc", receipt(raw, ioUrl), raw, { ...pdf, parsed: { ...pdf.parsed, text: pdf.parsed.text.replace("26/01", "26/02") } }).readyForReview, false);
   assert.equal(prepareOfficial("iotc", receipt(raw, ioUrl), raw, { ...pdf, receipt: { ...pdf.receipt, status: 404 } }).sourceCapture.attachmentHttpStatus, 404);
+  // A parser claiming success must not turn empty bytes or an HTML error page into a verified PDF.
+  for (const bytes of [Buffer.alloc(0), Buffer.from("<html>Upstream error pretending to be a PDF</html>")]) {
+    const failed = prepareOfficial("iotc", receipt(raw, ioUrl), raw, { ...pdf, bytes, receipt: receipt(bytes, pdfUrl), parsed: { ...pdf.parsed, rawSha256: sha256(bytes) } });
+    assert.equal(failed.readyForReview, false);
+    assert.equal(failed.body, null);
+    assert.equal(failed.sourceCapture.parseStatus, "failed");
+  }
 });
 
 test("observation and export gates refuse pending-as-effective or failed capture, even after approval", () => {

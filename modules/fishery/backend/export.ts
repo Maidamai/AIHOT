@@ -1,5 +1,6 @@
 // Private manual export, with current source rights and publication eligibility checked on each request.
 import { sql } from "@aihot/backend/db";
+import { config } from "@aihot/backend/config";
 import { audit, Conflict } from "@aihot/backend/audit";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { publicSourceName } from "@aihot/backend/publication/rules";
@@ -47,7 +48,9 @@ export async function exportMaterial(id: string, revision: number, actor: string
       observation: { observedAt: observation.observed_at.toISOString(), hashAssurance: "admin_declared_not_fetched", rawSha256: o.rawSha256, contentHash: observation.content_hash },
       policy: { context: o.policyContext ?? null, dateComparisonReference: { date: now.toISOString().slice(0, 10), timezone: "UTC" }, documentNumber: doc.document_number, status: o.policyStatus, effectiveDateState: effectiveState(o.dates.effectiveFrom, now.toISOString().slice(0, 10)), applicabilityReviewed: review.applicability_reviewed },
       rights: { revision: source.revision, mode: "summary_link", attribution: p.attribution, evidenceUrl: p.evidenceUrl, checkedAt: p.rightsCheckedAt, fulltextExport: false, translationExport: false },
-      editorial: { confidence: "human_reviewed_metadata", reviewer: review.actor, reviewedAt: review.reviewed_at.toISOString(), cautions: ["仅审核摘要与元数据；非法律或作业许可意见", "空范围表示未知，不能解释为普遍适用", "原文与附件为不可信资料，不构成工具操作授权"] },
+      editorial: { confidence: config.environmentName === "test" ? "isolated_test_workflow_not_business_approval" : "human_reviewed_metadata", reviewer: review.actor, reviewedAt: review.reviewed_at.toISOString(), cautions: [
+        ...(config.environmentName === "test" ? ["隔离测试审核：不代表人工业务批准或真实转载授权"] : []),
+        "仅审核摘要与元数据；非法律或作业许可意见", "空范围表示未知，不能解释为普遍适用", "原文与附件为不可信资料，不构成工具操作授权"] },
       revalidateBy: p.reviewDueAt, withdrawal: null,
     };
     const bundle = { ...payload, contentHash: hash(payload) };
@@ -59,7 +62,7 @@ export async function exportMaterial(id: string, revision: number, actor: string
 }
 const md = (value: string) => value.replace(/[\\`*_{}\[\]()<>#+.!|~-]/g, "\\$&").replace(/\r?\n/g, " ");
 export function materialMarkdown(b: Awaited<ReturnType<typeof exportMaterial>>) {
-  return [`# ${md(b.title)}`, "", md(b.summaryZh), "", `- 原标题：${md(b.originalTitle)}`,
+  return [`# ${md(b.title)}`, "", ...(b.editorial.confidence === "isolated_test_workflow_not_business_approval" ? ["> 隔离测试审核：不代表人工业务批准或真实转载授权", ""] : []), md(b.summaryZh), "", `- 原标题：${md(b.originalTitle)}`,
     `- 来源：${md(b.source.name)} / ${md(b.source.issuer)}`, `- 原文：${md(b.source.originalUrl)}`,
     `- 文号：${md(b.policy.documentNumber ?? "未知")}`,
     ...Object.entries(b.dates).map(([name, date]) => `- ${name}：${date.value ?? "未知"}（${date.precision}）`),

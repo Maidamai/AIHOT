@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import * as cheerio from "cheerio";
 import { z } from "zod";
+import { beijingDate } from "@aihot/contracts/time";
 import { readable } from "@aihot/backend/content/extract";
 import { readPublicationDate } from "@aihot/backend/sources/dates";
 import { captureSchema, dateSchema, linkSchema, policyContextSchema } from "../contracts.ts";
@@ -50,7 +51,7 @@ export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pd
         const meta = $("meta[name=PubDate]").attr("content") ?? "";
         publicationLiteral = visible || meta || null;
         const v = readPublicationDate(visible, "+08:00"), m = readPublicationDate(meta, "+08:00");
-        const visibleDay = v.publishedAt ? new Date(v.publishedAt.getTime() + 8 * 3600_000).toISOString().slice(0, 10) : null;
+        const visibleDay = v.publishedAt ? beijingDate(v.publishedAt) : null;
         if (visible && !v.publishedAt) conflicts.push("Visible publication time is invalid");
         if (visibleDay && m.publicationTime && visibleDay !== m.publicationTime.slice(0, 10)) conflicts.push("Visible publication date and PubDate disagree");
         if (!conflicts.length) {

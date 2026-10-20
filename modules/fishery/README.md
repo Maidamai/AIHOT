@@ -1,6 +1,6 @@
 # 渔业素材首期本地模块
 
-实现范围是管理员手工闭环：在已有 source 上登记许可与健康备注，登记文书身份，追加观察，人工审核，导出当前获准的摘要与链接 JSON / Markdown。原有新闻采集、队列、AI行业示例分类和公开出口继续使用原实现；渔业地区、活动维度只在本模块受控字段内。未新增匿名 API、机器凭据、真实抓取、模型/OCR调用或外部调度。
+实现范围是管理员手工闭环：在已有 source 上登记许可与健康备注，登记文书身份，追加观察，人工审核，导出当前获准的摘要与链接 JSON / Markdown。另有三个固定来源的单次采集入口及区分真实请求/旧原件回放的隔离验收工具。原有新闻采集、队列、AI行业示例分类和公开出口继续使用原实现；渔业地区、活动维度只在本模块受控字段内。未新增匿名 API、机器凭据、常驻采集、模型/OCR调用或外部调度。
 
 ## 数据和审核语义
 
@@ -46,7 +46,7 @@ DATABASE_URL=postgres://aihot_test@127.0.0.1:55437/fishery_mvp_test \
 
 ## 后续边界
 
-仍未实现：去重前在线抓取hook、HTTP失败/304持久化观察、自动附件下载、生产环境PDF解析与OCR、政策关系/条款证据、完整法律适用性审核、校准后的渔业新闻taxonomy/提示词、实际源批量入库、GUI、机器只读认证、固定清单snapshot/changes/tombstone、Easel拉取及下游处置台账、传播后撤回、真实样本准确率/性能/成本、部署和恢复演练。手工导出不能保证下游已经保存的包自动撤销；使用前须重核，`revalidateBy`只规定最迟复核期限，不保证此前权利不变。
+仍未实现：去重前在线抓取hook、通用HTTP失败/304持久化观察、常驻增量附件采集、生产环境PDF解析与OCR、政策关系/条款证据、完整法律适用性审核、校准后的渔业新闻taxonomy/提示词、生产源批量入库、GUI、机器只读认证、固定清单snapshot/changes/tombstone、Easel拉取及下游处置台账、传播后撤回、真实样本准确率/性能/成本、生产部署和生产恢复演练。手工导出不能保证下游已经保存的包自动撤销；使用前须重核，`revalidateBy`只规定最迟复核期限，不保证此前权利不变。
 
 安装：在 `site/modules/index.ts` 与 `server.ts` 注册，`site/package.json` 依赖模块包，Dockerfile包含模块包清单；无Web部分，无需在web清单登记空模块。迁移每个文件一条在线语句，新增表非破坏性；移除清单可关闭模块路由与健康扩展，保留档案数据，不改历史迁移。请勿删除许可/审核记录来“恢复”导出。
 
@@ -72,3 +72,11 @@ node modules/fishery/scripts/prepare-official.ts --source iotc \
 ```
 
 收据至少含requestedUrl/finalUrl/status/finishedAt/sha256。它们是已归档记录，不能伪造为新请求。--source fuzhou可重放获取失败，不能用搜索缓存补正文。工具不会调用observe/review/export API；人工摘要、用途许可与业务审核仍走既有管理员流程。[本轮验证记录](../../docs/fishery-center/source-adapter-validation.md)。
+
+## 本机隔离验收
+
+`scripts/capture-official.ts`仅对固定来源发单次受SSRF保护的GET，保存实际响应或网络失败；IOTC页面/附件之间遵守10秒间隔，不自动写库或审核。当前本机保留地址解析触发防护，在线正文未取得；没有关闭防护或换传输绕过。
+
+`scripts/pilot-evidence.ts`仅允许`AIHOT_ENVIRONMENT=test`、本机`*_test`库和loopback HTTP API。它校验旧原件hash并离线解析，通过核心素材入口把成功正文和原始字节存入隔离库私有档案；模块API仍只接收元数据。真实许可保持unknown、主记录不审核。只有显式`--exercise-test-review`才对测试克隆使用合成许可和测试审核，验证导出、同URL字节替换、权利版本和撤回门槛；没有模型评分。
+
+test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工业务批准或真实转载授权”标记，标记参与内容hash。失败原件即使测试批准仍不能导出。实际环境、命令和验收范围见[本机隔离试部署记录](../../docs/fishery-center/local-pilot.md)。
