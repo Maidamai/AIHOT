@@ -13,6 +13,7 @@ import { collectColumns, readBatch, readCapturedText, verifyBatchItem } from "..
 import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
+import {reviewFisheryDraft} from "../backend/ai-review.ts";
 import { createHash } from "node:crypto";
 
 test("saved DeepSeek responses preserve strict evidence arrays and the accepted draft's source anchors",async()=>{
@@ -26,15 +27,15 @@ test("saved DeepSeek responses preserve strict evidence arrays and the accepted 
   const corrected=structuredClone(first.response);
   function arrays(v:any) {if(!v||typeof v!=="object") return;for(const [key,value]of Object.entries(v)){if(key==="evidence") v[key]=value===null?[]:Array.isArray(value)?value:[value];else arrays(value);}}
   arrays(corrected);
-  assert.doesNotThrow(()=>validateFisheryDraft(input(first),corrected));
+  assert.throws(()=>validateFisheryDraft(input(first),corrected),/Numeric value/);
   assert.deepEqual(first.response,original,"Never rewrite the original model response");
-  assert.doesNotThrow(()=>validateFisheryDraft(input(accepted),accepted.response));
+  assert.throws(()=>validateFisheryDraft(input(accepted),accepted.response),/Ambiguous issuer/);
   assert.equal(accepted.response.dates.published.date.precision,"unknown");
 });
 
 test("saved partial event dates cannot become ISO dates or borrow the source publication date",async()=>{
   const {fixtures}=JSON.parse(await readFile(new URL("./fixtures/ai-trial-responses-20261020.json",import.meta.url),"utf8"));
-  const f=fixtures[2],input={documentId:"offline-partial-date",observationRevision:1,body:f.body,bodySha256:f.bodySha256,language:"zh"};
+  const f=structuredClone(fixtures[2]);f.response.locations=[];const input={documentId:"offline-partial-date",observationRevision:1,body:f.body,bodySha256:f.bodySha256,language:"zh"};
   assert.equal(f.response.dates.event.date.value,"--05-16");
   assert.throws(()=>validateFisheryDraft(input,f.response),/Invalid ISO date/);
   for(const value of ["2026-05-16",f.sourcePublication.value]) {
@@ -58,19 +59,19 @@ test("saved partial event dates cannot become ISO dates or borrow the source pub
   }
 });
 
-test("trial counts actual sends, refuses overrides and redirects, and stops after four reservations",async()=>{
-  const entries:{state:string}[]=[],wire={model:TRIAL.model,messages:[{role:"system",content:"JSON only"},{role:"user",content:"Synthetic public article"}],max_tokens:2048,thinking:{type:"disabled"},response_format:{type:"json_object"},temperature:0};
+test("trial counts actual sends, refuses overrides and redirects, and stops after twenty cumulative reservations",async()=>{
+  const entries:{state:string;reservedMicroCny:number}[]=[],wire={model:TRIAL.model,messages:[{role:"system",content:"JSON only"},{role:"user",content:"Synthetic public article"}],max_tokens:2048,thinking:{type:"disabled"},response_format:{type:"json_object"},temperature:0};
   const options={method:"POST",body:JSON.stringify(wire)};let sends=0;
-  const restore=installTrialTransport({reserve:async()=>{trialCapacity(entries);entries.push({state:"pending"});return entries.length;},settle:async(id,state)=>{entries[id-1]!.state=state;}},async(_url,opts)=>{
+  const restore=installTrialTransport({reserve:async()=>{trialCapacity(entries);entries.push({state:"pending",reservedMicroCny:TRIAL.reserveMicroCny});return entries.length;},settle:async(id,state)=>{entries[id-1]!.state=state;}},async(_url,opts)=>{
     sends++;assert.equal(opts?.redirect,"error");return new Response(JSON.stringify({usage:{prompt_tokens:1000,completion_tokens:100}}),{status:200});
   });
   try {
     await assert.rejects(fetch("https://example.org/chat/completions",options),/destination/);
     for(const override of [{max_tokens:9000},{tools:[]},{model:"different"},{n:2},{thinking:{type:"enabled"}},{messages:[{role:"user",content:"x"}]}]) await assert.rejects(fetch(TRIAL.endpoint,{method:"POST",body:JSON.stringify({...wire,...override})}));
     assert.equal(sends,0);
-    for(let i=0;i<4;i++) await fetch(TRIAL.endpoint,options);
-    await assert.rejects(fetch(TRIAL.endpoint,options),/hard request/);assert.equal(sends,4);assert.equal(entries.length*TRIAL.reserveMicroCny,1_600_000);
-    assert.throws(()=>trialCapacity([{state:"unknown"}]),/manual reconciliation/);
+    for(let i=0;i<TRIAL.maxRequests;i++) await fetch(TRIAL.endpoint,options);
+    await assert.rejects(fetch(TRIAL.endpoint,options),/hard request/);assert.equal(sends,20);assert.equal(entries.length*TRIAL.reserveMicroCny,8_000_000);
+    assert.throws(()=>trialCapacity([{state:"unknown",reservedMicroCny:400000}]),/manual reconciliation/);
     assert.throws(()=>trialUsage(null),/usage missing/);assert.throws(()=>trialUsage({prompt_tokens:100001,completion_tokens:1}));
     assert.equal(trialUsage({prompt_tokens:100000,completion_tokens:2048}).estimatedMicroCny,216384);
   } finally {restore();}
@@ -386,4 +387,18 @@ test("installed PDF parser accepts generated text and blocks blank, encrypted an
   for (const bytes of [pdfFixture(true), pdfFixture(false, true), Buffer.from("%PDF-1.4\ncorrupted")]) {
     const result = await extractPdf(bytes); assert.notEqual(result.status, "parsed"); assert.equal(result.text, ""); assert.equal(result.pages, 0);
   }
+});
+
+
+test("independent review uses isolated context, distinct receipt purpose and requires every fact",async()=>{
+  const body="远洋渔船共10艘。",input={documentId:"review",observationRevision:1,body,bodySha256:sha256(body),language:"zh"};
+  const evidence=[{quote:body,paragraph:1,page:null}],date={date:unknownDate,evidence:[]};
+  const draft={relevance:{decision:"unknown",reason:"待核",evidence:[]},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]};
+  const invoke=async(options:any)=>{assert.equal(options.purpose,"fishery_quality_review");assert.deepEqual(Object.keys(JSON.parse(options.user)),["source","candidate"]);return {data:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原文一致",evidence}]},receiptId:22,reused:false,model:"mock",usage:null} as any;};
+  const result=await reviewFisheryDraft(input,draft,"mock",invoke);assert.equal(result.status,"needs_human_review");assert.equal(result.approved,false);assert.equal(result.receiptId,22);
+  const missing=await reviewFisheryDraft(input,draft,"mock",async o=>{const a=await invoke(o);a.data.findings[0].field="other";return a;});assert.equal(missing.status,"needs_evidence");assert.deepEqual(missing.missingFields,["summaryZh.0"]);
+  assert.throws(()=>validateFisheryDraft(input,{...draft,summaryZh:[{sentence:"远洋渔船共10吨。",evidence}]}),/Numeric value\/unit/);
+  assert.throws(()=>validateFisheryDraft(input,{...draft,organizations:[{role:"page_publisher",value:"远洋渔船",evidence}]}),/publisher role/);
+  assert.throws(()=>trialCapacity([{state:"received",reservedMicroCny:9_800_000}]),/hard request/);
+  assert.doesNotThrow(()=>trialCapacity([{state:"received",reservedMicroCny:9_500_000}]));
 });

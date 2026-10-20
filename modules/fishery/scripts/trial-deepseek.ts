@@ -2,9 +2,10 @@
 import {parseArgs} from "node:util";
 import {TRIAL,installTrialTransport,trialCapacity,trialUsage} from "../backend/trial-transport.ts";
 import {buildFisheryDraftRequest,validateFisheryDraft} from "../backend/ai-draft.ts";
+import {reviewFisheryDraft} from "../backend/ai-review.ts";
 import {readBatch,verifyBatchItem} from "../backend/column-batches.ts";
 import {sha256} from "../backend/source-adapters.ts";
-const {values}=parseArgs({options:{initialize:{type:"boolean"},report:{type:"boolean"},"capture-dir":{type:"string"},"batch-id":{type:"string"}}});
+const {values}=parseArgs({options:{initialize:{type:"boolean"},report:{type:"boolean"},"upgrade-authorization":{type:"boolean"},attempt:{type:"string"},"review-attempt":{type:"string"},"archive-id":{type:"string",multiple:true},stage:{type:"string"},"capture-dir":{type:"string"},"batch-id":{type:"string"}}});
 if(process.env.DATABASE_URL!=="postgres://fishery_trial@fishery-ai-trial-db:5432/fishery_ai_trial"||process.env.FISHERY_TRIAL_ISOLATED!=="true") throw new Error("Refuse non-isolated trial database");
 if(process.env.LLM_MODEL!==TRIAL.model||process.env.LLM_BASE_URL!=="https://api.deepseek.com"||process.env.LLM_REASONING_TOKENS!=="0"||process.env.LLM_EXTRA_JSON!=='{"thinking":{"type":"disabled"}}') throw new Error("Refuse model/endpoint/extra overrides");
 const {sql,closeDb}=await import("@aihot/backend/db");
@@ -16,6 +17,17 @@ try {
     const records=await sql`SELECT key,value FROM settings WHERE key LIKE ${key+"%"} ORDER BY key`;
     const receipts=await sql`SELECT id,status,model,purpose,usage,cost,currency FROM receipts ORDER BY id`;
     console.log(JSON.stringify({authorization:TRIAL.id,records,receipts,approved:false,published:false}));
+  } else if(values["upgrade-authorization"]) {
+    await sql.begin(async tx=>{
+      const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key} FOR UPDATE`;
+      if(!row||row.value.id!==TRIAL.id) throw new Error("Existing authorization ledger required; never initialize a replacement");
+      // Preserve entries, states and every historical reservation verbatim.
+      trialCapacity(row.value.entries);
+      row.value.maxRequests=TRIAL.maxRequests;row.value.maxReservedMicroCny=TRIAL.maxReservedMicroCny;
+      await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${key}`;
+      await tx`INSERT INTO budgets(service,per_minute,per_hour,per_day,note) VALUES ('llm',20,20,20,'Same cumulative fishery authorization, <=20 calls, CNY10 ceiling') ON CONFLICT(service) DO UPDATE SET per_minute=20,per_hour=20,per_day=20,note=EXCLUDED.note`;
+    });
+    console.log(JSON.stringify({authorization:TRIAL.id,upgraded:true,maxRequests:TRIAL.maxRequests,ceilingCny:10,apiCalls:0}));
   } else if(values.initialize) {
     await sql.begin(async tx=>{
       await tx`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
@@ -23,13 +35,15 @@ try {
       if((await tx`SELECT 1 FROM receipt_attempts LIMIT 1`).length) throw new Error("Missing ledger in non-empty receipt database; stop");
       const ledger:Ledger={id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny,verifiedVersion:TRIAL.verifiedVersion,verifiedAt:TRIAL.verifiedAt};
       await tx`INSERT INTO settings(key,value) VALUES (${key},${tx.json(ledger)})`;
-      await tx`INSERT INTO budgets(service,per_minute,per_hour,per_day,note) VALUES ('llm',4,4,4,'Isolated four-request fishery trial') ON CONFLICT(service) DO UPDATE SET per_minute=4,per_hour=4,per_day=4,note=EXCLUDED.note`;
+      await tx`INSERT INTO budgets(service,per_minute,per_hour,per_day,note) VALUES ('llm',20,20,20,'Cumulative twenty-request fishery trial') ON CONFLICT(service) DO UPDATE SET per_minute=20,per_hour=20,per_day=20,note=EXCLUDED.note`;
     });
-    console.log(JSON.stringify({initialized:true,authorization:TRIAL.id,maxRequests:4,reservedCeilingCny:1.6,apiCalls:0}));
+    console.log(JSON.stringify({initialized:true,authorization:TRIAL.id,maxRequests:TRIAL.maxRequests,reservedCeilingCny:10,apiCalls:0}));
   } else {
+    if(!values.attempt||!/^[-a-zA-Z0-9_]{1,64}$/.test(values.attempt)||!values["archive-id"]?.length||!["generation","review","both"].includes(values.stage??"")) throw new Error("Explicit attempt identity, archive-id selection and stage (generation/review/both) required");
     if(!values["capture-dir"]||!values["batch-id"]) throw new Error("Specify the existing public capture batch");
+    if(values["review-attempt"]&&!/^[-a-zA-Z0-9_]{1,64}$/.test(values["review-attempt"])) throw new Error("Invalid review attempt identity");
     const batch=await readBatch(values["capture-dir"],values["batch-id"]);
-    const prepared=await Promise.all(batch.items.filter(i=>i.state==="ready").slice(0,4).map(async item=>({item,result:await verifyBatchItem(values["capture-dir"]!,batch,item)})));
+    const prepared=await Promise.all(batch.items.filter(i=>i.state==="ready"&&values["archive-id"]!.includes(i.archiveId)).map(async item=>({item,result:await verifyBatchItem(values["capture-dir"]!,batch,item)})));
     if(!prepared.length||prepared.some(p=>!p.result.readyForReview)) throw new Error("Verified public article bodies required");
     const restore=installTrialTransport({
       reserve:async wireBytes=>sql.begin(async tx=>{
@@ -53,24 +67,42 @@ try {
     const {completeReceipt}=await import("@aihot/backend/providers/receipts");
     try {
       for(const {item,result} of prepared) {
-        const sourceKey=`${key}.draft.${item.archiveId}`;
-        if((await sql`SELECT 1 FROM settings WHERE key=${sourceKey}`).length) continue;
+        const sourceKey=`${key}.attempt.${values.attempt}.${item.archiveId}`;
         const input={documentId:`capture-${item.archiveId}`,observationRevision:1,body:result.body!,bodySha256:result.sourceCapture.bodySha256!,language:"zh"};
         const request=buildFisheryDraftRequest(input,"default");
-        request.maxTokens=TRIAL.maxOutputTokens;request.system+="\n本轮输出简短JSON：摘要最多2句，每个引句不超过80字符，每字段最多1条证据，地点最多4条。不确定就保留未知。";
-        request.promptVersion=`fishery-trial-v1:${sha256(request.system)}`;
-        const [previous]=await sql<{id:number;status:string}[]>`SELECT id,status FROM receipts WHERE subject=${request.subject} ORDER BY id DESC LIMIT 1`;
-        if(previous) {
-          console.log(JSON.stringify({sourceUrl:item.url,status:"skipped_existing_receipt",receiptId:previous.id,receiptStatus:previous.status,noRetry:true}));
-          continue;
+        request.subject+=`:attempt:${values.attempt}`;
+        request.system+="\n本轮输出简短JSON：摘要最多2句，每个引句不超过80字符，每字段最多1条证据，地点最多4条。不确定就保留未知。";
+        request.promptVersion=`fishery-trial-v2:${sha256(request.system)}`;
+        const [saved]=await sql<{value:{draft:unknown;bodySha256:string}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
+        let draft=saved?validateFisheryDraft(input,saved.value.draft):undefined;
+        if(saved&&saved.value.bodySha256!==input.bodySha256) throw new Error("Attempt source changed; use a new explicit attempt identity");
+        if(!draft&&values.stage!=="review") {
+          const [previous]=await sql<{id:number;status:string}[]>`SELECT id,status FROM receipts WHERE subject=${request.subject} AND purpose='fishery_draft' ORDER BY id DESC LIMIT 1`;
+          if(previous) throw new Error(`Existing generation receipt ${previous.id} (${previous.status}); no automatic retry; select a new explicit attempt identity`);
+          const answer=await chatJson(request);draft=validateFisheryDraft(input,answer.data);
+          const value={status:"needs_review",sourceUrl:item.url,bodySha256:input.bodySha256,promptVersion:request.promptVersion,receiptId:answer.receiptId,draft};
+          await sql.begin(async tx=>{
+            await tx`INSERT INTO settings(key,value) VALUES (${sourceKey+".generation"},${tx.json(value)})`;
+            await completeReceipt(tx,answer.receiptId);
+          });
+          console.log(JSON.stringify({sourceUrl:item.url,stage:"generation",receiptId:answer.receiptId,status:"draft_saved_not_approved"}));
         }
-        const answer=await chatJson(request),draft=validateFisheryDraft(input,answer.data);
-        const value={status:"needs_review",inputKind:"unimported_public_capture",sourceUrl:item.url,bodySha256:input.bodySha256,promptVersion:request.promptVersion,modelAlias:TRIAL.model,versionVerified:TRIAL.verifiedVersion,verifiedAt:TRIAL.verifiedAt,receiptId:answer.receiptId,usage:trialUsage(answer.usage),draft};
-        await sql.begin(async tx=>{
-          await tx`INSERT INTO settings(key,value) VALUES (${sourceKey},${tx.json(value)}) ON CONFLICT(key) DO NOTHING`;
-          await completeReceipt(tx,answer.receiptId);
-        });
-        console.log(JSON.stringify({sourceUrl:item.url,bodySha256:input.bodySha256,receiptId:answer.receiptId,status:"draft_saved_not_approved",modelAlias:TRIAL.model}));
+        if(values.stage!=="generation") {
+          const reviewKey=sourceKey+".review."+(values["review-attempt"]??values.attempt);
+          if(!draft) throw new Error("Review stage requires a saved successful generation in this attempt");
+          if((await sql`SELECT 1 FROM settings WHERE key=${reviewKey}`).length) {console.log(JSON.stringify({sourceUrl:item.url,stage:"review",status:"reused_saved_review"}));continue;}
+          const review=await reviewFisheryDraft(input,draft,"default",async options=>{
+            options.subject+=`:attempt:${values.attempt}:review:${values["review-attempt"]??values.attempt}`;
+            const [previous]=await sql<{id:number;status:string}[]>`SELECT id,status FROM receipts WHERE subject=${options.subject} AND purpose='fishery_quality_review' ORDER BY id DESC LIMIT 1`;
+            if(previous) throw new Error(`Existing review receipt ${previous.id} (${previous.status}); no automatic retry`);
+            return chatJson(options);
+          });
+          await sql.begin(async tx=>{
+            await tx`INSERT INTO settings(key,value) VALUES (${reviewKey},${tx.json(review)})`;
+            await completeReceipt(tx,review.receiptId);
+          });
+          console.log(JSON.stringify({sourceUrl:item.url,stage:"review",receiptId:review.receiptId,status:review.status,approved:false,published:false}));
+        }
       }
     } finally {restore();}
   }

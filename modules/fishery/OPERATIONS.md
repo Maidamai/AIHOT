@@ -41,3 +41,13 @@ API 与采集脚本须使用同一私有 data-dir。管理员在 `/admin/fishery
 原唯一结构合格草稿的两句摘要与所存官方答记者问相符；但其issuer将所述《通知》的联合发文单位与本篇新闻的网页发布机构混在同一角色，整条结构化事实审核仍待修订。禁补内容摘要不是完整清单，未核验政策原件及具体适用性。离线复核不改独立试跑库的needs_review状态，也不改生产审核。
 
 下一轮针对两类失败的最少真实复测为2次（各1篇），当前不得执行。既有更紧的4次/1.60元账本已累计3次/预留1.20元，仅剩1个请求槽；不能清零或换ID跑两次。若主会话之后决定扩容，可保留原3×0.40，后2次各预留0.30，总5次/1.80元，仍低于原20次/2元授权上界；此例仅为方案，未修改代码限额或账本。英文翻译、PDF与完整生产质量验收不在这两次最低复测内。
+
+## 显式 AI 质量试验（累计授权 deepseek-fishery-20261020）
+
+本轮上限为累计20次（包括原3次），每次在最终fetch前持久预留0.40元，保守总预留最多8元，小于累计10元授权。历史每条预留金额逐条求和，更新授权不清空、不退回、不重新定价；pending/refused/unknown阻断后续请求。生产和试验必须使用同一授权账本，禁止另建第二套额度。此CLI仍只允许既有隔离trial库；主库集成不得复制出一份独立额度。
+
+已有账本由操作者显式执行 `trial-deepseek.ts --upgrade-authorization` 更新原键的上限，零模型请求。新一轮必须指定 `--capture-dir <已有公开采集目录> --batch-id <批次> --archive-id <目标归档ID> --attempt <显式生成尝试ID> --stage generation|review|both`。多个目标可重复archive-id。不会默认重跑整批。
+
+生成成功后可用同attempt及 `--stage review` 复用生成。审核失败后，只在已核对旧回执/扣费状态后，显式增加 `--review-attempt <新审核尝试ID>`，复用生成只重试审核；已有失败生成必须明确给新attempt。已有回执不会自动重试，成功stage持久复用。两阶段分别使用fishery_draft与fishery_quality_review目的和回执，任一真实请求都经过同一最终wire校验与预留。本文不是运行授权扩张，不启动worker/recovery/fallback。
+
+生成v3把机构事实放在organizations的page_publisher/policy_issuer/event_participant中；旧混合issuer拒绝。网页发布机构须有原文显式发布标签，不能由政策《通知》署名替代。每条引用连续匹配原段/PDF页；数值单位必须原样出现，不能自动换算，日期必须同引句有完整组成。独立审核只收到公开正文及生成候选，不收到人审备注、用户信息或生成者自评。必须逐字段覆盖，任何unknown/contradiction/缺字段都退待补证；supported仅进入needs_human_review，始终approved=false/published=false。独立调用不代表独立信源确认或法律适用性审核。长文不能在wire上限下静默截断成全文；超限拒绝，保留原件供人工处理。

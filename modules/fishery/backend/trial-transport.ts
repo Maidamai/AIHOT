@@ -1,5 +1,5 @@
-// This operator-only trial is stricter than the user's <=20-request / CNY2 authorization.
-export const TRIAL = Object.freeze({ id:"deepseek-fishery-20261020", maxRequests:4, reserveMicroCny:400_000, maxReservedMicroCny:1_600_000,
+// Fixed cumulative authorization; historical reservations retain their original amounts.
+export const TRIAL = Object.freeze({ id:"deepseek-fishery-20261020", maxRequests:20, reserveMicroCny:400_000, maxReservedMicroCny:10_000_000,
   maxWireBytes:12_000, inputTokenCeiling:100_000, maxOutputTokens:2048, endpoint:"https://api.deepseek.com/chat/completions", model:"deepseek-flash", verifiedVersion:"DeepSeek-V4.1-Flash-1017", verifiedAt:"2026-10-20" });
 export function validateTrialWire(url:unknown,options:RequestInit|undefined) {
   if(url!==TRIAL.endpoint||options?.method!=="POST"||typeof options.body!=="string"||Buffer.byteLength(options.body)>TRIAL.maxWireBytes) throw new Error("Trial request destination/method/size refused");
@@ -14,9 +14,10 @@ export function trialUsage(value:unknown) {
   // Peak uncached input CNY2/M + output CNY8/M; no cache/idle discount assumed.
   return {promptTokens:Number(u.prompt_tokens),completionTokens:Number(u.completion_tokens),estimatedMicroCny:Number(u.prompt_tokens)*2+Number(u.completion_tokens)*8};
 }
-export function trialCapacity(entries:{state:string}[]) {
+export function trialCapacity(entries:{state:string;reservedMicroCny:number}[]) {
+  if(entries.some(e=>!Number.isSafeInteger(e.reservedMicroCny)||e.reservedMicroCny<0)) throw new Error("Trial historical reservation missing/invalid; manual reconciliation required");
   if(entries.some(e=>e.state!=="received")) throw new Error("Trial has pending, refused or unknown outcome; manual reconciliation required");
-  if(entries.length>=TRIAL.maxRequests||(entries.length+1)*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
+  if(entries.length>=TRIAL.maxRequests||entries.reduce((sum,e)=>sum+e.reservedMicroCny,0)+TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
 }
 export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
   const previous=globalThis.fetch;
