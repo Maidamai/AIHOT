@@ -7,7 +7,7 @@ import { installModules } from "@aihot/backend/modules";
 import { setVisibility } from "@aihot/backend/admin/content";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { publishArticle } from "@aihot/backend/publication/publish";
-import { stopBoss } from "@aihot/backend/jobs/queue";
+import { getBoss, stopBoss, enqueueOn } from "@aihot/backend/jobs/queue";
 import { buildApp } from "../../../apps/api/src/app.ts";
 import fishery from "../server.ts";
 import { exportMaterial, materialMarkdown } from "../backend/export.ts";
@@ -20,7 +20,11 @@ import { collectColumns } from "../backend/column-batches.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
 import { paidRequest } from "@aihot/backend/providers/receipts";
-import { createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls } from "../backend/flow.ts";
+import { createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
+
+import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
+import { authorizationKey } from "../backend/authorization.ts";
+import { TRIAL } from "../backend/trial-transport.ts";
 
 installModules([fishery]);
 const app = await buildApp();
@@ -354,8 +358,8 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
   const invoke=async(options:any)=>{
     let data:any;
     const evidence=[{quote:body,paragraph:1,page:null}],date={date:{precision:"unknown",value:null},evidence:[]};
-    if(options.purpose==="fishery_draft") {generated++;data={relevance:{decision:"unknown",reason:"test",evidence:[]},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]};}
-    else {reviewed++;if(failReview) throw new Error("Synthetic review failure");data={decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原句一致",evidence}]};}
+    if(options.purpose==="fishery_draft") {generated++;data={relevance:{decision:"relevant",reason:"test",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]};}
+    else {reviewed++;if(failReview) throw new Error("Synthetic review failure");data={decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原句一致",evidence},{field:"relevance",verdict:"supported",reason:"原句明确公海远洋",evidence}]};}
     return {data,receiptId:999999,model:"mock",reused:false,usage:null};
   };
   const failed=await runFlow(id!,invoke);assert.equal(failed.status,"failed");assert.equal(failed.stage,"review");assert.ok(failed.draft);assert.equal(generated,1);
@@ -384,7 +388,7 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
 
 test("stage persistence failures resume the same received receipt; only explicit regeneration creates a new paid identity",async()=>{
   const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=[{quote:body,paragraph:1,page:null}];
-  const output={relevance:{decision:"unknown",reason:"test",evidence:[]},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],uncertainties:[]};
+  const output={relevance:{decision:"relevant",reason:"test",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],uncertainties:[]};
   async function task(identity:string) {
     const f=await fixture({unknownRights:true});
     await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
@@ -396,7 +400,7 @@ test("stage persistence failures resume the same received receipt; only explicit
     const generation=options.purpose==="fishery_draft";
     const receipt=await paidRequest({service:"flow-local-mock",model:"mock",purpose:options.purpose,subject:options.subject,identity:{promptVersion:options.promptVersion,system:options.system,user:options.user},attemptTag:options.attemptTag},async()=>{
       if(generation)sends.generation++;else sends.review++;
-      const data=generation?output:{decision:badReview?"needs_evidence":"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:badReview?"not_found":"supported",reason:"Synthetic mock claim check",evidence:badReview?[]:evidence}]};
+      const data=generation?output:{decision:badReview?"needs_evidence":"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:badReview?"not_found":"supported",reason:"Synthetic mock claim check",evidence:badReview?[]:evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevant original",evidence}]};
       return {response:data};
     });
     return {data:options.schema.parse(receipt.response),receiptId:receipt.receiptId,reused:receipt.reused,model:"mock",usage:null};
@@ -436,4 +440,97 @@ test("stage persistence failures resume the same received receipt; only explicit
     await withdraw(saved.document_id,{expectedRevision:2,reason:"Synthetic source withdrawal"},"tester");
     await decideFlow(g.id,{decision:"rejected",snapshotHash:saved.snapshotHash,note:"Reject stale withdrawn material, retain old snapshot"},"reviewer");assert.equal((await flowDetail(g.id)).status,"rejected");
   } finally {await sql.unsafe('DROP TRIGGER fishery_test_persist_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION fishery_test_persist_fault()');await sql`DELETE FROM settings WHERE key='flow-test-fault'`;}
+});
+
+test("manual processor only consumes explicit flows, persists blocks and failures, and never resends duplicate tasks",async()=>{
+  const boss=await getBoss({schedule:false,supervise:false});
+  await assert.rejects(getBoss({schedule:true}),/mode differs/);
+  const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=[{quote:body,paragraph:1,page:null}];
+  async function task(identity:string) {
+    const f=await fixture({unknownRights:true});
+    await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
+    await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/private-${f.id}`,title:"Synthetic source",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+    return createFlow(f.id,{identity},"tester");
+  }
+  const envKeys=["LLM_MODEL","LLM_BASE_URL","LLM_REASONING_TOKENS","LLM_EXTRA_JSON"] as const;
+  const oldEnv=envKeys.map(k=>process.env[k]),enabled=config.modelCallsEnabled;
+  const previousFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error("Unexpected external request in manual processor test");};
+  process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL="https://api.deepseek.com";process.env.LLM_REASONING_TOKENS="0";process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';
+  const ledger={id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny};
+  const setLedger=async(entries:{state:string;reservedMicroCny:number}[])=>{await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json({...ledger,entries})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;};
+  let calls=0,fail=false,ineligible=false,emptySummary=false,hold:Promise<void>|undefined,releaseHold:(()=>void)|undefined;
+  const invoke=async(options:any)=>{
+    calls++;if(hold) await hold;if(fail) throw new Error("Synthetic model failure");
+    const data=options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"test",evidence},summaryZh:emptySummary?[]:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]}:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic original sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevant original",evidence}]};
+    if(ineligible&&options.purpose==="fishery_draft") data.relevance={decision:"unknown",reason:"Synthetic relevance unknown",evidence:[]};
+    return {data:options.schema.parse(data),receiptId:999999,model:"mock",reused:false,usage:null};
+  };
+  let release:(()=>Promise<void>)|undefined;
+  const settled=async(jobId:string|null)=>{
+    const until=Date.now()+15000;
+    while(Date.now()<until) {
+      const job=await boss.getJobById(flowQueue.name,jobId!);
+      if(job&&["failed","completed"].includes(job.state)) return job;
+      await new Promise(r=>setTimeout(r,25));
+    }
+    throw new Error(`Queue job ${jobId} did not settle`);
+  };
+  try {
+    await boss.createQueue(flowQueue.name,{...flowQueue.options,retryLimit:1});
+    await assert.rejects(registerManualFlowConsumer(boss),/reconcile deployed queue/);
+    await boss.updateQueue(flowQueue.name,{retryLimit:0,expireInSeconds:600});
+    release=await registerManualFlowConsumer(boss,jobs=>runQueuedFlows(jobs,invoke));
+    await assert.rejects(registerManualFlowConsumer(boss),/already running/);
+    assert.deepEqual(boss.getWipData().map(w=>w.name),[flowQueue.name]);
+    assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.schedule`)[0]!.n,0);
+    assert.equal(calls,0,"idle startup performs no model calls");
+    config.modelCallsEnabled=false;
+    const closed=await task("manual-closed"),closedJob=await enqueueOn(flowQueue,{id:closed.id});
+    assert.equal((await settled(closedJob)).state,"failed");
+    const closedTask=await flowDetail(closed.id);assert.equal(closedTask.status,"failed");assert.equal(closedTask.error.phase,"authorization");assert.match(closedTask.error.reason,/MODEL_CALLS_ENABLED/);assert.equal(calls,0);
+    config.modelCallsEnabled=true;
+    await setLedger(Array.from({length:20},()=>({state:"received",reservedMicroCny:400000})));
+    const full=await task("manual-capacity"),fullJob=await enqueueOn(flowQueue,{id:full.id});
+    assert.equal((await settled(fullJob)).state,"failed");assert.match((await flowDetail(full.id)).error.reason,/hard request/);assert.equal(calls,0);
+    await setLedger([]);
+    process.env.LLM_MODEL="refused-model";
+    const refused=await task("manual-authorization"),refusedJob=await enqueueOn(flowQueue,{id:refused.id});
+    assert.equal((await settled(refusedJob)).state,"failed");assert.match((await flowDetail(refused.id)).error.reason,/configuration refused/);assert.equal(calls,0);
+    process.env.LLM_MODEL=TRIAL.model;
+    fail=true;
+    const bad=await task("manual-failed"),badJob=await enqueueOn(flowQueue,{id:bad.id});
+    const failedJob=await settled(badJob);assert.equal(failedJob.state,"failed");assert.match(JSON.stringify(failedJob.output),new RegExp(bad.id));assert.equal((await flowDetail(bad.id)).status,"failed");assert.equal(calls,1);
+    fail=false;hold=new Promise<void>(resolve=>{releaseHold=resolve;});
+    const good=await task("manual-good"),goodJob=await enqueueOn(flowQueue,{id:good.id});
+    const until=Date.now()+15000;
+    while((await flowDetail(good.id)).status!=="running"&&Date.now()<until) await new Promise(r=>setTimeout(r,25));
+    await assert.rejects(runQueuedFlows([{id:good.id}],invoke),/not queued/);
+    assert.equal((await flowDetail(good.id)).status,"running");
+    releaseHold!();hold=undefined;
+    assert.equal((await settled(goodJob)).state,"completed");assert.equal((await flowDetail(good.id)).status,"needs_human_review");assert.equal(calls,3);
+    const duplicate=await enqueueOn(flowQueue,{id:good.id});
+    assert.equal((await settled(duplicate)).state,"failed");assert.equal((await flowDetail(good.id)).status,"needs_human_review");assert.equal(calls,3);
+    const interrupted=await task("manual-interrupted");await sql`UPDATE fishery_flow_tasks SET status='running' WHERE id=${interrupted.id}`;
+    const interruptedJob=await enqueueOn(flowQueue,{id:interrupted.id});assert.equal((await settled(interruptedJob)).state,"failed");assert.equal((await flowDetail(interrupted.id)).status,"running");assert.equal(calls,3);
+    ineligible=true;
+    const unknown=await task("manual-unknown"),unknownJob=await enqueueOn(flowQueue,{id:unknown.id});
+    assert.equal((await settled(unknownJob)).state,"completed");const unknownTask=await flowDetail(unknown.id);assert.equal(unknownTask.status,"needs_evidence");assert.equal(unknownTask.error.code,"FISHERY_ARTICLE_INELIGIBLE");assert.equal(calls,4,"unknown relevance skips paid review");
+    await assert.rejects(decideFlow(unknown.id,{decision:"qualified",snapshotHash:unknownTask.snapshotHash,note:"Unknown cannot qualify"},"reviewer"),/relevant/);
+    await sql`UPDATE fishery_flow_tasks SET status='qualified' WHERE id=${unknown.id}`;
+    assert.equal((await flowDetail(unknown.id)).internalArticle,null,"legacy unknown qualified tasks have no internal article preview");
+    await sql`UPDATE fishery_flow_tasks SET status='needs_evidence' WHERE id=${unknown.id}`;
+    ineligible=false;
+    await retryFlow(unknown.id,{note:"Explicit regeneration of unknown draft",mode:"regenerate",acknowledgeNewCharge:true},"tester");
+    assert.equal(await flowRequiredCalls(unknown.id),2);
+    assert.equal((await settled(await enqueueOn(flowQueue,{id:unknown.id}))).state,"completed");assert.equal((await flowDetail(unknown.id)).status,"needs_human_review");assert.equal(calls,6);
+    emptySummary=true;
+    const empty=await task("manual-empty"),emptyJob=await enqueueOn(flowQueue,{id:empty.id});assert.equal((await settled(emptyJob)).state,"completed");const emptyTask=await flowDetail(empty.id);assert.equal(emptyTask.status,"needs_evidence");assert.equal(calls,7,"empty summary skips paid review");
+    await assert.rejects(decideFlow(empty.id,{decision:"qualified",snapshotHash:emptyTask.snapshotHash,note:"Empty article cannot qualify"},"reviewer"),/非空/);
+  } finally {
+    releaseHold?.();
+    await boss.offWork(flowQueue.name);await release?.();
+    config.modelCallsEnabled=enabled;envKeys.forEach((k,i)=>{if(oldEnv[i]===undefined) delete process.env[k];else process.env[k]=oldEnv[i];});globalThis.fetch=previousFetch;
+    await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
+  }
 });

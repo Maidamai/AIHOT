@@ -12,6 +12,7 @@ export { shutdownSignal } from "../lib/shutdown.ts";
 
 let boss: PgBoss | null = null;
 let starting: Promise<PgBoss> | null = null;
+let bossOptions: { schedule?: boolean; supervise?: boolean } | null = null;
 
 export interface JobData {
   "content.analyze": { articleId: string; attemptTag?: string };
@@ -58,10 +59,16 @@ const QUEUE_OPTIONS: Record<QueueName, QueueOptions> = {
 
 const ensured = new Set<string>();
 
-export async function getBoss(): Promise<PgBoss> {
+export async function getBoss(options: { schedule?: boolean; supervise?: boolean } = {}): Promise<PgBoss> {
+  for (const key of ["schedule", "supervise"] as const) {
+    if (options[key] !== undefined && bossOptions && options[key] !== (bossOptions[key] ?? true)) {
+      throw new Error(`pg-boss ${key} mode differs from the already started/starting instance`);
+    }
+  }
   if (boss) return boss;
   starting ??= (async () => {
-    const b = new PgBoss({ connectionString: config.databaseUrl, max: 4, schema: "pgboss", application_name: "aihot-jobs" });
+    bossOptions = options;
+    const b = new PgBoss({ connectionString: config.databaseUrl, max: 4, schema: "pgboss", application_name: "aihot-jobs", ...options });
     b.on("error", (err) => console.error("[pg-boss]", logError(err)));
     try {
       await b.start();
@@ -69,6 +76,7 @@ export async function getBoss(): Promise<PgBoss> {
       return b;
     } catch (error) {
       await b.stop({ graceful: false }).catch((cleanup) => console.error("[pg-boss] startup cleanup", logError(cleanup)));
+      bossOptions = null;
       throw error;
     } finally {
       // A temporary connection error must not leave every caller sharing a rejected promise.
@@ -114,6 +122,7 @@ export async function stopBoss(): Promise<void> {
   }
   boss = null;
   starting = null;
+  bossOptions = null;
 }
 
 export async function ensureQueue(name: string, options: QueueOptions = QUEUE_OPTIONS[name as QueueName] ?? {}): Promise<void> {

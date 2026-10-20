@@ -81,3 +81,15 @@ MODEL_CALLS_ENABLED=true node modules/fishery/scripts/run-flow.ts --id <queued-t
 每文书仅最新created任务为权威任务。旧任务保留追溯；最新任务queued/pending/rejected时，不会回读旧qualified文章。内部预览、重跑及再批准均检查这一点；rejected仍可终结历史坏稿。
 
 IOTC26/03完整6页正文（约19.6KiB，页面结构作为正文+页锚发送）在48k请求限制下被零调用预检挡住，因此将wire上限定向提高至96,000bytes。仍发送完整原文、不截断、不放松事实门禁；最多100,000输入tokens工程上界、2048输出tokens、每次0.40元预留与累计20次/10元授权均保持。使用已核验高峰价格估算每次最多约0.216384元，但这不是供应商扣费硬限或账单证明。
+
+## 管理员手动队列处理进程
+
+后台的 `POST flows/:id/run` 只排队。要让该按钮实际执行，使用专用入口 `node modules/fishery/scripts/consume-flows.ts`；只订阅 `fishery.flow`，每批1项、并发1项，并用保留的数据库session advisory锁拒绝第二实例。它不启动 `apps/worker`，不注册采集/通知/成刊/维护调度，不运行业务恢复扫描或回执释放重试。pg-boss自身的schedule和supervise也关闭，因此库中既有cron不会由这个进程触发；进程中断和过期任务仍须显式对账，不宣称自动恢复。
+
+`deploy/manual-processing.yaml` 是叠加既有私有生产Compose的示例：指定既有镜像 `FISHERY_PROCESSOR_IMAGE` 和既有私有env_file路径 `FISHERY_PRIVATE_ENV_FILE`，沿用同一DB、data volume和网络。正常env_file机制加载原密钥，不读取/打印值，不生成新密钥，不初始化或复制授权账本。此片段仅打开processor的MODEL_CALLS_ENABLED，API继续关闭；无公网端口，采集、推送、IndexNow均关闭。部署前核对合并后的镜像、数据库、data路径及私有网络与现有服务一致，并先检查管理员已明确排入的任务；启动即可能消费这些既有手动任务，空队列启动零模型请求。
+
+启动时先ensure唯一flow队列，再读取实际配置并要求retryLimit=0、expireInSeconds至少600秒；ensureQueue不会更新已有队列，不符合时进程拒绝启动，须操作者先核对配置。不会在启动时重置running、failed或pending/unknown回执。SIGTERM/SIGINT先停止取新任务并沿用stopBoss的470秒排空，再释放独占锁和DB；Compose留500秒stop grace。强杀后running仍保持原状，须按上文回执对账后显式恢复。
+
+任务先原子认领，再检查模型开关、固定模型/端点授权和剩余容量。确定性阻断记录为failed，保留task id、stage、authorization phase和原因；模型/落盘失败同样以业务任务记录为准，并让对应pg-boss job失败，避免队列假成功。重复排队不能重新认领running或已完成任务，不能新增模型请求。成功生成和隔离核查只进入needs_human_review，仍需管理员决定，仍不发布。
+
+生成产物的relevance为irrelevant/unknown或没有非空摘要时，保存草稿后直接needs_evidence并记FISHERY_ARTICLE_INELIGIBLE，跳过第二遍模型调用。人工qualified也再次检查relevant和非空摘要。此类草稿可人工拒绝，或对账后明确regenerate生成新尝试；普通resume只复用原生成回执，不能偷偷新增收费，也不永久否定来源。

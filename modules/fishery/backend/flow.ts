@@ -66,7 +66,7 @@ export async function flowDetail(id:string):Promise<Record<string,any>> {
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
   const authoritative=latest?.id===id;
   return {...row,authoritative,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
-    internalArticle:row.status==="qualified"&&!staleReason&&authoritative?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor}:null};
+    internalArticle:row.status==="qualified"&&!staleReason&&authoritative&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
 async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,stage:string,attempt:number,options:ChatJsonOptions<S>,invoke:FisheryInvoke) {
@@ -88,31 +88,39 @@ async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,st
   });
   return invoke(options);
 }
-export async function runFlow(id:string,invoke:FisheryInvoke) {
+export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>Promise<void>)=>Promise<void>=run=>run()) {
   if(!(await flowDetail(id)).authoritative) throw new Conflict("A newer authoritative task supersedes this task");
   const [claimed]=await sql`UPDATE fishery_flow_tasks SET status='running',updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
   if(!claimed) throw new Conflict("Flow is not queued; running/failed/unknown outcomes require explicit operator reconciliation");
-  let stage=claimed.stage as string,phase="source",receiptId:number|null=null;
+  let stage=claimed.stage as string,phase="authorization",receiptId:number|null=null;
   try {
-    const input=await inputFor(claimed.document_id,hash(claimed.snapshot));
-    let draft=claimed.draft;
-    if(stage==="generation") assertFisheryPairFits(input);
-    if(stage==="generation") {
+    await authorize(async()=>{
+      phase="source";
+      const input=await inputFor(claimed.document_id,hash(claimed.snapshot));
+      let draft=claimed.draft;
+      if(stage==="generation") assertFisheryPairFits(input);
+      if(stage==="generation") {
+        phase="call";
+        draft=await prepareFisheryDraft(input,"default",async options=>{
+          const answer=await stageInvoke(id,hash(claimed.snapshot),"generation",claimed.generation_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
+        });
+        phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
+        await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET draft=${tx.json(draft)},stage='review',updated_at=now() WHERE id=${id}`;await completeReceipt(tx,draft.receiptId);await audit(claimed.actor,"fishery.flow.generated",`fishery:${claimed.document_id}`,null,null,{id,receiptId:draft.receiptId},{db:tx});});stage="review";receiptId=null;
+      }
+      if(draft.draft.relevance.decision!=="relevant"||!draft.draft.summaryZh.some((item:{sentence:string})=>item.sentence.trim())) {
+        const reason="行业相关性须为relevant，且至少有一条非空事实摘要；请补证、明确重新生成或人工拒绝";
+        await sql`UPDATE fishery_flow_tasks SET status='needs_evidence',stage='generation',quality_review=NULL,error=${sql.json({code:"FISHERY_ARTICLE_INELIGIBLE",stage:"generation",phase:"eligibility",reason,receiptId:draft.receiptId,noAutomaticRetry:true})},updated_at=now() WHERE id=${id}`;
+        return;
+      }
       phase="call";
-      draft=await prepareFisheryDraft(input,"default",async options=>{
-        const answer=await stageInvoke(id,hash(claimed.snapshot),"generation",claimed.generation_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
+      const quality=await reviewFisheryDraft(input,draft.draft,"default",async options=>{
+        const answer=await stageInvoke(id,hash(claimed.snapshot),"review",claimed.review_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
       });
       phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
-      await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET draft=${tx.json(draft)},stage='review',updated_at=now() WHERE id=${id}`;await completeReceipt(tx,draft.receiptId);await audit(claimed.actor,"fishery.flow.generated",`fishery:${claimed.document_id}`,null,null,{id,receiptId:draft.receiptId},{db:tx});});stage="review";receiptId=null;
-    }
-    phase="call";
-    const quality=await reviewFisheryDraft(input,draft.draft,"default",async options=>{
-      const answer=await stageInvoke(id,hash(claimed.snapshot),"review",claimed.review_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
+      await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET quality_review=${tx.json(quality)},status=${quality.status},stage='human',error=NULL,updated_at=now() WHERE id=${id}`;await completeReceipt(tx,quality.receiptId);await audit(claimed.actor,"fishery.flow.checked",`fishery:${claimed.document_id}`,null,null,{id,receiptId:quality.receiptId,status:quality.status},{db:tx});});
     });
-    phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
-    await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET quality_review=${tx.json(quality)},status=${quality.status},stage='human',error=NULL,updated_at=now() WHERE id=${id}`;await completeReceipt(tx,quality.receiptId);await audit(claimed.actor,"fishery.flow.checked",`fishery:${claimed.document_id}`,null,null,{id,receiptId:quality.receiptId,status:quality.status},{db:tx});});
   } catch(error) {
-    const detail={stage,phase,type:(error as Error).name,reason:(error as Error).message.slice(0,1000),receiptId:(error as {receiptId?:number}).receiptId??receiptId,noAutomaticRetry:true};
+    const detail={code:phase==="authorization"?"FISHERY_FLOW_BLOCKED":"FISHERY_FLOW_FAILED",stage,phase,type:(error as Error).name,reason:(error as Error).message.slice(0,1000),receiptId:(error as {receiptId?:number}).receiptId??receiptId,noAutomaticRetry:true};
     await sql`UPDATE fishery_flow_tasks SET status='failed',stage=${stage},error=${sql.json(detail)},updated_at=now() WHERE id=${id}`;
   }
   return flowDetail(id);
@@ -123,7 +131,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
   return sql.begin(async tx=>{
     const [row]=await tx`SELECT * FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
     if(!row||!["failed","needs_evidence","running"].includes(row.status)) throw new Conflict("Only failed, needs-evidence or reconciled interrupted flows can resume");
-    const stage=row.draft?"review":"generation",oldAttempt=stage==="review"?row.review_attempt:row.generation_attempt;
+    const stage=row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stage==="review"?row.review_attempt:row.generation_attempt;
     const bound=row.stage_requests[`${stage}:${oldAttempt}`];
     const [receipt]=bound?await tx`SELECT id,status FROM receipts WHERE subject=${bound.subject} AND purpose=${bound.purpose} ORDER BY id DESC LIMIT 1`:[];
     if(receipt&&["pending","unknown"].includes(receipt.status)) throw new Conflict("Receipt pending/unknown; reconcile outcome before any resume or regeneration");
@@ -155,6 +163,7 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
       const current=await snapshot(row.document_id);
       await inputFor(row.document_id,current.hash);
       if(current.hash!==hash(row.snapshot)) throw new Conflict("Review snapshot changed");
+      if(row.draft?.draft.relevance.decision!=="relevant"||!row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())) throw new Conflict("行业相关性须为relevant，且至少一条非空事实摘要，方可内部合格");
       if(!["needs_human_review","qualified","rejected"].includes(row.status)||row.quality_review?.status!=="needs_human_review") throw new Conflict("Independent review and deterministic gates must pass before internal qualification");
     }
     const human={decision:data.decision,note:data.note,actor,snapshotHash:hash(row.snapshot),at:new Date().toISOString(),internalOnly:true};
@@ -163,18 +172,29 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
   });
 }
 export async function flowRequiredCalls(id:string) {
-  const [task]=await sql`SELECT draft,stage_requests,generation_attempt,review_attempt FROM fishery_flow_tasks WHERE id=${id}`;
+  const [task]=await sql`SELECT draft,stage,stage_requests,generation_attempt,review_attempt FROM fishery_flow_tasks WHERE id=${id}`;
   if(!task) throw new NotFound("Flow not found");
   let calls=0;
-  for(const stage of task.draft?["review"]:["generation","review"]) {
+  for(const stage of task.stage==="generation"?["generation","review"]:["review"]) {
     const attempt=stage==="generation"?task.generation_attempt:task.review_attempt,bound=task.stage_requests[`${stage}:${attempt}`];
     const [receipt]=bound?await sql`SELECT status FROM receipts WHERE subject=${bound.subject} AND purpose=${bound.purpose} ORDER BY id DESC LIMIT 1`:[];
     if(!receipt||!["received","completed"].includes(receipt.status)) calls++;
   }
   return calls;
 }
-export const flowQueue=defineQueue<{id:string}>({name:"fishery.flow",options:{policy:"short",retryLimit:0,expireInSeconds:600},worker:{batchSize:1,localConcurrency:1},run:async jobs=>{
-  if(!config.modelCallsEnabled) throw new Conflict("MODEL_CALLS_ENABLED is closed; no model request sent");
-  return withFisheryAuthorization(async()=>{const rows=[];for(const job of jobs) {const task=await flowDetail(job.id);await assertFisheryCapacity(await flowRequiredCalls(job.id));rows.push(await runFlow(job.id,chatJson));}return rows;});
-}});
+export async function runQueuedFlows(jobs:{id:string}[],invoke:FisheryInvoke=chatJson) {
+  const rows=[];
+  for(const job of jobs) {
+    const result=await runFlow(job.id,invoke,async run=>{
+      if(!config.modelCallsEnabled) throw new Conflict("MODEL_CALLS_ENABLED is closed; 模型调用开关关闭，未发送请求");
+      await withFisheryAuthorization(async()=>{await assertFisheryCapacity(await flowRequiredCalls(job.id));await run();});
+    });
+    // runFlow persists business failures so the UI remains authoritative. Throw as well so
+    // pg-boss cannot report a failed task as a successfully completed queue job.
+    if(result.status==="failed") throw new Error(`任务 ${job.id} 执行失败 [${result.stage}/${result.error?.phase}]: ${result.error?.reason??"未知错误"}`);
+    rows.push(result);
+  }
+  return rows;
+}
+export const flowQueue=defineQueue<{id:string}>({name:"fishery.flow",options:{policy:"short",retryLimit:0,expireInSeconds:600},worker:{batchSize:1,localConcurrency:1},run:runQueuedFlows});
 export async function enqueueFlow(id:string) {const detail=await flowDetail(id);if(detail.stale||!detail.authoritative||detail.status!=="queued") throw new Conflict("Current queued task required");return {id,jobId:await enqueueOn(flowQueue,{id}),status:"queued"};}

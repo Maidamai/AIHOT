@@ -1,0 +1,24 @@
+# Apply after the existing private production compose file. This does not change API valves.
+# Supply the existing image and existing private env_file path through deployment interpolation.
+# Do not create another authorization ledger or copy the key into this file.
+services:
+  fishery-manual-processor:
+    image: ${FISHERY_PROCESSOR_IMAGE:?existing application image required}
+    env_file:
+      - ${FISHERY_PRIVATE_ENV_FILE:?existing private env_file required}
+    environment:
+      AIHOT_DATA_DIR: /data
+      MODEL_CALLS_ENABLED: "true"
+      COLLECT_ENABLED: "false"
+      FEISHU_CONTENT_PUSH_ENABLED: "false"
+      FEISHU_INTERNAL_ENABLED: "false"
+      INDEXNOW_SUBMIT_ENABLED: "false"
+    command: ["node", "modules/fishery/scripts/consume-flows.ts"]
+    volumes: ["data:/data"]
+    networks: [pilot]
+    restart: "no"
+    stop_grace_period: 500s
+    deploy:
+      replicas: 1
+    mem_limit: 512m
+    cpus: 0.75
