@@ -11,7 +11,7 @@ import path from "node:path";
 import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence, titlePriority } from "../backend/official-columns.ts";
 import { collectColumns, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
 import { evidenceIdentity } from "../backend/store.ts";
-import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
+import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft, fisheryDraftWireSchema,parseFisheryManualRevision } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
 import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
@@ -647,4 +647,28 @@ test("IOTC release claim missing safety qualifications cannot be repaired by sup
     return {data:options.schema.parse({decision:"needs_evidence",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"not_found",reason:"Synthetic complete-context review: bound line lacks release, practicability and crew/observer safety; do not supplement anchors",evidence:[]}]}),receiptId:9999,reused:false,model:"mock",usage:null};
   });
   assert.equal(result.status,"needs_evidence");assert.deepEqual(result.missingFields,["summaryZh.0"]);assert.equal(result.approved,false);
+});
+
+
+test("complete calendar dates translate at equal day precision without exempting counts or inventing years",()=>{
+  const check=(body:string,sentence:string)=>{const input=idTestInput(body),evidence=[{quote:body,paragraph:1,page:null}];return validateFisheryDraft(input,{...idTestDraft(),summaryZh:[{sentence,evidence}]});};
+  for(const body of ["From 1 January 2028.","From January 1, 2028.","From 2028-01-01.","From 1 January 2028[1]."]) assert.doesNotThrow(()=>check(body,"自2028年1月1日起。"));
+  assert.doesNotThrow(()=>check("自2028 年 1 月 1 日起。","From 1 January 2028."));
+  for(const [body,sentence] of [["1 January 2028.","2028年1月2日。"],["1 January 2028.","2028年2月1日。"],["1 January 2028.","2030年1月1日。"],["1 January 20281.","2028年1月1日。"],["1 January.","2028年1月1日。"],["1 January 2028.","2028年。"],["1 January 2028; quota 10 tonnes.","2028年1月1日配额10美元。"],["1 January 2028; -10 tonnes.","2028年1月1日配额10 tonnes."]]) assert.throws(()=>check(body,sentence),/Calendar date|Numeric value/);
+  assert.doesNotThrow(()=>check("整数20281。","整数20281。"));assert.throws(()=>check("整数20281。","整数2028。"),/Numeric value/);
+  const input=idTestInput("1 January\n2028"),evidence=[{quote:"1 January",paragraph:1,page:null},{quote:"2028",paragraph:2,page:null}];
+  assert.throws(()=>validateFisheryDraft(input,{...idTestDraft(),summaryZh:[{sentence:"2028年1月1日。",evidence}]}),/Calendar date/);
+});
+
+test("server-selected manual revision supports twelve IDs while generation stays capped at four",()=>{
+  const body=Array.from({length:13},(_,i)=>`原文事实${String.fromCharCode(65+i)}。`).join("\n"),input=idTestInput(body),catalog=buildEvidenceCatalog(input),ids=catalog.spans.map(s=>s.id);
+  const wire={...idTestDraft(),summaryZh:[{sentence:"原文事实A。",evidence:ids.slice(0,12)}]};
+  assert.equal(fisheryDraftWireSchema(catalog).safeParse(wire).success,false);
+  const manual=parseFisheryManualRevision(input,wire);
+  assert.equal(manual.draft.summaryZh[0]!.evidence.length,12);assert.throws(()=>validateFisheryDraft(input,manual.draft),/server-selected/);
+  assert.doesNotThrow(()=>validateFisheryDraft(input,manual.draft,{mode:"manual_revision"}));
+  assert.equal(fisheryDraftWireSchema(catalog,{mode:"manual_revision"}).safeParse({...wire,summaryZh:[{sentence:"原文事实A。",evidence:ids}]}).success,false);
+  const review=buildFisheryReviewRequest(input,manual.draft,"mock",{mode:"manual_revision"});
+  assert.equal(review.schema.safeParse({decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic binding only",evidence:ids.slice(0,12)}]}).success,true);
+  assert.equal(review.schema.safeParse({decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic forbidden extra",evidence:[ids[12]]}]}).success,false);
 });

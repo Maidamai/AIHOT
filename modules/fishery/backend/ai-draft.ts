@@ -7,23 +7,23 @@ import { sha256 } from "./source-adapters.ts";
 import type { ChatJsonOptions, ChatJsonResult } from "@aihot/backend/providers/llm";
 
 // Bump for every canonical/wire schema or deterministic validation change; included in receipt/task fingerprints.
-export const FISHERY_RULES_VERSION="fishery-rules-v5.3";
+export const FISHERY_RULES_VERSION="fishery-rules-v5.4";
 export const MAX_DRAFT_WIRE_BYTES=8192;
 export const quoteSchema = z.strictObject({ quote:z.string().min(1).max(1200), paragraph:z.int().positive(), page:z.int().positive().nullable() });
-const dateFact = z.strictObject({ date:dateSchema, evidence:z.array(quoteSchema).max(4) }).superRefine((v,ctx)=>{
+const dateFact = z.strictObject({ date:dateSchema, evidence:z.array(quoteSchema).max(12) }).superRefine((v,ctx)=>{
   if (v.date.precision!=="unknown"&&!v.evidence.length) ctx.addIssue({code:"custom",message:"Known date requires evidence"});
 });
 const emptyDateFact = { date:{precision:"unknown",value:null},evidence:[] };
 const outputExample = JSON.stringify({relevance:{decision:"unknown",reason:"证据不足",evidence:[]},summaryZh:[],dates:{published:emptyDateFact,event:emptyDateFact,adopted:emptyDateFact,effective:emptyDateFact,objectionDeadline:emptyDateFact},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",uncertainties:[]});
 export const fisheryDraftSchema = z.strictObject({
-  relevance:z.strictObject({decision:z.enum(["relevant","irrelevant","unknown"]),reason:z.string().min(1).max(1000),evidence:z.array(quoteSchema).max(8)}),
-  summaryZh:z.array(z.strictObject({sentence:z.string().min(1).max(500),evidence:z.array(quoteSchema).min(1).max(4)})).max(8),
+  relevance:z.strictObject({decision:z.enum(["relevant","irrelevant","unknown"]),reason:z.string().min(1).max(1000),evidence:z.array(quoteSchema).max(12)}),
+  summaryZh:z.array(z.strictObject({sentence:z.string().min(1).max(500),evidence:z.array(quoteSchema).min(1).max(12)})).max(8),
   dates:z.strictObject({published:dateFact,event:dateFact,adopted:dateFact,effective:dateFact,objectionDeadline:dateFact}),
-  entryIntoForce:z.strictObject({value:z.enum(["unknown","pending","in_force"]),evidence:z.array(quoteSchema).max(4)}),
-  eventStatus:z.strictObject({value:z.enum(["unknown","planned","reported_occurred"]),evidence:z.array(quoteSchema).max(4)}).default({value:"unknown",evidence:[]}),
+  entryIntoForce:z.strictObject({value:z.enum(["unknown","pending","in_force"]),evidence:z.array(quoteSchema).max(12)}),
+  eventStatus:z.strictObject({value:z.enum(["unknown","planned","reported_occurred"]),evidence:z.array(quoteSchema).max(12)}).default({value:"unknown",evidence:[]}),
   validityStatus:z.literal("unknown").default("unknown"),
-  locations:z.array(z.strictObject({role:z.enum(["issuer","fleet_origin_reported","departure_port","fishing_area","policy_scope","meeting_location","flag_registration"]),value:z.string().min(1).max(200),evidence:z.array(quoteSchema).min(1).max(4)})).max(20),
-  organizations:z.array(z.strictObject({role:z.enum(["page_publisher","policy_issuer","event_participant"]),value:z.string().min(1).max(200),evidence:z.array(quoteSchema).min(1).max(4)})).max(12).default([]),
+  locations:z.array(z.strictObject({role:z.enum(["issuer","fleet_origin_reported","departure_port","fishing_area","policy_scope","meeting_location","flag_registration"]),value:z.string().min(1).max(200),evidence:z.array(quoteSchema).min(1).max(12)})).max(20),
+  organizations:z.array(z.strictObject({role:z.enum(["page_publisher","policy_issuer","event_participant"]),value:z.string().min(1).max(200),evidence:z.array(quoteSchema).min(1).max(12)})).max(12).default([]),
   uncertainties:z.array(z.string().min(1).max(500)).max(20),
 }).superRefine((v,ctx)=>{
   if(v.locations.some(l=>l.role==="issuer")) ctx.addIssue({code:"custom",path:["locations"],message:"Ambiguous issuer role refused; use organizations with explicit page_publisher, policy_issuer or event_participant evidence"});
@@ -34,18 +34,20 @@ export const fisheryDraftSchema = z.strictObject({
   if(v.entryIntoForce.value==="pending"&&v.dates.effective.date.precision!=="unknown") ctx.addIssue({code:"custom",message:"Pending is not an effective date"});
 });
 export interface DraftInput { documentId:string; observationRevision:number; body:string; bodySha256:string; language:string; pages?:{page:number;text:string}[]; }
-export function fisheryDraftWireSchema(catalog:EvidenceCatalog) {
+export interface FisheryEvidenceOptions {mode?:"generation"|"manual_revision"}
+export function fisheryDraftWireSchema(catalog:EvidenceCatalog,options:FisheryEvidenceOptions={}) {
+  const cap=options.mode==="manual_revision"?12:4;
   const evidence=(min:number,max:number)=>evidenceIdSchema(catalog,min,max);
-  const date=z.strictObject({date:dateSchema,evidence:evidence(0,4)});
+  const date=z.strictObject({date:dateSchema,evidence:evidence(0,cap)});
   // Strict wire parsing precedes deterministic expansion and the unchanged canonical schema.
   return z.strictObject({...fisheryDraftSchema.shape,
-    relevance:fisheryDraftSchema.shape.relevance.extend({evidence:evidence(0,8)}),
-    summaryZh:z.array(fisheryDraftSchema.shape.summaryZh.element.extend({evidence:evidence(1,4)})).max(8),
+    relevance:fisheryDraftSchema.shape.relevance.extend({evidence:evidence(0,cap)}),
+    summaryZh:z.array(fisheryDraftSchema.shape.summaryZh.element.extend({evidence:evidence(1,cap)})).max(8),
     dates:z.strictObject({published:date,event:date,adopted:date,effective:date,objectionDeadline:date}),
-    entryIntoForce:fisheryDraftSchema.shape.entryIntoForce.extend({evidence:evidence(0,4)}),
-    eventStatus:z.strictObject({value:z.enum(["unknown","planned","reported_occurred"]),evidence:evidence(0,4)}),
-    locations:z.array(fisheryDraftSchema.shape.locations.element.extend({evidence:evidence(1,4)})).max(20),
-    organizations:z.array(z.strictObject({role:z.enum(["page_publisher","policy_issuer","event_participant"]),value:z.string().min(1).max(200),evidence:evidence(1,4)})).max(12),
+    entryIntoForce:fisheryDraftSchema.shape.entryIntoForce.extend({evidence:evidence(0,cap)}),
+    eventStatus:z.strictObject({value:z.enum(["unknown","planned","reported_occurred"]),evidence:evidence(0,cap)}),
+    locations:z.array(fisheryDraftSchema.shape.locations.element.extend({evidence:evidence(1,cap)})).max(20),
+    organizations:z.array(z.strictObject({role:z.enum(["page_publisher","policy_issuer","event_participant"]),value:z.string().min(1).max(200),evidence:evidence(1,cap)})).max(12),
   }).transform((value,ctx)=>{
     const parsed=fisheryDraftSchema.safeParse(value);
     if(!parsed.success) {ctx.issues.push({code:"custom",input:value,message:parsed.error.message});return z.NEVER;}
@@ -80,12 +82,34 @@ export function numericClaims(text:string) {
   }
   return claims;
 }
-export function validateFisheryDraft(input:DraftInput,value:unknown) {
+interface CalendarLiteral {start:number;end:number;iso:string}
+function calendarLiterals(text:string):CalendarLiteral[] {
+  const found:CalendarLiteral[]=[];
+  const add=(match:RegExpMatchArray,year:string,month:string|number,day:string)=>{
+    const iso=`${year}-${String(Number(month)).padStart(2,"0")}-${String(Number(day)).padStart(2,"0")}`;
+    if(dateSchema.safeParse({precision:"day",value:iso}).success) found.push({start:match.index!,end:match.index!+match[0].length,iso});
+  };
+  for(const m of text.matchAll(/(?<![\d+−﹣－-])(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?!\d)/g)) add(m,m[1]!,m[2]!,m[3]!);
+  for(const m of text.matchAll(/(?<![\d+−﹣－-])(\d{4})([-/.])(\d{1,2})\2(\d{1,2})(?!\d)/g)) add(m,m[1]!,m[3]!,m[4]!);
+  const monthNames="January|February|March|April|May|June|July|August|September|October|November|December|Jan\\.?|Feb\\.?|Mar\\.?|Apr\\.?|Jun\\.?|Jul\\.?|Aug\\.?|Sep\\.?|Sept\\.?|Oct\\.?|Nov\\.?|Dec\\.?";
+  const month=(name:string)=>["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(name.slice(0,3).toLowerCase())+1;
+  for(const m of text.matchAll(new RegExp(`(?<![\\d+−﹣－-])\\b(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4})(?!\\d)\\b`,"gi"))) add(m,m[3]!,month(m[2]!),m[1]!);
+  for(const m of text.matchAll(new RegExp(`\\b(${monthNames})\\s+(\\d{1,2}),?\\s+(\\d{4})(?!\\d)\\b`,"gi"))) add(m,m[3]!,month(m[1]!),m[2]!);
+  return found.sort((a,b)=>a.start-b.start).filter((value,i,all)=>!i||value.start>=all[i-1]!.end);
+}
+function withoutCalendarLiterals(text:string,dates:CalendarLiteral[]) {
+  let result="",start=0;
+  for(const date of dates) {result+=text.slice(start,date.start)+" ";start=date.end;}
+  return result+text.slice(start);
+}
+export function validateFisheryDraft(input:DraftInput,value:unknown,options:FisheryEvidenceOptions={}) {
   if(sha256(input.body)!==input.bodySha256) throw new Error("Source body changed");
   const result=fisheryDraftSchema.parse(value);
   if(Buffer.byteLength(JSON.stringify(JSON.stringify(result)))>MAX_DRAFT_WIRE_BYTES) throw new Error("Draft exceeds bounded review envelope; manual evidence review required");
   const paragraphs=input.body.split(/\n+/).filter(p=>p.trim()),catalog=input.pages?.length?buildEvidenceCatalog(input):null;
-  const anchors=[...result.relevance.evidence,...result.summaryZh.flatMap(s=>s.evidence),...Object.values(result.dates).flatMap(d=>d.evidence),...result.entryIntoForce.evidence,...result.eventStatus.evidence,...result.locations.flatMap(l=>l.evidence),...result.organizations.flatMap(l=>l.evidence)];
+  const evidenceGroups=[result.relevance.evidence,...result.summaryZh.map(s=>s.evidence),...Object.values(result.dates).map(d=>d.evidence),result.entryIntoForce.evidence,result.eventStatus.evidence,...result.locations.map(l=>l.evidence),...result.organizations.map(l=>l.evidence)];
+  if(evidenceGroups.some(group=>group.length>(options.mode==="manual_revision"?12:4))) throw new Error("Evidence count exceeds server-selected generation/manual revision mode");
+  const anchors=evidenceGroups.flat();
   for(const anchor of anchors) {
     if(!paragraphs[anchor.paragraph-1]?.includes(anchor.quote)) throw new Error("Quote is not continuous text in its source paragraph");
     if(anchor.page!==null&&(!catalog||!catalog.spans.some(s=>s.paragraph===anchor.paragraph&&s.page===anchor.page))) throw new Error("PDF page anchor does not match");
@@ -105,8 +129,11 @@ export function validateFisheryDraft(input:DraftInput,value:unknown) {
   if(result.eventStatus.value==="reported_occurred"&&(!result.eventStatus.evidence.some(a=>/(?:举行|召开|已发生|完成|departed|was held|took place|occurred)/i.test(a.quote))||result.eventStatus.evidence.some(a=>occurrenceCaveat(a.quote)))) throw new Error("Reported occurrence needs explicit occurrence evidence, not a plan or elapsed date");
   // Compare complete numeric tokens, including signs, separators and domain units.
   for(const fact of result.summaryZh) {
-    const available=new Set(fact.evidence.flatMap(a=>numericClaims(a.quote)));
-    for(const claim of numericClaims(fact.sentence)) if(!available.has(claim)) throw new Error(`Numeric value/unit lacks literal evidence: ${claim}`);
+    const dates=calendarLiterals(fact.sentence),sourceDates=fact.evidence.map(a=>calendarLiterals(a.quote));
+    for(const date of dates) if(!sourceDates.some(values=>values.some(value=>value.iso===date.iso))) throw new Error("Calendar date lacks a complete equal-precision date in one selected source quote");
+    // Exempt only the exact, fully matched day-date spans. Remaining signs, quantities and units stay literal.
+    const available=new Set(fact.evidence.flatMap((a,i)=>numericClaims(withoutCalendarLiterals(a.quote,sourceDates[i]!))));
+    for(const claim of numericClaims(withoutCalendarLiterals(fact.sentence,dates))) if(!available.has(claim)) throw new Error(`Numeric value/unit lacks literal evidence: ${claim}`);
   }
   // Check explicit calendar components; a known year elsewhere cannot fill an incomplete event date.
   for(const fact of Object.values(result.dates)) {
@@ -135,4 +162,10 @@ export async function prepareFisheryDraft(input:DraftInput,model:string,invoke:(
   return {status:"needs_review" as const,documentId:input.documentId,observationRevision:input.observationRevision,bodySha256:input.bodySha256,
     evidenceCatalog:evidenceBinding(buildEvidenceCatalog(input)),schemaVersion:"fishery-draft-wire-v5",promptVersion:request.promptVersion,receiptId:response.receiptId,model:response.model,draft:validateFisheryDraft(input,response.data),
     limitations:["Exact quote matching is not semantic fact verification","No source rights, original observation or review is changed"]};
+}
+
+export function parseFisheryManualRevision(input:DraftInput,wire:unknown) {
+  const catalog=buildEvidenceCatalog(input),options={mode:"manual_revision" as const};
+  const draft=validateFisheryDraft(input,fisheryDraftWireSchema(catalog,options).parse(wire),options);
+  return {draft,evidenceCatalog:evidenceBinding(catalog),schemaVersion:"fishery-manual-revision-wire-v1"};
 }
