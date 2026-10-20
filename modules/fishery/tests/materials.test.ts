@@ -19,6 +19,8 @@ import { workbench } from "../backend/workbench.ts";
 import { collectColumns } from "../backend/column-batches.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
+import { createFlow, flowDetail, runFlow, retryFlow, decideFlow } from "../backend/flow.ts";
+
 installModules([fishery]);
 const app = await buildApp();
 let count = 0;
@@ -331,4 +333,43 @@ test("an approved observation cannot export a failed source capture", async () =
   await assert.rejects(exportMaterial(id, 2, "tester", now), /approved/);
   await approve(id, 2);
   await assert.rejects(exportMaterial(id, 2, "tester", now), /prevent export/);
+});
+
+
+test("persistent fishery flow reuses successful stages, requires human snapshot decision and invalidates versions",async()=>{
+  const body="合成公海远洋渔业证据材料。",url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_2.htm";
+  await collectColumns({id:"synthetic-flow",dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>({url:request,status:request.endsWith("robots.txt")?404:200,headers:{get:()=>"text/html"},body:Buffer.from(request.endsWith("robots.txt")?"missing":request===COLUMNS.moa.url?`<ul class="sj_e_tonzhi_list"><li><a href="${url}">合成公海材料</a></li></ul>`:`<meta name="ArticleTitle" content="合成公海材料"><div class="sj_arc_body"><div class="TRS_Editor"><p>${body.repeat(5)}</p></div></div>`)})});
+  config.devAdmin={displayName:"ISOLATED TEST FLOW"};
+  let id:string;
+  try {
+    assert.equal((await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-flow/flows",payload:{identity:"test"}})).statusCode,403);
+    const created=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-flow/flows",headers:{"x-csrf-token":"dev"},payload:{identity:"test"}});
+    assert.equal(created.statusCode,200,created.body);assert.equal(created.json().modelCalls,0);id=created.json().tasks[0].id;
+    const again=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-flow/flows",headers:{"x-csrf-token":"dev"},payload:{identity:"test"}});assert.equal(again.json().tasks[0].id,id);
+  } finally {config.devAdmin=null;}
+  assert.equal((await app.inject(`/api/admin/fishery/flows/${id!}`)).statusCode,401);
+  let generated=0,reviewed=0,failReview=true;
+  const invoke=async(options:any)=>{
+    let data:any;
+    const evidence=[{quote:body,paragraph:1,page:null}],date={date:{precision:"unknown",value:null},evidence:[]};
+    if(options.purpose==="fishery_draft") {generated++;data={relevance:{decision:"unknown",reason:"test",evidence:[]},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]};}
+    else {reviewed++;if(failReview) throw new Error("Synthetic review failure");data={decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原句一致",evidence}]};}
+    return {data,receiptId:999999,model:"mock",reused:false,usage:null};
+  };
+  const failed=await runFlow(id!,invoke);assert.equal(failed.status,"failed");assert.equal(failed.stage,"review");assert.ok(failed.draft);assert.equal(generated,1);
+  await assert.rejects(runFlow(id!,invoke),/not queued/);
+  await retryFlow(id!,{note:"Explicit reconciled mock failure"},"tester");failReview=false;
+  const checked=await runFlow(id!,invoke);assert.equal(checked.status,"needs_human_review");assert.equal(generated,1);assert.equal(reviewed,2);assert.equal(checked.internalArticle,null);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:"a".repeat(64),note:"wrong snapshot"},"reviewer"),/snapshot changed/);
+  await decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic internal decision only"},"reviewer");
+  const qualified=await flowDetail(id!);assert.equal(qualified.status,"qualified");assert.ok(qualified.internalArticle);assert.equal(qualified.published,false);
+  await decideFlow(id!,{decision:"rejected",snapshotHash:checked.snapshotHash,note:"Retract synthetic qualification"},"reviewer");assert.equal((await flowDetail(id!)).internalArticle,null);
+  await decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic review again"},"reviewer");
+  const document=await documentHistory(checked.document_id),sourceId=document.document.source_id;
+  await registerSource(sourceId,{expectedRevision:1,healthNote:"Changed source rights metadata"},"tester");
+  const stale=await flowDetail(id!);assert.equal(stale.stale,true);assert.equal(stale.internalArticle,null);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Old snapshot"},"reviewer"),/snapshot changed/);
+  await assert.rejects(createFlow(checked.document_id,{identity:"test"},"tester"),/old evidence/);
+  const next=await createFlow(checked.document_id,{identity:"new-version"},"tester");assert.notEqual(next.id,id!);
+  await withdraw(checked.document_id,{expectedRevision:1,reason:"Synthetic withdrawal"},"tester");assert.equal((await flowDetail(next.id)).stale,true);assert.equal((await flowDetail(id!)).internalArticle,null);
 });

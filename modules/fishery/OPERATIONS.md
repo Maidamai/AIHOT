@@ -51,3 +51,23 @@ API 与采集脚本须使用同一私有 data-dir。管理员在 `/admin/fishery
 生成成功后可用同attempt及 `--stage review` 复用生成。审核失败后，只在已核对旧回执/扣费状态后，显式增加 `--review-attempt <新审核尝试ID>`，复用生成只重试审核；已有失败生成必须明确给新attempt。已有回执不会自动重试，成功stage持久复用。两阶段分别使用fishery_draft与fishery_quality_review目的和回执，任一真实请求都经过同一最终wire校验与预留。本文不是运行授权扩张，不启动worker/recovery/fallback。
 
 生成v3把机构事实放在organizations的page_publisher/policy_issuer/event_participant中；旧混合issuer拒绝。网页发布机构须有原文显式发布标签，不能由政策《通知》署名替代。每条引用连续匹配原段/PDF页；数值单位必须原样出现，不能自动换算，日期必须同引句有完整组成。独立审核只收到公开正文及生成候选，不收到人审备注、用户信息或生成者自评。必须逐字段覆盖，任何unknown/contradiction/缺字段都退待补证；supported仅进入needs_human_review，始终approved=false/published=false。独立调用不代表独立信源确认或法律适用性审核。长文不能在wire上限下静默截断成全文；超限拒绝，保留原件供人工处理。
+
+## 持久后台链和单任务处理（内部）
+
+新增0095迁移只有一条建表语句，保存任务、证据快照、分阶段尝试和回执引用。现有采集脚本先执行受控发现/归档；`POST /api/admin/fishery/batches/:id/flows {identity}` 重新校验并导入归档，然后幂等创建每文书任务，不发送模型请求。普通文书可用 `POST documents/:id/flows {identity}`。所有接口仍需正常管理员会话及写操作CSRF；没有匿名或公开投影。
+
+`GET documents/:id/flows`、`GET flows/:id` 查看阶段、失败原因、回执、快照hash和失效原因；`POST flows/:id/run` 仅排既有pg-boss的fishery.flow队列（自动重试0）。`POST flows/:id/retry {note}` 是显式阶段重试，保留成功生成，只重跑失败审核，每阶段最多3次；unknown或在途费用仍阻断发送。进程中断留下running，系统不会自动抢占/重发，需先人工对账；此版没有自动恢复命令。
+
+生产默认不启用模型总开关。验收建议直接用单任务CLI，不启动常驻worker，也不启动任何调度：
+
+```bash
+# 使用既有部署注入的key/env；不在命令行写key，不加载未知env文件。
+# 数据库必须已有从隔离试验原样转移的唯一活跃累计授权账本，不能initialize新额度。
+MODEL_CALLS_ENABLED=true node modules/fishery/scripts/run-flow.ts --id <queued-task-id> --run-once
+```
+
+只处理这一个任务，启动前检查生成+审核至少两次容量（已有生成则一次）；最终每个fetch仍原子持久预留。源、观察、权利版本和正文哈希每阶段前后核对，超长正文/请求超wire上限直接失败，不截断冒充全文。已有IOTC私有PDF正文可进入同链，按归档Page标记绑定所有页且核对attachmentPages；缺页拒绝。没有为现有未知来源创建新的抓取权限或付费服务。
+
+`POST flows/:id/decision {decision:qualified|rejected,snapshotHash,note}` 只能在确定性门禁+隔离第二遍证据核查通过后操作。qualified仅内部受控预览，保留审核者和快照；不写公开文章、不放宽原许可，不等于法律适用性通过。每次读取再次核对当前版本及实际归档正文，来源/观察/权利变化或撤回立即关闭内部预览，保留历史追溯。可再次rejected撤销内部qualified。
+
+当前局限：采集发现仍使用既有显式脚本、批次manifest；任务表从已核验归档/观察开始，不伪称持久化发现调度。planned/occurred及validity_status尚无独立生成字段，effective日期不能解释为已核实有效；同模型第二遍不是独立信源确认。没有长文分块/上下文合并；超限退人工。国际列表新规发现扩展、完整真实当前稿件质量及服务器验收仍由后续阶段验证。

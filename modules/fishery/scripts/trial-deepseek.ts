@@ -76,11 +76,16 @@ try {
         const [saved]=await sql<{value:{draft:unknown;bodySha256:string}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
         let draft=saved?validateFisheryDraft(input,saved.value.draft):undefined;
         if(saved&&saved.value.bodySha256!==input.bodySha256) throw new Error("Attempt source changed; use a new explicit attempt identity");
+        if(!draft&&values.stage==="both") {
+          const [ledger]=await sql<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key}`;
+          if(!ledger||ledger.value.id!==TRIAL.id) throw new Error("Existing authorization required");
+          trialCapacity(ledger.value.entries,2);
+        }
         if(!draft&&values.stage!=="review") {
           const [previous]=await sql<{id:number;status:string}[]>`SELECT id,status FROM receipts WHERE subject=${request.subject} AND purpose='fishery_draft' ORDER BY id DESC LIMIT 1`;
           if(previous) throw new Error(`Existing generation receipt ${previous.id} (${previous.status}); no automatic retry; select a new explicit attempt identity`);
           const answer=await chatJson(request);draft=validateFisheryDraft(input,answer.data);
-          const value={status:"needs_review",sourceUrl:item.url,bodySha256:input.bodySha256,promptVersion:request.promptVersion,receiptId:answer.receiptId,draft};
+          const value={status:"needs_review",sourceUrl:item.url,bodySha256:input.bodySha256,promptVersion:request.promptVersion,receiptId:answer.receiptId,model:answer.model,draft};
           await sql.begin(async tx=>{
             await tx`INSERT INTO settings(key,value) VALUES (${sourceKey+".generation"},${tx.json(value)})`;
             await completeReceipt(tx,answer.receiptId);

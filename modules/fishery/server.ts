@@ -10,6 +10,8 @@ import { config } from "@aihot/backend/config";
 import { batchIdSchema, listBatches } from "./backend/column-batches.ts";
 import { importBatch } from "./backend/import-batch.ts";
 
+import { createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
+
 const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin) => {
   try { return await handler(req, reply, admin); }
   catch (error) {
@@ -20,10 +22,22 @@ const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin
 const param = (req: { params: unknown }) => idSchema.parse((req.params as Record<string, string>).id);
 
 export default defineServerModule({
-  name: "fishery", sourceHealth,
+  name: "fishery", sourceHealth, queues:[flowQueue],
   http(app) {
+    app.get("/api/admin/fishery/documents/:id/flows", guarded(async req=>({rows:await listFlows(param(req))})));
+    app.post("/api/admin/fishery/documents/:id/flows", guarded(async(req,reply,admin)=>reply.code(201).send(await createFlow(param(req),req.body,admin.name))));
+    app.get("/api/admin/fishery/flows/:id", guarded(async req=>flowDetail(param(req))));
+    app.post("/api/admin/fishery/flows/:id/run", guarded(async req=>enqueueFlow(param(req))));
+    app.post("/api/admin/fishery/flows/:id/retry", guarded(async(req,_reply,admin)=>retryFlow(param(req),req.body,admin.name)));
+    app.post("/api/admin/fishery/flows/:id/decision", guarded(async(req,_reply,admin)=>decideFlow(param(req),req.body,admin.name)));
     app.get("/api/admin/fishery/workbench", guarded(async req => workbench(z.object({ page:z.coerce.number().int().positive().max(100000).optional(),q:z.string().max(200).optional(),scope:z.enum(["real","test","all"]).optional(),state:z.enum(["pending","failed","unverified","stale","rejected","approved","withdrawn"]).optional().or(z.literal("")) }).parse(req.query))));
     app.get("/api/admin/fishery/batches", guarded(async () => ({rows:await listBatches(config.dataDir)})));
+    app.post("/api/admin/fishery/batches/:id/flows", guarded(async(req,_reply,admin)=>{
+      const {identity}=z.strictObject({identity:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)}).parse(req.body);
+      const imported=await importBatch(batchIdSchema.parse((req.params as {id:string}).id),admin.name);
+      const tasks=[];for(const document of imported.rows) tasks.push(await createFlow(document.id,{identity},admin.name));
+      return {batchId:imported.batchId,tasks,modelCalls:0,published:false};
+    }));
     app.post("/api/admin/fishery/batches/:id/import", guarded(async (req,_reply,admin) => importBatch(batchIdSchema.parse((req.params as {id:string}).id),admin.name)));
     app.get("/api/admin/fishery/documents/:id/detail", guarded(async req => materialDetail(param(req))));
     app.get("/api/admin/fishery/sources", guarded(async () => ({ rows: await listSources() })));

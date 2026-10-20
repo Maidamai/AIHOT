@@ -14,10 +14,11 @@ export function trialUsage(value:unknown) {
   // Peak uncached input CNY2/M + output CNY8/M; no cache/idle discount assumed.
   return {promptTokens:Number(u.prompt_tokens),completionTokens:Number(u.completion_tokens),estimatedMicroCny:Number(u.prompt_tokens)*2+Number(u.completion_tokens)*8};
 }
-export function trialCapacity(entries:{state:string;reservedMicroCny:number}[]) {
+export function trialCapacity(entries:{state:string;reservedMicroCny:number}[],requiredCalls=1) {
+  if(!Number.isInteger(requiredCalls)||requiredCalls<1||requiredCalls>2) throw new Error("Invalid stage capacity request");
   if(entries.some(e=>!Number.isSafeInteger(e.reservedMicroCny)||e.reservedMicroCny<0)) throw new Error("Trial historical reservation missing/invalid; manual reconciliation required");
   if(entries.some(e=>e.state!=="received")) throw new Error("Trial has pending, refused or unknown outcome; manual reconciliation required");
-  if(entries.length>=TRIAL.maxRequests||entries.reduce((sum,e)=>sum+e.reservedMicroCny,0)+TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
+  if(entries.length+requiredCalls>TRIAL.maxRequests||entries.reduce((sum,e)=>sum+e.reservedMicroCny,0)+requiredCalls*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
 }
 export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
   const previous=globalThis.fetch;
