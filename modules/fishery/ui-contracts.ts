@@ -30,10 +30,10 @@ export interface FlowTimeline {
   referenceDate:string;originalAgeDays:number|null;isOriginalDay:boolean|null;historical:boolean;label:string;
 }
 export interface FlowView {
-  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;stale:boolean;staleReason:string|null;
+  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;materialRejected:boolean;stale:boolean;staleReason:string|null;
   timeline:FlowTimeline;
   generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
-  draft:{receiptId:number;promptVersion:string;model:string;draft:{summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
+  draft:{receiptId:number;promptVersion:string;model:string;draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
   quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
   human_decision:{decision:string;actor:string;at:string;note:string}|null;
   error:{stage:string;phase?:string;reason:string;receiptId:number|null}|null;

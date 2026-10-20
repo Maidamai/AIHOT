@@ -104,3 +104,6 @@
   .reader-quote { padding:13px 14px; }
   .reader-footer { padding:18px 16px; }
 }
+
+.reader-source-title-label { color:var(--ink-3); font-size:11px; margin-bottom:6px; }
+.reader-summary-section>.reader-classification-note { color:var(--ink-3); font-size:12px; line-height:1.8; margin-bottom:18px; }

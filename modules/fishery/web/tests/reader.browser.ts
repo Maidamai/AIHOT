@@ -6,13 +6,15 @@ import path from "node:path";
 import { chromium, expect, type Browser } from "@playwright/test";
 import { fakeApi, startWebServer, visit, type WebServer } from "../../../../apps/web/tests/web-server.ts";
 import type { FisheryReaderItem, FisheryReaderPage } from "../../ui-contracts.ts";
-const item:FisheryReaderItem={id:"synthetic-policy",title:"[合成界面验收，非真实资讯] 印度洋远洋捕捞配额核对资料",source:{name:"合成官方来源 · 仅用于界面验收",url:"https://example.org/synthetic-policy"},category:{id:"policy",label:"政策监管"},summary:[{sentence:"此合成资料用于检查内部摘要、原文日期及来源证据的呈现，不代表真实政策或业务审核。",evidence:[{quote:"This synthetic source excerpt is for interface verification only. It does not describe an actual conservation measure or authorize fishing operations.",paragraph:12,page:2,url:"https://example.org/synthetic-policy.pdf"}]}],dates:{published:{precision:"day",value:"2026-04-17"},event:{precision:"unknown",value:null}},age:{referenceDate:"2026-10-20",days:186,historical:true,label:"7日及更早原文资料"},verification:{status:"internally_qualified",label:"内部核对完成",legalApplicability:"未完成法律适用性核验"}};
+const item:FisheryReaderItem={id:"synthetic-policy",title:"[合成界面验收，非真实资讯] 印度洋远洋捕捞配额核对资料",source:{name:"合成官方来源 · 仅用于界面验收",url:"https://example.org/synthetic-policy"},category:{id:"policy",label:"政策监管"},summary:[{sentence:"此合成资料用于检查内部摘要、原文日期及来源证据的呈现，不代表真实政策或业务审核。",evidence:[{quote:"This synthetic source excerpt is for interface verification only. It does not describe an actual conservation measure or authorize fishing operations.",paragraph:12,page:2,url:"https://example.org/synthetic-policy.pdf"}]}],dates:{published:{precision:"day",value:"2026-04-17"},event:{precision:"unknown",value:null}},age:{referenceDate:"2026-10-20",days:186,historical:true,label:"7日及更早原文资料"},verification:{status:"internally_qualified",label:"摘要已完成内部核对",legalApplicability:"未完成法律适用性核验"}};
 const unknown:FisheryReaderItem={...item,id:"synthetic-pubunknown",title:"[合成界面验收] 发布日期未知的原文资料",dates:{...item.dates,published:{precision:"unknown",value:null}},age:{referenceDate:"2026-10-20",days:null,historical:false,label:"原文资料 · 发布日期未知"}};
 let mode:"ready"|"empty"|"unauthorized"|"failure"="ready";
 const apiPaths:string[]=[];
 const api=fakeApi((url,res)=>{
   apiPaths.push(url.pathname);
-  if(url.pathname==="/api/admin/me") {if(mode==="unauthorized")res.statusCode=401;return {};}
+  if(url.pathname==="/api/admin/me") {if(mode==="unauthorized")res.statusCode=401;return {name:"synthetic-admin",csrf:"synthetic-test-only",dev:false};}
+  if(url.pathname==="/api/admin/nav-counts")return {};
+  if(url.pathname==="/api/admin/fishery/flows/synthetic-failed") {const unknown={precision:"unknown",value:null};return {id:"synthetic-failed",document_id:"synthetic-policy",identity:"synthetic-failed",status:"failed",stage:"generation",authoritative:true,materialRejected:false,stale:false,snapshotHash:"a".repeat(64),generation_attempt:1,review_attempt:1,draft:null,quality_review:null,human_decision:null,internalArticle:null,error:{stage:"generation",reason:"Synthetic failure",receiptId:null},timeline:{label:"合成失败任务",referenceDate:"2026-10-20",originalAgeDays:null,sourcePublished:unknown,sourceEvent:unknown,candidateEvent:unknown,taskCreatedAt:"2026-10-20T00:00:00Z",taskUpdatedAt:"2026-10-20T00:00:00Z"}};}
   if(url.pathname.startsWith("/api/admin/fishery/reader")) {
     if(mode==="unauthorized") {res.statusCode=401;return {code:"unauthorized"};}
     if(mode==="failure") {res.statusCode=503;return {detail:"Reader temporarily unavailable"};}
@@ -46,6 +48,7 @@ test("reader list, complete citation detail and empty/error states fit 320, 393 
   for(const width of [320,393,1024]) {
     const page=await browser.newPage({viewport:{width,height:900}});
     await visit(page,web.origin+"/fishery");await expect(page.getByRole("heading",{name:"已核对资料",exact:true})).toBeVisible();
+    await expect(page.getByText("来源标题",{exact:true})).toHaveCount(2);await expect(page.getByText("摘要已完成内部核对",{exact:true})).toHaveCount(2);
     await expect(page.getByText("历史资料",{exact:true})).toBeVisible();await expect(page.getByText("原文发布日期未知",{exact:true})).toBeVisible();
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await expect(page.getByRole("link",{name:"模型",exact:true})).toHaveCount(0);
     await page.screenshot({path:path.join(folder,`list-${width}.png`),fullPage:true});
@@ -57,4 +60,9 @@ test("reader list, complete citation detail and empty/error states fit 320, 393 
   }
   mode="empty";const empty=await browser.newPage({viewport:{width:393,height:852}});await visit(empty,web.origin+"/fishery");await expect(empty.getByRole("heading",{name:"暂无可读资料",exact:true})).toBeVisible();await expect(empty.getByRole("link",{name:/政策监管/})).toHaveCount(0);await empty.screenshot({path:path.join(folder,"empty-393.png"),fullPage:true});await empty.close();
   assert.equal(apiPaths.some(p=>/model|generate|process|receipts/.test(p)),false);
+});
+
+
+test("failed administrator flow cannot offer internal qualification without a reviewed relevant draft",async()=>{
+  mode="ready";const page=await browser.newPage();try{await visit(page,web.origin+"/admin/fishery/flows/synthetic-failed");await expect(page.getByRole("heading",{name:"内部文章审核",exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"记录内部合格",exact:true})).toBeDisabled();}finally{await page.close();}
 });

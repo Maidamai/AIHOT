@@ -619,6 +619,18 @@ test("private reader projects only the current real qualified set and never expo
   const [original]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${task.id}`;
   const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"policy");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
   assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"policy"},now)).rows.some(r=>r.id===f.id));
+  assert.equal(one.verification.label,"摘要已完成内部核对");
+  const categoriesBefore=page.categories;
+  await review(f.id,{revision:2,sourceRevision:1,decision:"rejected",applicabilityReviewed:false,note:"Synthetic current-version material rejection"},"fixture-admin");
+  assert.equal((await flowDetail(task.id)).materialRejected,true);assert.equal((await flowDetail(task.id)).internalArticle,null);
+  await assert.rejects(readerItem(f.id,now),/No current/);assert.equal((await readerPage({},now)).total,baseline);
+  assert.equal((await readerPage({},now)).categories.reduce((n,c)=>n+c.count,0),baseline);
+  await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot bypass current material rejection"},"fixture-admin"),/material observation review is rejected/);
+  await review(f.id,{revision:2,sourceRevision:1,decision:"approved",applicabilityReviewed:false,note:"Synthetic latest current review replaces rejection"},"fixture-admin");
+  assert.deepEqual((await readerPage({},now)).categories,categoriesBefore);
+  // A historic-version rejection is not a rejection of the current observation.
+  await sql`INSERT INTO fishery_reviews(document_id,revision,source_revision,decision,applicability_reviewed,note,actor) VALUES (${f.id},1,1,'rejected',false,'Synthetic historic review','fixture-admin')`;
+  assert.equal((await flowDetail(task.id)).materialRejected,false);assert.equal((await readerItem(f.id,now)).id,f.id);
   const serialized=JSON.stringify(one);for(const secret of ["INTERNAL_AUDIT_SENTINEL","PRIVATE_REVIEWER_SENTINEL","RAW_BODY_SENTINEL","promptVersion","receiptId","cost","rawSha256"]) assert.ok(!serialized.includes(secret));
   const receiptCount=(await sql`SELECT count(*)::integer AS n FROM receipts`)[0]!.n;
   config.devAdmin=null;assert.equal((await app.inject("/api/admin/fishery/reader")).statusCode,401);assert.equal((await app.inject(`/api/admin/fishery/reader/${f.id}`)).statusCode,401);

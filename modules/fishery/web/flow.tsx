@@ -18,7 +18,7 @@ function Timeline({value:t}:{value:FlowTimeline}) {
 export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
   const {run,busy}=useAdminAction(),fresh=useFreshMaterial();
   const [command,setCommand]=useState<{kind:"resume"|"regenerate"|"qualified"|"rejected";snapshotHash:string}|null>(null),[ack,setAck]=useState(false);
-  const base=`/api/admin/fishery/flows/${d.id}`,canDecide=d.authoritative&&!d.stale&&["needs_human_review","qualified","rejected"].includes(d.status),changed=command?.snapshotHash!==d.snapshotHash;
+  const base=`/api/admin/fishery/flows/${d.id}`,canDecide=d.authoritative&&!d.stale&&!d.materialRejected&&d.quality_review?.status==="needs_human_review"&&d.draft?.draft.relevance?.decision==="relevant"&&d.draft?.draft.summaryZh?.some(s=>s.sentence.trim())&&["needs_human_review","qualified","rejected"].includes(d.status),changed=command?.snapshotHash!==d.snapshotHash;
   const open=(kind:"resume"|"regenerate"|"qualified"|"rejected")=>{setAck(false);setCommand({kind,snapshotHash:d.snapshotHash});};
   return <AdminPage title="内部文章审核" subtitle={<Link className="text-accent" to={`/admin/fishery/${d.document_id}`}>← 返回原文与素材证据</Link>} actions={<Button busy={fresh.state==="loading"} onClick={()=>fresh.revalidate()}>重新核对</Button>}>
     <div className="mb-5 flex flex-wrap gap-2"><Badge>{FLOW_STATES[d.status]??d.status}</Badge><Badge>阶段 {d.stage}</Badge><Badge>仅内部 · 未公开发布</Badge>{!d.authoritative&&<Badge>历史任务，已有更新任务</Badge>}</div>
