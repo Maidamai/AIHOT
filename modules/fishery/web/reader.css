@@ -1,6 +1,6 @@
 .fishery-reader { min-height:100dvh; background:var(--bg); color:var(--ink); font-family:var(--font-sans); }
 .fishery-reader a { text-underline-offset:4px; }
-.fishery-reader a:focus-visible { outline:2px solid #159f9a; outline-offset:5px; border-radius:3px; }
+.fishery-reader a:focus-visible { outline:2px solid #159f9a; outline-offset:5px; border-radius:var(--radius-mark); }
 .reader-skip { position:fixed; top:-80px; left:16px; z-index:100; padding:10px 16px; background:var(--surface); color:var(--ink); }
 .reader-skip:focus { top:12px; }
 .reader-masthead { background:#112e45; color:#e7f1f4; border-bottom:3px solid #4bada9; }
@@ -54,7 +54,7 @@
 .reader-section-heading>span { color:var(--ink-3); font-size:10px; }
 .reader-evidence-group { margin-bottom:28px; }
 .reader-evidence-group h3 { font-size:11px; color:var(--ink-3); margin-bottom:12px; }
-.reader-quote { border-left:2px solid #6aaead; padding:14px 18px; margin-bottom:13px; background:var(--bg-sunk); border-radius:0 var(--radius-control) var(--radius-control) 0; }
+.reader-quote { border-left:2px solid #6aaead; padding:14px 18px; margin-bottom:13px; background:var(--bg-sunk); border-top-left-radius:0; border-top-right-radius:var(--radius-control); border-bottom-right-radius:var(--radius-control); border-bottom-left-radius:0; }
 .reader-quote blockquote { font-family:Georgia,"Noto Serif SC",serif; color:var(--ink-2); font-size:14px; line-height:1.9; white-space:pre-wrap; overflow-wrap:anywhere; }
 .reader-quote figcaption { margin-top:12px; color:#277b7d; font-size:11px; }
 .reader-source-panel { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card); padding:22px; align-self:start; }
