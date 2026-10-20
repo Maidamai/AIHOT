@@ -114,7 +114,7 @@ export async function listDocuments() {
 export function evidenceIdentity(input: unknown) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const capture = payload.sourceCapture;
-  if (capture) { const { capturedAt: _time, archiveId: _archive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
+  if (capture) { const { capturedAt: _time, attachmentCapturedAt: _attachmentTime, archiveId: _archive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
   return hash(payload);
 }
 export async function importCapturedMaterial(column: { id: string; name: string; issuer: string }, canonicalUrl: string, input: unknown, actor: string) {

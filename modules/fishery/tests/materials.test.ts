@@ -87,6 +87,42 @@ test("captured imports are unreviewed, unchanged captures deduplicate and A→B�
   config.devAdmin=null;
 });
 
+test("PDF reacquisition times preserve imported approval and qualified flow while evidence changes invalidate them",async()=>{
+  const column={id:"synthetic-pdf-capture-time",name:"Synthetic PDF column",issuer:"Synthetic source attribution"};
+  const fact="合成公海远洋渔业事实。",body=`--- Page 1 ---\n${fact}`;
+  const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p2s1"];
+  const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==="fishery_draft"?{
+    relevance:{decision:"relevant",reason:"Synthetic source evidence",evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[],
+  }:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic original sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevance evidence",evidence}]}),receiptId:999999,model:"mock",reused:false,usage:null});
+  const variants=["times","html","pdf","body","parser"] as const;
+  for(const variant of variants) {
+    const url=`https://example.org/pdf-capture-${variant}`,initial={...observationFixture,rawSha256:sha256("original HTML"),sourceCapture:{acquisitionMode:"live_capture",adapter:"iotc",sourceUrl:url,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:sha256("original HTML"),bodySha256:sha256(body),parser:"synthetic-pdf/v1",parseStatus:"parsed",attachmentSha256:sha256("original PDF"),attachmentUrl:"https://example.org/measure.pdf",attachmentHttpStatus:200,attachmentCapturedAt:"2026-10-20T00:00:01Z",attachmentPages:1,conflicts:[]}};
+    const imported=await importCapturedMaterial(column,url,initial,"tester");
+    await upsertMaterial({sourceId:`fishery-column-${column.id}`,url,title:"Synthetic PDF source",bodyText:body,bodyStatus:"ok",via:"offline-fixture",raw:{fisheryDocumentId:imported.id}});
+    await approve(imported.id);
+    const task=await createFlow(imported.id,{identity:`capture-time-${variant}`},"tester"),checked=await runFlow(task.id,invoke);
+    assert.equal(checked.status,"needs_human_review");
+    await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic snapshot qualification"},"reviewer");
+    assert.ok((await flowDetail(task.id)).internalArticle);
+    const recaptured={...initial,sourceCapture:{...initial.sourceCapture,capturedAt:"2026-10-21T00:00:00Z",attachmentCapturedAt:"2026-10-21T00:00:01Z"}};
+    const duplicate=await importCapturedMaterial(column,url,recaptured,"tester");
+    assert.equal(duplicate.unchanged,true,variant);assert.equal(duplicate.revision,1,variant);
+    assert.equal((await materialDetail(imported.id)).state,"approved");
+    const stillQualified=await flowDetail(task.id);assert.equal(stillQualified.stale,false);assert.equal(stillQualified.status,"qualified");assert.ok(stillQualified.internalArticle);
+    const history=await documentHistory(imported.id);assert.equal(history.observations.length,1);assert.equal(history.observations[0]!.payload.sourceCapture.capturedAt,initial.sourceCapture.capturedAt);assert.equal(history.observations[0]!.payload.sourceCapture.attachmentCapturedAt,initial.sourceCapture.attachmentCapturedAt);
+    assert.equal(recaptured.sourceCapture.attachmentCapturedAt,"2026-10-21T00:00:01Z","The new acquisition record is not rewritten");
+    if(variant==="times") continue;
+    const changed=structuredClone(recaptured);
+    if(variant==="html") changed.rawSha256=changed.sourceCapture.rawSha256=sha256("changed HTML");
+    if(variant==="pdf") changed.sourceCapture.attachmentSha256=sha256("changed PDF");
+    if(variant==="body") changed.sourceCapture.bodySha256=sha256(`--- Page 1 ---\n${fact}原文变化。`);
+    if(variant==="parser") changed.sourceCapture.parser="synthetic-pdf/v2";
+    const updated=await importCapturedMaterial(column,url,changed,"tester");
+    assert.equal(updated.unchanged,false,variant);assert.equal(updated.revision,2,variant);assert.equal((await materialDetail(imported.id)).state,"stale");
+    const stale=await flowDetail(task.id);assert.equal(stale.stale,true,variant);assert.equal(stale.internalArticle,null,variant);
+  }
+});
+
 test("column attribution never becomes a page publisher or policy issuer in main records and exports", async () => {
   // Offline counterexample: column owner, page source and joint policy issuers are distinct roles.
   const column = { id: "synthetic-attribution", name: "渔业渔政管理局栏目", issuer: "农业农村部渔业渔政管理局" };
