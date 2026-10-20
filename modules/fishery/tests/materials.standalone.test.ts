@@ -4,7 +4,7 @@ import { prepareOfficial, sha256, type ArchiveReceipt } from "../backend/source-
 import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
 import { observationFixture, sourceFixture, unknownDate } from "./fixtures.ts";
-import { extractPdf } from "../backend/pdf-text.ts";
+import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
 import { readFile, access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -419,7 +419,7 @@ test("PDF commands read a private snapshot and retain byte hash and page evidenc
     if (args[0] === "-v") return { stdout: "", stderr: `${program} version 25.03.0\n` };
     snapshot = args.find(a => a.endsWith("original.pdf"))!;
     original.fill(0); assert.deepEqual(await readFile(snapshot), expected);
-    return { stdout: program === "pdfinfo" ? "Pages: 2\nEncrypted: no\n" : "Verified synthetic page\n", stderr: "" };
+    return { stdout: program === "pdfinfo" ? "Pages: 2\nEncrypted: no\n" : program === "pdftohtml" ? '<pdf2xml><fontspec id="0" size="12"/>'+[1,2].map(page=>`<page number="${page}" width="600" height="800"><text top="50" left="50" width="100" height="12" font="0">Verified synthetic page</text></page>`).join("")+'</pdf2xml>' : "Verified synthetic page\n", stderr: "" };
   } });
   assert.equal(parsed.status, "parsed"); assert.equal(parsed.rawSha256, sha256(expected)); assert.equal(parsed.pages, 2);
   assert.match(parsed.text, /--- Page 2 ---/); assert.match(parsed.parser, /Poppler 25.03.0/);
@@ -671,4 +671,60 @@ test("server-selected manual revision supports twelve IDs while generation stays
   const review=buildFisheryReviewRequest(input,manual.draft,"mock",{mode:"manual_revision"});
   assert.equal(review.schema.safeParse({decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic binding only",evidence:ids.slice(0,12)}]}).success,true);
   assert.equal(review.schema.safeParse({decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic forbidden extra",evidence:[ids[12]]}]}).success,false);
+});
+
+async function structuredIotcFixture() {
+  const {fixture,input}=await iotcEntry9Fixture(),xml=await readFile(new URL("./fixtures/iotc-20261020-poppler-structure.xml",import.meta.url),"utf8"),mapped=mapPdfFootnotes(input.body,xml,6);
+  const markers=[...mapped.text.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
+  const current={...input,observationRevision:2,body:mapped.text,bodySha256:sha256(mapped.text),pages:markers.map((m,i)=>({page:i+1,text:mapped.text.slice(m.index!+m[0].length,markers[i+1]?.index??mapped.text.length).trim()}))};
+  return {fixture,input,xml,mapped,current};
+}
+
+test("structured Poppler superscripts preserve complete footnotes and map exact original/new offsets",async()=>{
+  const {input,xml,mapped,current}=await structuredIotcFixture();
+  assert.equal(current.bodySha256,"895f837dcf65fb9bea811968430a5052a474ec06819e624a798cf920dc54bef8");
+  assert.equal(mapped.textEvidence.transformations.length,2);assert.equal(mapped.textEvidence.layoutSha256,input.bodySha256);assert.equal(mapped.textEvidence.structureSha256,sha256(xml));assert.equal(mapped.textEvidence.textSha256,current.bodySha256);
+  assert.match(mapped.text,/1 January 2028\[1\]/);assert.match(input.body,/1 January 20281/);assert.match(mapped.text,/For Indonesia, paragraph 9 shall apply as of 1 January 2030\./);
+  let restored=mapped.text;
+  for(const t of [...mapped.textEvidence.transformations].reverse()) {
+    assert.equal(input.body.slice(t.sourceStart,t.sourceEnd),t.sourceText);assert.equal(mapped.text.slice(t.outputStart,t.outputEnd),t.replacement);assert.ok(mapped.text.includes(t.footnoteText));
+    assert.ok(t.reference.fontSize<t.base.fontSize);assert.ok(t.reference.top+t.reference.height<t.base.top+t.base.height);
+    restored=restored.slice(0,t.outputStart)+t.sourceText+restored.slice(t.outputEnd);
+  }
+  assert.equal(restored,input.body,"Every other original byte/space/line is retained");
+  assert.equal(mapped.textEvidence.transformations[1]!.footnoteLines.length,2);assert.match(mapped.textEvidence.transformations[1]!.footnoteText,/pp\. 136–138/);
+  const plain="--- Page 1 ---\n整数20281。",plainXml='<pdf2xml><fontspec id="0" size="12"/><page number="1" width="600" height="800"><text top="50" left="50" width="120" height="12" font="0">整数20281。</text></page></pdf2xml>';
+  assert.equal(mapPdfFootnotes(plain,plainXml,1).text,plain);assert.deepEqual(mapPdfFootnotes(plain,plainXml,1).textEvidence.transformations,[]);
+  assert.throws(()=>mapPdfFootnotes(input.body.replace("times as of 1 January 20281:","times as of 1 January 20281: times as of 1 January 20281:"),xml,6),/not unique/);
+  assert.throws(()=>mapPdfFootnotes(input.body,xml.replace('> For Indonesia, paragraph 9 shall apply as of 1 January 2030. </text>', '> </text>'),6),/unique same-page footnote/);
+  const unchanged=mapPdfFootnotes(input.body,xml.replace('id="10" size="10"','id="10" size="17"'),6);
+  assert.equal(unchanged.text,input.body,"Equal-size runs do not prove superscript separation");
+  const sizes=assertFisheryPairFits(current);assert.ok(sizes.generationBytes<96000);assert.ok(sizes.reviewEnvelopeBytes<96000);
+});
+
+test("PDF transformation proof survives adapter, manifest JSON and strict observation schema",async()=>{
+  const {mapped}=await structuredIotcFixture(),pdf=syntheticPdf();
+  const raw=Buffer.from(ioHtml("Active").toString().replaceAll("26/01","26/03").replace(/Entry into force pending[^<]+/,"Synthetic active metadata; applicability unknown."));
+  const parsed={...pdf.parsed,text:mapped.text,pages:6,parser:"Poppler 25.03.0/25.03.0/25.03.0; footnotes/v2",textEvidence:mapped.textEvidence};
+  const result=prepareOfficial("iotc",receipt(raw,ioUrl),raw,{...pdf,parsed},"archive_replay");
+  assert.equal(result.readyForReview,true,result.sourceCapture.conflicts.join("; "));assert.deepEqual(result.sourceCapture.pdfTextEvidence,mapped.textEvidence);
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-pdf-proof-"));
+  try {
+    const {body:_,...prepared}=result;
+    await writeFile(path.join(dataDir,"manifest.json"),JSON.stringify({prepared}));
+    const archived=JSON.parse(await readFile(path.join(dataDir,"manifest.json"),"utf8"));
+    const observation=observationSchema.parse({...observationFixture,sourceCapture:archived.prepared.sourceCapture,rawSha256:result.sourceCapture.rawSha256,dates:result.dates,policyContext:result.policyContext});
+    assert.deepEqual(observation.sourceCapture!.pdfTextEvidence,mapped.textEvidence);assert.equal(observation.sourceCapture!.bodySha256,mapped.textEvidence.textSha256);
+    const wrong=prepareOfficial("iotc",receipt(raw,ioUrl),raw,{...pdf,parsed:{...parsed,text:parsed.text+"changed"}},"archive_replay");
+    assert.equal(wrong.readyForReview,false);assert.match(wrong.sourceCapture.conflicts.join(";"),/different parsed body/);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("original IOTC entry10 stays rejected and an ambiguous 20281 source cannot authorize 2028 translation",async()=>{
+  const {input,current}=await structuredIotcFixture(),fixture=JSON.parse(await readFile(new URL("./fixtures/ai-iotc-entry10-20261020.json",import.meta.url),"utf8")),original=JSON.stringify(fixture),wire=JSON.parse(fixture.rawContent),manual={mode:"manual_revision" as const};
+  // Test-only use of the wider manual parser isolates the old output's semantic failures; it never rewrites or accepts that receipt as a manual revision.
+  for(const source of [input,current]) assert.throws(()=>validateFisheryDraft(source,fisheryDraftWireSchema(buildEvidenceCatalog(source),manual).parse(wire),manual),/Actual fishing area/);
+  const counterfactual=structuredClone(wire);counterfactual.locations=counterfactual.locations.filter((location:any)=>location.role!=="fishing_area");
+  assert.throws(()=>validateFisheryDraft(input,fisheryDraftWireSchema(buildEvidenceCatalog(input),manual).parse(counterfactual),manual),/Calendar date/);
+  assert.equal(JSON.stringify(fixture),original);
 });

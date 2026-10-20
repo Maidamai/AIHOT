@@ -5,7 +5,7 @@ import { z } from "zod";
 import { beijingDate } from "@aihot/contracts/time";
 import { readable } from "@aihot/backend/content/extract";
 import { readPublicationDate } from "@aihot/backend/sources/dates";
-import { captureSchema, dateSchema, linkSchema, policyContextSchema } from "../contracts.ts";
+import { captureSchema, dateSchema, linkSchema, policyContextSchema, pdfTextEvidenceSchema } from "../contracts.ts";
 
 export const archiveReceiptSchema = z.object({
   requestedUrl: linkSchema, finalUrl: linkSchema, status: z.int().min(100).max(599),
@@ -13,7 +13,7 @@ export const archiveReceiptSchema = z.object({
 });
 export type ArchiveReceipt = z.infer<typeof archiveReceiptSchema>;
 export type Adapter = "jinjiang" | "iotc" | "fuzhou";
-export type PdfText = { status: "parsed" | "missing" | "failed" | "unverified"; rawSha256: string; parser: string; text: string; pages: number; error?: string };
+export type PdfText = { status: "parsed" | "missing" | "failed" | "unverified"; rawSha256: string; parser: string; text: string; pages: number; error?: string; textEvidence?:z.infer<typeof pdfTextEvidenceSchema> };
 const unknown = () => ({ precision: "unknown" as const, value: null });
 export const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -97,6 +97,7 @@ export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pd
           conflicts.push(...receiptProblems("iotc", pr, pdf.bytes));
           if (!link || link !== pr.requestedUrl || link !== pr.finalUrl) conflicts.push("PDF receipt does not match the measure attachment link");
           if (pdf.parsed.rawSha256 !== attachmentSha256) conflicts.push("Parsed PDF refers to different original bytes");
+          if(pdf.parsed.textEvidence&&pdf.parsed.textEvidence.textSha256!==sha256(pdf.parsed.text)) conflicts.push("PDF transformation evidence refers to a different parsed body");
           parseStatus = pr.status === 200 ? pdf.parsed.status : "failed";
           if (parseStatus === "parsed" && (!pdf.bytes.subarray(0, 5).equals(Buffer.from("%PDF-")) || !pdf.parsed.text.trim() || pdf.parsed.pages < 1)) parseStatus = "failed";
           if (parseStatus === "parsed") {
@@ -121,7 +122,7 @@ export function prepareOfficial(source: Adapter, input: unknown, raw: Buffer, pd
   } else if (raw.length > 6 * 1024 * 1024) { parseStatus = "unverified"; warnings.push("HTML exceeds offline size limit"); }
   if (conflicts.length) parseStatus = "unverified";
   const capture = captureSchema.parse({ adapter: source, sourceUrl: receipt.finalUrl, capturedAt: receipt.finishedAt, httpStatus: receipt.status,
-    acquisitionMode, rawSha256: sha256(raw), bodySha256: body ? sha256(body) : null, parser, parseStatus, attachmentSha256, attachmentUrl, attachmentHttpStatus, attachmentCapturedAt, attachmentPages, conflicts, publishedAt, publicationLiteral });
+    acquisitionMode, rawSha256: sha256(raw), bodySha256: body ? sha256(body) : null, parser, parseStatus, attachmentSha256, attachmentUrl, attachmentHttpStatus, attachmentCapturedAt, attachmentPages, conflicts, publishedAt, publicationLiteral, ...(source === "iotc" && pdf?.parsed.textEvidence ? {pdfTextEvidence:pdf.parsed.textEvidence} : {}) });
   const readyForReview = parseStatus === "parsed" && conflicts.length === 0 && !!body && !!title;
   return { schemaVersion: "fishery-offline-capture/0.1", source, readyForReview, reviewState: "awaiting_human_review", title,
     dates: { published, adopted, effectiveFrom: unknown(), effectiveUntil: unknown() }, policyContext: context,

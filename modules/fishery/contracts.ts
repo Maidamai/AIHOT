@@ -52,12 +52,18 @@ export const policyContextSchema = z.strictObject({
   nonApplicationMentioned: z.array(text.max(100)).max(20),
   provisionYears: z.array(z.int().min(1900).max(2199)).max(20),
 });
+const pdfTextNodeSchema=z.strictObject({text:z.string().max(1200),fontSize:z.number().positive(),top:z.number().finite(),left:z.number().finite(),width:z.number().nonnegative(),height:z.number().positive()});
+export const pdfTextEvidenceSchema=z.strictObject({
+  version:z.literal("pdf-footnotes/v1"),layoutSha256:z.string().regex(/^[a-f0-9]{64}$/),structureSha256:z.string().regex(/^[a-f0-9]{64}$/),textSha256:z.string().regex(/^[a-f0-9]{64}$/),
+  transformations:z.array(z.strictObject({page:z.int().positive(),marker:z.string().regex(/^\d{1,3}$/),sourceStart:z.int().nonnegative(),sourceEnd:z.int().positive(),outputStart:z.int().nonnegative(),outputEnd:z.int().positive(),sourceText:z.string().min(1).max(3),replacement:z.string().min(3).max(5),base:pdfTextNodeSchema,reference:pdfTextNodeSchema,footnote:pdfTextNodeSchema,footnoteLines:z.array(pdfTextNodeSchema).min(1).max(20),footnoteText:z.string().min(1).max(1200)})).max(128),
+});
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
   adapter: z.enum(["jinjiang", "iotc", "fuzhou", "moa", "fujian"]), sourceUrl: linkSchema, capturedAt: instant,
   archiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
   bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  pdfTextEvidence:pdfTextEvidenceSchema.optional(),
   parser: text.max(100), parseStatus: z.enum(["parsed", "missing", "failed", "unverified"]),
   attachmentSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   attachmentUrl: linkSchema.nullable().default(null), attachmentHttpStatus: z.int().min(100).max(599).nullable().default(null),

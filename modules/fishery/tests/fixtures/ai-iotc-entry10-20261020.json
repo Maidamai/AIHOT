@@ -1,0 +1,18 @@
+{
+  "description": "Original cumulative entry10 / production receipt2 v5.3 public content. Retained unchanged: wrong fishing_area, ambiguous 20281 source, and missing equipment qualifications. Test-only counterfactuals are never saved as model success.",
+  "cumulativeEntry": 10,
+  "productionReceiptId": 2,
+  "bodyFixture": "ai-iotc-entry9-20261020.json",
+  "model": "deepseek-flash",
+  "usage": {
+    "total_tokens": 19177,
+    "prompt_tokens": 18581,
+    "completion_tokens": 596,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 18581
+  },
+  "rawContent": "{\"relevance\":{\"decision\":\"relevant\",\"reason\":\"该文件为印度洋金枪鱼委员会（IOTC）关于在IOTC管理渔业中兼捕蝠鲼类保护措施的决议，涉及公海及IOTC管辖海域渔业管理，具有明确国际渔业履约证据。\",\"evidence\":[\"p2s1\",\"p3s1\",\"p4s1\",\"p17s1\",\"p18s1\"]},\"summaryZh\":[{\"sentence\":\"该决议要求缔约方和合作非缔约方禁止其悬挂本国旗帜的渔船在IOTC管辖海域内故意布设渔具以定向捕捞蝠鲼类。\",\"evidence\":[\"p59s1\",\"p60s1\",\"p56s1\",\"p57s1\"]},{\"sentence\":\"该决议要求缔约方和合作非缔约方确保其悬挂本国旗帜的围网渔船自2028年1月1日起在船上配备并使用蝠鲼分拣栅、担架、货网或帆布吊兜及大绑带等释放设备。\",\"evidence\":[\"p89s1\",\"p90s1\",\"p91s1\",\"p95s1\"]}],\"dates\":{\"published\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]},\"event\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]},\"adopted\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]},\"effective\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]},\"objectionDeadline\":{\"date\":{\"precision\":\"unknown\",\"value\":null},\"evidence\":[]}},\"entryIntoForce\":{\"value\":\"unknown\",\"evidence\":[]},\"eventStatus\":{\"value\":\"unknown\",\"evidence\":[]},\"validityStatus\":\"unknown\",\"organizations\":[{\"role\":\"policy_issuer\",\"value\":\"Indian Ocean Tuna Commission (IOTC)\",\"evidence\":[\"p6s1\"]}],\"locations\":[{\"role\":\"policy_scope\",\"value\":\"IOTC Area of Competence\",\"evidence\":[\"p46s1\",\"p56s1\",\"p57s1\"]},{\"role\":\"fishing_area\",\"value\":\"the high seas\",\"evidence\":[\"p17s1\",\"p18s1\"]}],\"uncertainties\":[\"正文未提供网页发布日期元数据，published为unknown。\",\"正文未明确决议通过的具体日期，adopted为unknown。\",\"正文未明确决议生效日期，effective为unknown。\",\"正文未明确异议截止日期，objectionDeadline为unknown。\",\"正文未明确事件日期，event为unknown。\",\"第9段对印度尼西亚适用日期为2030年1月1日，属特定例外，未作为通用生效日。\",\"正文提及‘the high seas’为关切渔业影响范围，非明确具体船队实际作业海域，fishing_area标注需人工核对。\"]}"
+}
