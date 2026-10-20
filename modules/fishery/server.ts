@@ -12,6 +12,8 @@ import { importBatch } from "./backend/import-batch.ts";
 
 import { createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
 
+import { readerPage, readerItem, READER_CATEGORIES } from "./backend/reader.ts";
+
 const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin) => {
   try { return await handler(req, reply, admin); }
   catch (error) {
@@ -24,6 +26,8 @@ const param = (req: { params: unknown }) => idSchema.parse((req.params as Record
 export default defineServerModule({
   name: "fishery", sourceHealth, queues:[flowQueue],
   http(app) {
+    app.get("/api/admin/fishery/reader", guarded(async req=>readerPage(z.strictObject({category:z.enum(Object.keys(READER_CATEGORIES) as [keyof typeof READER_CATEGORIES,...(keyof typeof READER_CATEGORIES)[]]).optional(),page:z.coerce.number().int().positive().max(100000).optional()}).parse(req.query))));
+    app.get("/api/admin/fishery/reader/:id", guarded(async req=>readerItem(param(req))));
     app.get("/api/admin/fishery/documents/:id/flows", guarded(async req=>({rows:await listFlows(param(req))})));
     app.post("/api/admin/fishery/documents/:id/flows", guarded(async(req,reply,admin)=>reply.code(201).send(await createFlow(param(req),req.body,admin.name))));
     app.get("/api/admin/fishery/flows/:id", guarded(async req=>flowDetail(param(req))));

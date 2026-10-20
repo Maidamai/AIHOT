@@ -115,3 +115,9 @@ v5.2规则将reported_occurred的否定范围跨过“正式/如期/按期”等
 素材 JSON 导出 `fishery-material/0.3` 在 `source` 中保留旧 `issuer`，并附上相同的明确归属字段与兼容语义。`source.pagePublisher: null`、`policy.issuers: null` 表示主记录未核验；正文提及机关、网页来源、栏目所属机构均不自动赋值。Markdown 分别标明刊载来源、来源归属及未知的发布/发文机关。AI 草稿中带证据的机构角色仍在草稿里单独审核，不自动回填主记录。
 
 此变更不迁移或删除既有机构文本，不更改来源许可、审核或导出资格。
+
+## 登录行业阅读投影
+
+`GET /api/admin/fishery/reader`（可选category/page）及`/:documentId`复用正常管理员只读鉴权，无需GET伪加CSRF。唯一eligibleReaderItems集合同时决定列表、详情与非零分类计数：真实非测试、文书未撤回、最新权威任务、当前正文/观察/权利及prompt快照有效、关联article仍available、relevant且非空摘要、隔离核查及人工内部qualified。最新pending/rejected不会回退旧qualified。
+
+DTO仅有经当前人工快照绑定的原观察标题、短摘要/原文短引、来源安全链接、原始日期精度、原文年龄与核对标签。没有完整私有正文、审核note/actor、prompt/receipt/key/cost。版权unknown仍可内部阅读，不放宽公开或全文导出；所有读取不生成任务或模型调用。分类是对实际可读资料的规则分组，只返回非零类，不显示不存在的来源/文章统计。合成DB门禁测试不算真实业务稿件验收。

@@ -39,3 +39,14 @@ export interface FlowView {
   error:{stage:string;phase?:string;reason:string;receiptId:number|null}|null;
   internalArticle:{summaryZh:{sentence:string}[];qualifiedBy:string;timeline:FlowTimeline}|null;
 }
+
+export type ReaderCategoryId="policy"|"safety"|"market"|"research"|"equipment"|"operations"|"reference";
+export interface ReaderCategory { id:ReaderCategoryId;label:string;count:number; }
+export interface FisheryReaderItem {
+  id:string;title:string;source:{name:string;url:string};category:{id:ReaderCategoryId;label:string};
+  summary:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null;url:string}[]}[];
+  dates:{published:{precision:"unknown"|"year"|"month"|"day";value:string|null};event:{precision:"unknown"|"year"|"month"|"day";value:string|null}};
+  age:{referenceDate:string;days:number|null;historical:boolean;label:string};
+  verification:{status:"internally_qualified";label:string;legalApplicability:string};
+}
+export interface FisheryReaderPage { rows:FisheryReaderItem[];categories:ReaderCategory[];total:number;filteredTotal:number;page:number;limit:number;selectedCategory:ReaderCategoryId|null;internalOnly:true;referenceDate:string; }

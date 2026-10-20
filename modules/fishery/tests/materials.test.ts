@@ -26,6 +26,8 @@ import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { authorizationKey } from "../backend/authorization.ts";
 import { TRIAL } from "../backend/trial-transport.ts";
 
+import { readerPage, readerItem } from "../backend/reader.ts";
+
 installModules([fishery]);
 const app = await buildApp();
 let count = 0;
@@ -602,4 +604,37 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     config.modelCallsEnabled=enabled;envKeys.forEach((k,i)=>{if(oldEnv[i]===undefined) delete process.env[k];else process.env[k]=oldEnv[i];});globalThis.fetch=previousFetch;
     await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
   }
+});
+
+
+test("private reader projects only the current real qualified set and never exposes audit data or charges on reads",async()=>{
+  const baseline=(await readerPage({},now)).total;
+  const f=await fixture({unknownRights:true}),quote="合成验收：远洋捕捞配额10吨，仅用于接口门禁测试。",body=quote+"\nRAW_BODY_SENTINEL_NOT_FOR_READER";
+  await observe(f.id,{...observationFixture,expectedRevision:1,title:"[合成接口验收，非真实资料] 远洋捕捞配额资料",sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-reader/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+  const material=await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/private-reader-${f.id}`,title:"SYNTHETIC FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+  const task=await createFlow(f.id,{identity:"reader-synthetic-contract"},"fixture-admin"),evidence=["p1s1"],date={date:{precision:"unknown",value:null},evidence:[]};let calls=0;
+  const invoke=async(options:any)=>{calls++;const output=options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"公海远洋政策合成样例",evidence},summaryZh:[{sentence:quote,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",uncertainties:[]}: {decision:"supported",coverage:"complete_input",findings:JSON.parse(options.user).claims.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic contract verification only",evidence:c.evidenceIds}))};return {data:options.schema.parse(output),receiptId:999999,model:"mock",reused:false,usage:null};};
+  const checked=await runFlow(task.id,invoke);assert.equal(checked.status,"needs_human_review",JSON.stringify(checked.error));
+  await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"INTERNAL_AUDIT_SENTINEL_DO_NOT_PROJECT"},"PRIVATE_REVIEWER_SENTINEL");
+  const [original]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${task.id}`;
+  const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"policy");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
+  assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"policy"},now)).rows.some(r=>r.id===f.id));
+  const serialized=JSON.stringify(one);for(const secret of ["INTERNAL_AUDIT_SENTINEL","PRIVATE_REVIEWER_SENTINEL","RAW_BODY_SENTINEL","promptVersion","receiptId","cost","rawSha256"]) assert.ok(!serialized.includes(secret));
+  const receiptCount=(await sql`SELECT count(*)::integer AS n FROM receipts`)[0]!.n;
+  config.devAdmin=null;assert.equal((await app.inject("/api/admin/fishery/reader")).statusCode,401);assert.equal((await app.inject(`/api/admin/fishery/reader/${f.id}`)).statusCode,401);
+  config.devAdmin={displayName:"Synthetic reader gate tester"};
+  try {const response=await app.inject("/api/admin/fishery/reader");assert.equal(response.statusCode,200,response.body);assert.match(response.headers["cache-control"]!,/no-store/);assert.equal((await app.inject(`/api/admin/fishery/reader/${f.id}`)).statusCode,200);}finally{config.devAdmin=null;}
+  assert.equal(calls,2);assert.equal((await sql`SELECT count(*)::integer AS n FROM receipts`)[0]!.n,receiptCount);
+  async function absent(){assert.equal((await readerPage({},now)).rows.some(r=>r.id===f.id),false);await assert.rejects(readerItem(f.id,now),/No current/);}
+  for(const decision of ["unknown","irrelevant"]) {const draft=structuredClone(original.draft);draft.draft.relevance.decision=decision;await sql`UPDATE fishery_flow_tasks SET draft=${sql.json(draft)} WHERE id=${task.id}`;await absent();}
+  const empty=structuredClone(original.draft);empty.draft.summaryZh=[];await sql`UPDATE fishery_flow_tasks SET draft=${sql.json(empty)} WHERE id=${task.id}`;await absent();
+  await sql`UPDATE fishery_flow_tasks SET draft=${sql.json(original.draft)} WHERE id=${task.id}`;
+  const [source]=await sql`SELECT profile FROM fishery_sources WHERE source_id=${f.sourceId}`,testProfile={...source.profile,attribution:"ISOLATED TEST FIXTURE reader clone"},testSnapshot={...original.snapshot,sourceProfileHash:hash(testProfile)},testHuman={...original.human_decision,snapshotHash:hash(testSnapshot)};
+  await sql`UPDATE fishery_sources SET profile=${sql.json(testProfile)} WHERE source_id=${f.sourceId}`;await sql`UPDATE fishery_flow_tasks SET snapshot=${sql.json(testSnapshot)},human_decision=${sql.json(testHuman)} WHERE id=${task.id}`;assert.equal((await flowDetail(task.id)).stale,false);await absent();
+  await sql`UPDATE fishery_sources SET profile=${sql.json(source.profile)} WHERE source_id=${f.sourceId}`;await sql`UPDATE fishery_flow_tasks SET snapshot=${sql.json(original.snapshot)},human_decision=${sql.json(original.human_decision)} WHERE id=${task.id}`;
+  await sql`UPDATE fishery_documents SET article_id=${material.articleId} WHERE id=${f.id}`;await absent();await sql`UPDATE fishery_documents SET article_id=NULL WHERE id=${f.id}`;
+  await sql`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor) VALUES (${task.id+"-newer"},${f.id},'newer-reader-pending',${sql.json(original.snapshot)},'queued','generation','fixture-admin')`;await absent();
+  await sql`UPDATE fishery_flow_tasks SET status='rejected' WHERE id=${task.id+"-newer"}`;await absent();
+  await observe(f.id,{...observationFixture,expectedRevision:2,title:"合成新版本，旧稿失效"},"fixture-admin");await absent();
+  await withdraw(f.id,{expectedRevision:3,reason:"Synthetic withdrawal"},"fixture-admin");await absent();
 });
