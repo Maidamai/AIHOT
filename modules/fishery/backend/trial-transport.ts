@@ -20,7 +20,7 @@ export function trialCapacity(entries:{state:string;reservedMicroCny:number}[],r
   if(entries.some(e=>e.state!=="received")) throw new Error("Trial has pending, refused or unknown outcome; manual reconciliation required");
   if(entries.length+requiredCalls>TRIAL.maxRequests||entries.reduce((sum,e)=>sum+e.reservedMicroCny,0)+requiredCalls*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
 }
-export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
+export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null,responseModel?:string|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
   const previous=globalThis.fetch;
   globalThis.fetch=async(input,options)=>{
     const checked=validateTrialWire(input,options),id=await callbacks.reserve(checked.wireBytes);
@@ -28,10 +28,10 @@ export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Pro
     try {
       // A redirect must never cause a second billable POST or send original text to another host.
       const response=await transport(input,{...options,redirect:"error"});
-      const data=await response.clone().json() as {usage?:unknown};
+      const data=await response.clone().json() as {usage?:unknown;model?:unknown};
       if(!response.ok) {await callbacks.settle(id,"refused",null);settled=true;return response;}
       const usage=trialUsage(data.usage);
-      await callbacks.settle(id,"received",usage);settled=true;
+      await callbacks.settle(id,"received",usage,typeof data.model==="string"?data.model.slice(0,200):null);settled=true;
       return response;
     } catch(error) {if(!settled) await callbacks.settle(id,"unknown",null);throw error;}
   };

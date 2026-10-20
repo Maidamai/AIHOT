@@ -10,7 +10,7 @@ if(process.env.DATABASE_URL!=="postgres://fishery_trial@fishery-ai-trial-db:5432
 if(process.env.LLM_MODEL!==TRIAL.model||process.env.LLM_BASE_URL!=="https://api.deepseek.com"||process.env.LLM_REASONING_TOKENS!=="0"||process.env.LLM_EXTRA_JSON!=='{"thinking":{"type":"disabled"}}') throw new Error("Refuse model/endpoint/extra overrides");
 const {sql,closeDb}=await import("@aihot/backend/db");
 const key=`fishery.trial.${TRIAL.id}`;
-type Entry={id:number;state:"pending"|"received"|"refused"|"unknown";wireBytes:number;reservedMicroCny:number;usage?:ReturnType<typeof trialUsage>|null};
+type Entry={id:number;state:"pending"|"received"|"refused"|"unknown";wireBytes:number;reservedMicroCny:number;responseModel?:string|null;usage?:ReturnType<typeof trialUsage>|null};
 type Ledger={id:string;entries:Entry[];maxRequests:number;maxReservedMicroCny:number;verifiedVersion:string;verifiedAt:string};
 try {
   if(values.report) {
@@ -55,11 +55,11 @@ try {
         await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${key}`;
         return id;
       }),
-      settle:async(id,state,usage)=>sql.begin(async tx=>{
+      settle:async(id,state,usage,responseModel)=>sql.begin(async tx=>{
         const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key} FOR UPDATE`;
         const entry=row?.value.entries.find(e=>e.id===id);
         if(!row||!entry||entry.state!=="pending") throw new Error("Trial reservation mismatch");
-        entry.state=state;entry.usage=usage;
+        entry.state=state;entry.usage=usage;entry.responseModel=responseModel??null;
         await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${key}`;
       }),
     });

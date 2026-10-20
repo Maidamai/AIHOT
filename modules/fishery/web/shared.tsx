@@ -11,7 +11,7 @@ export function StateBadge({ row }: { row: Pick<MaterialRow, "state"> }) {
 }
 export function TrialNotice({ testOnly = false }: { testOnly?: boolean }) {
   return <div className="mb-5 rounded-card bg-amber/10 px-4 py-3 text-[13px] leading-relaxed text-ink-2 ring-1 ring-amber/25">
-    {testOnly ? <><strong>测试演练副本 · 合成许可与测试审批</strong><br />不可当作真实业务审核或转载授权。</> : <><strong>内部素材工作台</strong><br />真实素材与测试演练分开查看。此处不触发采集、模型或发布；隔离测试导出不代表正式业务批准。</>}
+    {testOnly ? <><strong>测试演练副本 · 合成许可与测试审批</strong><br />不可当作真实业务审核或转载授权。</> : <><strong>内部素材工作台</strong><br />真实素材与测试演练分开查看。打开页面不触发采集或模型；显式任务操作需后台受控处理，仍不自动发布。隔离测试导出不代表正式业务批准。</>}
   </div>;
 }
 export function useFreshMaterial() {

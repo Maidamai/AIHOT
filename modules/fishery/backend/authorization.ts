@@ -3,7 +3,7 @@
 import { sql } from "@aihot/backend/db";
 import { TRIAL, installTrialTransport, trialCapacity, type trialUsage } from "./trial-transport.ts";
 export const authorizationKey=`fishery.trial.${TRIAL.id}`;
-type Entry={id:number;state:"pending"|"received"|"refused"|"unknown";wireBytes:number;reservedMicroCny:number;usage?:ReturnType<typeof trialUsage>|null};
+type Entry={id:number;state:"pending"|"received"|"refused"|"unknown";wireBytes:number;reservedMicroCny:number;responseModel?:string|null;usage?:ReturnType<typeof trialUsage>|null};
 type Ledger={id:string;entries:Entry[];maxRequests:number;maxReservedMicroCny:number};
 export async function assertFisheryCapacity(requiredCalls=1) {
   const [row]=await sql<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${authorizationKey}`;
@@ -21,11 +21,11 @@ export async function withFisheryAuthorization<T>(run:()=>Promise<T>):Promise<T>
     trialCapacity(row.value.entries);
     const id=row.value.entries.length+1;row.value.entries.push({id,state:"pending",wireBytes,reservedMicroCny:TRIAL.reserveMicroCny});
     await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${authorizationKey}`;return id;
-  }),settle:async(id,state,usage)=>sql.begin(async tx=>{
+  }),settle:async(id,state,usage,responseModel)=>sql.begin(async tx=>{
     const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${authorizationKey} FOR UPDATE`;
     const entry=row?.value.entries.find(e=>e.id===id);
     if(!entry||entry.state!=="pending") throw new Error("Cumulative reservation mismatch");
-    entry.state=state;entry.usage=usage;
+    entry.state=state;entry.usage=usage;entry.responseModel=responseModel??null;
     await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${authorizationKey}`;
   })});
   try{return await run();}finally{restore();active=false;}

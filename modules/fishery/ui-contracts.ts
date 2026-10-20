@@ -20,3 +20,15 @@ export interface MaterialDetail extends MaterialRow {
   observations: MaterialObservation[]; reviews: MaterialReview[];
   text: { body: string; truncated: boolean; hashMatches: boolean; acquisitionMode: string | null } | null;
 }
+
+
+export const FLOW_STATES:Record<string,string>={queued:"待处理",running:"处理中",failed:"失败，待人工核对",needs_evidence:"待补证",needs_human_review:"待人工审核",qualified:"内部合格",rejected:"已拒绝"};
+export interface FlowView {
+  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;stale:boolean;staleReason:string|null;
+  generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
+  draft:{receiptId:number;promptVersion:string;model:string;draft:{summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
+  quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
+  human_decision:{decision:string;actor:string;at:string;note:string}|null;
+  error:{stage:string;reason:string;receiptId:number|null}|null;
+  internalArticle:{summaryZh:{sentence:string}[];qualifiedBy:string}|null;
+}
