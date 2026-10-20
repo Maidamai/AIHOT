@@ -1,0 +1,78 @@
+# Isolated trial only. No .env, persistent credentials, worker, seed, reverse proxy or public bind.
+name: fishery-pilot
+x-app: &app
+  image: fishery-pilot-app:linux-pdf-v1
+  restart: "no"
+  networks: [pilot]
+x-env: &env
+  NODE_ENV: test
+  AIHOT_ENVIRONMENT: test
+  AIHOT_CREDENTIALS_DIR: /nonexistent-test-credentials
+  AIHOT_DATA_DIR: /data
+  DATABASE_URL: postgres://fishery_test@fishery-db:5432/fishery_pilot_test
+  SITE_URL: http://127.0.0.1:39871
+  COLLECT_ENABLED: "false"
+  MODEL_CALLS_ENABLED: "false"
+  FEISHU_CONTENT_PUSH_ENABLED: "false"
+  FEISHU_INTERNAL_ENABLED: "false"
+  INDEXNOW_SUBMIT_ENABLED: "false"
+  LOG_LEVEL: error
+services:
+  fishery-db:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: fishery_test
+      POSTGRES_DB: fishery_pilot_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=60", "-c", "timezone=UTC"]
+    networks: [pilot]
+    volumes: ["db:/var/lib/postgresql/data"]
+    mem_limit: 384m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fishery_test -d fishery_pilot_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  setup:
+    <<: *app
+    environment: *env
+    command: ["node", "scripts/migrate.ts"]
+    mem_limit: 256m
+    depends_on:
+      fishery-db: { condition: service_healthy }
+  api:
+    <<: *app
+    build: { context: ../../.., dockerfile: modules/fishery/deploy/Dockerfile }
+    environment:
+      <<: *env
+      API_HOST: 0.0.0.0
+      API_PORT: "3001"
+      DEV_AUTH_ROLE: admin
+      DEV_AUTH_DISPLAY_NAME: ISOLATED SERVER TEST REVIEW ONLY
+    ports: ["127.0.0.1:39872:3001"]
+    volumes: ["data:/data"]
+    mem_limit: 512m
+    cpus: 0.75
+    depends_on:
+      setup: { condition: service_completed_successfully }
+  web:
+    <<: *app
+    environment:
+      NODE_ENV: test
+      SITE_URL: http://127.0.0.1:39871
+      API_BASE_URL: http://api:3001
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "3000"
+    command: ["node", "apps/web/server.ts"]
+    ports: ["127.0.0.1:39871:3000"]
+    mem_limit: 256m
+    cpus: 0.5
+    depends_on:
+      api: { condition: service_started }
+networks:
+  pilot: {}
+volumes:
+  db: {}
+  data: {}

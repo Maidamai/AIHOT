@@ -82,6 +82,22 @@ test("A→B→A and attachment-only replacements remain separate observations an
   assert.ok(materialMarkdown(last).includes("尚未经系统抓取字节验证"));
 });
 
+test("parser-only revisions invalidate prior approval despite identical original and body hashes", async () => {
+  const { id } = await fixture();
+  const capture = { adapter: "jinjiang", sourceUrl: "https://example.org/synthetic", capturedAt: "2026-10-20T00:00:00Z", httpStatus: 200,
+    rawSha256: observationFixture.rawSha256, bodySha256: "c".repeat(64), parser: "Synthetic parser/v1", parseStatus: "parsed",
+    attachmentSha256: null, conflicts: [] };
+  await observe(id, { ...observationFixture, expectedRevision: 1, sourceCapture: capture }, "tester");
+  await approve(id, 2); await exportMaterial(id, 2, "tester", now);
+  await observe(id, { ...observationFixture, expectedRevision: 2, sourceCapture: { ...capture, parser: "Synthetic parser/v2" } }, "tester");
+  await assert.rejects(exportMaterial(id, 2, "tester", now), /latest observation/);
+  await assert.rejects(exportMaterial(id, 3, "tester", now), /latest observation/);
+  const history = await documentHistory(id);
+  assert.equal(history.observations[1].payload.sourceCapture.bodySha256, history.observations[2].payload.sourceCapture.bodySha256);
+  assert.notEqual(history.observations[1].content_hash, history.observations[2].content_hash);
+  await approve(id, 3); await exportMaterial(id, 3, "tester", now);
+});
+
 test("current source rights and review deadlines apply to old and current revisions", async () => {
   const unknown = await fixture({ unknownRights: true });
   await approve(unknown.id);

@@ -59,7 +59,7 @@ DATABASE_URL=postgres://aihot_test@127.0.0.1:55437/fishery_mvp_test \
 
 IOTC保留Pending、异议截止、可见通过年份；不把隐藏的1月1日当精确通过日期。PDF和页面的文号、Pending及截止日须一致。捕捞限额条款年份单独记入policyContext.provisionYears，不搬到抓取当年。未核发布日期及effectiveFrom保持unknown，异议截止不是生效日；未映射状态保留unknown和警告。
 
-sourceCapture单列原件hash、获取状态/时间/URL、解析器、页数和正文hash。本机macOS使用现成Swift/PDFKit；其他平台或缺解析器时为unverified，不安装或静默转OCR/付费服务。获取失败、缺失/未核正文、字段冲突、PDF获取/解析不全会被附加导出门槛拒绝，人工批准也不能替代该门槛。原权利、当前版本审核、撤回、publication检查仍先执行。
+sourceCapture单列原件hash、获取状态/时间/URL、解析器、页数和正文hash。macOS使用系统Swift/PDFKit；Linux使用已安装的Poppler `pdfinfo`/`pdftotext`，专用试验镜像从Debian发行版安装并记录两者版本。缺解析器或不支持的平台为unverified，不静默安装或转OCR/付费服务。全部解析只读同一份私有字节快照：10MiB原件、200页、共享60秒、每次及累计文本4MiB上限；空白/扫描、加密、诊断、损坏和超限不会放行。获取失败、缺失/未核正文、字段冲突、PDF获取/解析不全会被附加导出门槛拒绝，人工批准也不能替代该门槛。原权利、当前版本审核、撤回、publication检查仍先执行。服务器隔离试验的边界与启停见[server-pilot.md](../../docs/fishery-center/server-pilot.md)。
 
 policyContext/sourceCapture为可选JSON元数据，旧手工观察兼容，无数据库迁移；私有素材导出版本为fishery-material/0.2，无新增公开出口。
 
@@ -77,6 +77,6 @@ node modules/fishery/scripts/prepare-official.ts --source iotc \
 
 `scripts/capture-official.ts`仅对固定来源发单次受SSRF保护的GET，保存实际响应或网络失败；IOTC页面/附件之间遵守10秒间隔，不自动写库或审核。当前本机保留地址解析触发防护，在线正文未取得；没有关闭防护或换传输绕过。
 
-`scripts/pilot-evidence.ts`仅允许`AIHOT_ENVIRONMENT=test`、本机`*_test`库和loopback HTTP API。它校验旧原件hash并离线解析，通过核心素材入口把成功正文和原始字节存入隔离库私有档案；模块API仍只接收元数据。真实许可保持unknown、主记录不审核。只有显式`--exercise-test-review`才对测试克隆使用合成许可和测试审核，验证导出、同URL字节替换、权利版本和撤回门槛；没有模型评分。
+`scripts/pilot-evidence.ts`仅允许`AIHOT_ENVIRONMENT=test`、本机或隔离Compose服务`fishery-db`的`*_test`库，以及loopback HTTP API。`--archives`校验旧原件hash并离线解析，`--live-captures`读取同次显式采集生成的收据；两者互斥，不把旧归档标为实时采集。通过核心素材入口把成功正文和原始字节存入隔离库私有档案，模块API仍只接收元数据。真实许可保持unknown、主记录不审核。只有显式`--exercise-test-review`才对测试克隆使用合成许可和测试审核，验证导出、同URL字节替换、解析器版本、权利版本和撤回门槛；没有模型评分。
 
 test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工业务批准或真实转载授权”标记，标记参与内容hash。失败原件即使测试批准仍不能导出。实际环境、命令和验收范围见[本机隔离试部署记录](../../docs/fishery-center/local-pilot.md)。
