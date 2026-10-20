@@ -1,0 +1,15 @@
+{
+  "name": "@aihot/fishery",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./module": "./module.ts",
+    "./server": "./server.ts"
+  },
+  "dependencies": {
+    "@aihot/backend": "*",
+    "@aihot/contracts": "*",
+    "@aihot/api": "*",
+    "zod": "4.6.5"
+  }
+}
