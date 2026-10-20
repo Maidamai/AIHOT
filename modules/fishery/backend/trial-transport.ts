@@ -20,10 +20,13 @@ export function trialCapacity(entries:{state:string;reservedMicroCny:number}[],r
   if(entries.some(e=>e.state!=="received")) throw new Error("Trial has pending, refused or unknown outcome; manual reconciliation required");
   if(entries.length+requiredCalls>TRIAL.maxRequests||entries.reduce((sum,e)=>sum+e.reservedMicroCny,0)+requiredCalls*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
 }
-export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null,responseModel?:string|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
+export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;beforeSend?:()=>Promise<void>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null,responseModel?:string|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
   const previous=globalThis.fetch;
   globalThis.fetch=async(input,options)=>{
     const checked=validateTrialWire(input,options),id=await callbacks.reserve(checked.wireBytes);
+    // This guard is deliberately outside the settlement catch: the committed reservation remains
+    // pending if ownership is lost before send. Only explicit reconciliation may resolve it.
+    await callbacks.beforeSend?.();
     let settled=false;
     try {
       // A redirect must never cause a second billable POST or send original text to another host.
