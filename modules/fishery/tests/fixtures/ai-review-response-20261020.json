@@ -1,0 +1,433 @@
+{
+  "description": "Real receipts 4/5; review-v1 had ambiguous claim identifiers and requested absent optional facts. Not a factual positive. Responses unchanged; only continuous public-source excerpts included.",
+  "generationReceiptId": 4,
+  "reviewReceiptId": 5,
+  "body": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。研讨会聚焦《协定》实施对公海渔业的机遇与挑战，围绕《协定》主要内容和履约义务\n公海渔业是《协定》实施的重点领域\n充分尊重区域渔业组织职权，加强与联合国粮农组织和《协定》缔约方沟通协调\n中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作\n我国于2025年10月批准加入《协定》，《协定》于2026年1月生效",
+  "bodySha256": "ad186d2a815889e83b4881684b9962803112aed7992b85770d326864067f7d54",
+  "originalBodySha256": "118f3a16ac388b150c82ba7c7f3755713dc67dd48f9fac4fbf653775d62fb401",
+  "sourceExcerpts": [
+    {
+      "paragraph": 1,
+      "start": 0,
+      "end": 75,
+      "text": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开。研讨会聚焦《协定》实施对公海渔业的机遇与挑战，围绕《协定》主要内容和履约义务"
+    },
+    {
+      "paragraph": 2,
+      "start": 5,
+      "end": 21,
+      "text": "公海渔业是《协定》实施的重点领域"
+    },
+    {
+      "paragraph": 3,
+      "start": 70,
+      "end": 105,
+      "text": "充分尊重区域渔业组织职权，加强与联合国粮农组织和《协定》缔约方沟通协调"
+    },
+    {
+      "paragraph": 4,
+      "start": 5,
+      "end": 64,
+      "text": "中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作"
+    },
+    {
+      "paragraph": 5,
+      "start": 98,
+      "end": 132,
+      "text": "我国于2025年10月批准加入《协定》，《协定》于2026年1月生效"
+    }
+  ],
+  "draft": {
+    "dates": {
+      "event": {
+        "date": {
+          "value": null,
+          "precision": "unknown"
+        },
+        "evidence": [
+          {
+            "page": null,
+            "quote": "6月8日至9日",
+            "paragraph": 1
+          }
+        ]
+      },
+      "adopted": {
+        "date": {
+          "value": null,
+          "precision": "unknown"
+        },
+        "evidence": []
+      },
+      "effective": {
+        "date": {
+          "value": null,
+          "precision": "unknown"
+        },
+        "evidence": []
+      },
+      "published": {
+        "date": {
+          "value": null,
+          "precision": "unknown"
+        },
+        "evidence": []
+      },
+      "objectionDeadline": {
+        "date": {
+          "value": null,
+          "precision": "unknown"
+        },
+        "evidence": []
+      }
+    },
+    "locations": [
+      {
+        "role": "meeting_location",
+        "value": "上海",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "role": "fishing_area",
+        "value": "公海",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "公海渔业是《协定》实施的重点领域",
+            "paragraph": 2
+          }
+        ]
+      }
+    ],
+    "relevance": {
+      "reason": "正文涉及公海渔业治理、《海洋生物多样性协定》履约义务及远洋渔业规范管理，具备公海与国际渔业履约证据。",
+      "decision": "relevant",
+      "evidence": [
+        {
+          "page": null,
+          "quote": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+          "paragraph": 1
+        }
+      ]
+    },
+    "summaryZh": [
+      {
+        "evidence": [
+          {
+            "page": null,
+            "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1
+          }
+        ],
+        "sentence": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开，聚焦《协定》实施对公海渔业的机遇与挑战。"
+      },
+      {
+        "evidence": [
+          {
+            "page": null,
+            "quote": "中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理",
+            "paragraph": 4
+          }
+        ],
+        "sentence": "中方代表介绍中国作为公海渔业大国和国际渔业治理重要参与者，加强远洋渔业规范管理、参与国际和区域渔业治理合作等情况。"
+      }
+    ],
+    "organizations": [],
+    "uncertainties": [
+      "正文称《协定》于2026年1月生效，但未明确具体日期，生效日期保留unknown。",
+      "正文未明确本页面发布机构，也未明确研讨会主办方或政策发文机关。",
+      "正文提及我国于2025年10月批准加入《协定》，但未给出具体批准日期，且该日期不属于本JSON日期字段所要求的事件、通过、生效或异议截止日。"
+    ],
+    "entryIntoForce": {
+      "value": "unknown",
+      "evidence": [
+        {
+          "page": null,
+          "quote": "《协定》于2026年1月生效",
+          "paragraph": 5
+        }
+      ]
+    }
+  },
+  "review": {
+    "coverage": "complete_input",
+    "decision": "needs_evidence",
+    "findings": [
+      {
+        "field": "relevance.decision",
+        "reason": "正文确实涉及《海洋生物多样性协定》与公海渔业治理研讨会，相关性判断有原文依据。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "relevance.reason",
+        "reason": "理由所述公海渔业治理、履约义务及远洋渔业规范管理均在正文中出现。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "研讨会聚焦《协定》实施对公海渔业的机遇与挑战，围绕《协定》主要内容和履约义务",
+            "paragraph": 1
+          },
+          {
+            "page": null,
+            "quote": "不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作",
+            "paragraph": 4
+          }
+        ]
+      },
+      {
+        "field": "relevance.evidence[0]",
+        "reason": "引文与第1段原文连续一致。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "summaryZh[0].sentence",
+        "reason": "摘要句概括会议时间、名称、地点及聚焦议题，均有第1段原文支持。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1
+          },
+          {
+            "page": null,
+            "quote": "研讨会聚焦《协定》实施对公海渔业的机遇与挑战",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "summaryZh[0].evidence[0]",
+        "reason": "引文与第1段原文连续一致。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "6月8日至9日，《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "summaryZh[1].sentence",
+        "reason": "摘要句关于中方代表介绍中国公海渔业大国定位、国际渔业治理参与者角色及加强远洋渔业规范管理、参与国际和区域渔业治理合作，均有第4段原文支持。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理、积极参与国际和区域渔业治理合作",
+            "paragraph": 4
+          }
+        ]
+      },
+      {
+        "field": "summaryZh[1].evidence[0]",
+        "reason": "引文与第4段原文连续一致。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "中方代表介绍了中国作为公海渔业大国和国际渔业治理的重要参与者，不断加强远洋渔业规范管理",
+            "paragraph": 4
+          }
+        ]
+      },
+      {
+        "field": "dates.published.date",
+        "reason": "所给正文未提供网页或新闻发布日期，候选标为unknown且无证据，符合缺失证据判定。",
+        "verdict": "not_found",
+        "evidence": []
+      },
+      {
+        "field": "dates.event.date",
+        "reason": "原文仅有“6月8日至9日”，未给出年份，无法确定具体事件日期；候选标为unknown但引文不足以确定日期。",
+        "verdict": "ambiguous",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "6月8日至9日",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "dates.adopted.date",
+        "reason": "正文未提供《协定》通过日期，候选无证据。",
+        "verdict": "not_found",
+        "evidence": []
+      },
+      {
+        "field": "dates.effective.date",
+        "reason": "正文称“2026年1月生效”，仅到月份，未给出具体生效日；候选标为unknown但引文不足以确定具体日期。",
+        "verdict": "ambiguous",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "《协定》于2026年1月生效",
+            "paragraph": 5
+          }
+        ]
+      },
+      {
+        "field": "dates.objectionDeadline.date",
+        "reason": "正文未提及异议截止日期，候选无证据。",
+        "verdict": "not_found",
+        "evidence": []
+      },
+      {
+        "field": "entryIntoForce.value",
+        "reason": "正文明确“2026年1月生效”，但候选将entryIntoForce值设为unknown，与原文可确定的年月信息不完全一致；因缺具体日，判为ambiguous而非contradicted。",
+        "verdict": "ambiguous",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "《协定》于2026年1月生效",
+            "paragraph": 5
+          }
+        ]
+      },
+      {
+        "field": "locations[0].role",
+        "reason": "上海为研讨会召开地，角色标注meeting_location有原文支持。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "locations[0].value",
+        "reason": "原文明确会议在上海召开。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "locations[0].evidence[0]",
+        "reason": "引文与第1段原文连续一致。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "locations[1].role",
+        "reason": "公海渔业是《协定》实施重点领域，将公海标注为fishing_area有原文语境支持。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "公海渔业是《协定》实施的重点领域",
+            "paragraph": 2
+          }
+        ]
+      },
+      {
+        "field": "locations[1].value",
+        "reason": "原文明确出现“公海”作为渔业治理领域。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "公海渔业是《协定》实施的重点领域",
+            "paragraph": 2
+          }
+        ]
+      },
+      {
+        "field": "locations[1].evidence[0]",
+        "reason": "引文与第2段原文连续一致。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "公海渔业是《协定》实施的重点领域",
+            "paragraph": 2
+          }
+        ]
+      },
+      {
+        "field": "organizations",
+        "reason": "候选organizations为空数组，但正文提及联合国粮农组织、区域渔业组织及《协定》缔约方等机构角色；候选未列任何组织，无法逐项核对机构角色，属缺证。",
+        "verdict": "not_found",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "充分尊重区域渔业组织职权，加强与联合国粮农组织和《协定》缔约方沟通协调",
+            "paragraph": 3
+          }
+        ]
+      },
+      {
+        "field": "uncertainties[0]",
+        "reason": "正文仅称2026年1月生效，未明确具体日期，保留unknown的说明合理。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "《协定》于2026年1月生效",
+            "paragraph": 5
+          }
+        ]
+      },
+      {
+        "field": "uncertainties[1]",
+        "reason": "所给正文未明确网页发布机构，也未明确研讨会主办方或政策发文机关，该不确定性说明有依据。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "《海洋生物多样性协定》与公海渔业治理国际研讨会在上海召开",
+            "paragraph": 1
+          }
+        ]
+      },
+      {
+        "field": "uncertainties[2]",
+        "reason": "正文提及我国于2025年10月批准加入《协定》，但未给出具体批准日期，且该日期不属于候选日期字段所要求的事件、通过、生效或异议截止日，说明合理。",
+        "verdict": "supported",
+        "evidence": [
+          {
+            "page": null,
+            "quote": "我国于2025年10月批准加入《协定》",
+            "paragraph": 5
+          }
+        ]
+      }
+    ]
+  },
+  "sourceUrl": "https://yyj.moa.gov.cn/gzdt/202606/t20260611_6484888.htm"
+}

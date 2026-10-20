@@ -10,11 +10,11 @@ export const headers=noStore;
 export async function loader({request,params}:LoaderArgs) {return adminGet<FlowView>(request,`/api/admin/fishery/flows/${encodeURIComponent(params.id!)}`);}
 export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
   const {run,busy}=useAdminAction(),fresh=useFreshMaterial();
-  const [command,setCommand]=useState<{kind:"retry"|"qualified"|"rejected";snapshotHash:string}|null>(null),[ack,setAck]=useState(false);
-  const base=`/api/admin/fishery/flows/${d.id}`,canDecide=!d.stale&&["needs_human_review","qualified","rejected"].includes(d.status),changed=command?.snapshotHash!==d.snapshotHash;
-  const open=(kind:"retry"|"qualified"|"rejected")=>{setAck(false);setCommand({kind,snapshotHash:d.snapshotHash});};
+  const [command,setCommand]=useState<{kind:"resume"|"regenerate"|"qualified"|"rejected";snapshotHash:string}|null>(null),[ack,setAck]=useState(false);
+  const base=`/api/admin/fishery/flows/${d.id}`,canDecide=d.authoritative&&!d.stale&&["needs_human_review","qualified","rejected"].includes(d.status),changed=command?.snapshotHash!==d.snapshotHash;
+  const open=(kind:"resume"|"regenerate"|"qualified"|"rejected")=>{setAck(false);setCommand({kind,snapshotHash:d.snapshotHash});};
   return <AdminPage title="内部文章审核" subtitle={<Link className="text-accent" to={`/admin/fishery/${d.document_id}`}>← 返回原文与素材证据</Link>} actions={<Button busy={fresh.state==="loading"} onClick={()=>fresh.revalidate()}>重新核对</Button>}>
-    <div className="mb-5 flex flex-wrap gap-2"><Badge>{FLOW_STATES[d.status]??d.status}</Badge><Badge>阶段 {d.stage}</Badge><Badge>仅内部 · 未公开发布</Badge></div>
+    <div className="mb-5 flex flex-wrap gap-2"><Badge>{FLOW_STATES[d.status]??d.status}</Badge><Badge>阶段 {d.stage}</Badge><Badge>仅内部 · 未公开发布</Badge>{!d.authoritative&&<Badge>历史任务，已有更新任务</Badge>}</div>
     {d.stale&&<p role="alert" className="mb-5 rounded-card bg-hot-soft p-4 text-[13px] text-hot">版本已失效：{d.staleReason}。旧审核与预览停止使用，请返回素材新建当前版本任务。</p>}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-5">
@@ -29,13 +29,13 @@ export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
         {d.internalArticle&&<Card title="当前内部合格文章预览"><div className="space-y-3 text-[14px] leading-relaxed">{d.internalArticle.summaryZh.map((s,i)=><p key={i}>{s.sentence}</p>)}</div><p className="mt-3 text-[12px] text-ink-3">审核者：{d.internalArticle.qualifiedBy}。仅当前快照内部预览，原许可保持不变。</p></Card>}
       </div>
       <aside className="space-y-5 xl:sticky xl:top-5">
-        <Card title="人工决定"><p className="text-[13px] text-ink-3">核对原文、每条证据和适用边界后，记录内部决定。内部合格不会公开文章或开放全文导出。</p><div className="mt-4 flex flex-wrap gap-2"><Button tone="primary" disabled={busy||!canDecide} onClick={()=>open("qualified")}>记录内部合格</Button><Button tone="danger" disabled={busy||!canDecide} onClick={()=>open("rejected")}>拒绝 / 撤销内部合格</Button></div>{d.human_decision&&<div className="mt-4 text-[13px]"><p>{d.human_decision.actor} · {d.human_decision.at}</p><p className="mt-1 whitespace-pre-wrap break-words">{d.human_decision.note}</p></div>}</Card>
-        <Card title="受控处理"><p className="text-[13px] text-ink-3">排队后由受控后台处理，开关关闭或预算不足不会发送请求。中断或未知扣费先核对账本，不自动重发。</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy||d.stale||d.status!=="queued"} onClick={()=>run("POST",base+"/run",{},{success:"任务已排队，等待受控后台处理"})}>排队处理</Button><Button disabled={busy||d.stale||!["failed","needs_evidence"].includes(d.status)} onClick={()=>open("retry")}>显式重试失败阶段</Button></div><KV items={[["尝试名称",d.identity],["生成 / 核查次数",`${d.generation_attempt} / ${d.review_attempt}`],["证据快照",<code className="break-all text-[11px]">{d.snapshotHash}</code>]]}/></Card>
+        <Card title="人工决定"><p className="text-[13px] text-ink-3">核对原文、每条证据和适用边界后，记录内部决定。内部合格不会公开文章或开放全文导出。</p><div className="mt-4 flex flex-wrap gap-2"><Button tone="primary" disabled={busy||!canDecide} onClick={()=>open("qualified")}>记录内部合格</Button><Button tone="danger" disabled={busy||d.status==="running"} onClick={()=>open("rejected")}>拒绝 / 撤销内部合格</Button></div>{d.human_decision&&<div className="mt-4 text-[13px]"><p>{d.human_decision.actor} · {d.human_decision.at}</p><p className="mt-1 whitespace-pre-wrap break-words">{d.human_decision.note}</p></div>}</Card>
+        <Card title="受控处理"><p className="text-[13px] text-ink-3">排队后由受控后台处理，开关关闭或预算不足不会发送请求。中断或未知扣费先核对账本，不自动重发。</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy||d.stale||!d.authoritative||d.status!=="queued"} onClick={()=>run("POST",base+"/run",{},{success:"任务已排队，等待受控后台处理"})}>排队处理</Button><Button disabled={busy||d.stale||!d.authoritative||!["failed","needs_evidence","running"].includes(d.status)} onClick={()=>open("resume")}>恢复同次处理（复用回执）</Button><Button disabled={busy||d.stale||!d.authoritative||!["failed","needs_evidence"].includes(d.status)||d.error?.phase==="persist"} onClick={()=>open("regenerate")}>重新生成失败阶段（可能计费）</Button></div><KV items={[["尝试名称",d.identity],["生成 / 核查次数",`${d.generation_attempt} / ${d.review_attempt}`],["证据快照",<code className="break-all text-[11px]">{d.snapshotHash}</code>]]}/></Card>
       </aside>
     </div>
-    <ReasonDialog open={!!command} title={command?.kind==="retry"?"显式重试失败阶段":"记录内部审核决定"} confirmLabel="保存决定" danger={command?.kind==="rejected"} busy={busy} description="决定绑定当前证据快照，不授予转载权或法律适用性。" onClose={()=>setCommand(null)} onSubmit={async note=>{
-      if(!command||!ack||changed||d.stale)return false;
-      const result=await run("POST",base+(command.kind==="retry"?"/retry":"/decision"),command.kind==="retry"?{note}:{decision:command.kind,snapshotHash:command.snapshotHash,note},{success:"决定已保存，正在重新核对"});return !!result;
-    }}><label className="flex items-start gap-2 text-[13px]"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} required/>我已核对原文、当前快照和失败/费用状态，理解仅供内部使用。</label>{(changed||d.stale)&&<p role="alert" className="text-hot">快照已变化，请取消并重新核对。</p>}</ReasonDialog>
+    <ReasonDialog open={!!command} title={command?.kind==="resume"?"恢复同次处理":command?.kind==="regenerate"?"新尝试，可能新增模型费用":"记录内部审核决定"} confirmLabel="保存决定" danger={command?.kind==="rejected"} busy={busy} description="决定绑定当前证据快照，不授予转载权或法律适用性。" onClose={()=>setCommand(null)} onSubmit={async note=>{
+      if(!command||!ack||changed||(d.stale&&command.kind!=="rejected"))return false;
+      const result=await run("POST",base+(["resume","regenerate"].includes(command.kind)?"/retry":"/decision"),["resume","regenerate"].includes(command.kind)?{note,mode:command.kind,acknowledgeNewCharge:command.kind==="regenerate"}:{decision:command.kind,snapshotHash:command.snapshotHash,note},{success:"决定已保存，正在重新核对"});return !!result;
+    }}><label className="flex items-start gap-2 text-[13px]"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} required/>我已核对原文、当前快照和失败/费用状态，理解仅供内部使用。</label>{(changed||(d.stale&&command?.kind!=="rejected"))&&<p role="alert" className="text-hot">快照已变化，请取消并重新核对。</p>}</ReasonDialog>
   </AdminPage>;
 }

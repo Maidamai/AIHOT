@@ -18,29 +18,17 @@ API 与采集脚本须使用同一私有 data-dir。管理员在 `/admin/fishery
 
 ## AI 状态与后续接线
 
-`backend/ai-draft.ts` 提供版本绑定请求、结构约束和连续原文引句/段落/PDF页码校验；尚未接入 route/worker 或保存为生产草稿，绝无自动审核。独立受限试跑见下节。它不替换原文观察、来源权利或审核决定。引句存在不等于语义支持，仍需人工事实核对；模型可能把地点角色、政策状态或日期解释错。
+`backend/ai-draft.ts` 提供版本绑定请求、严格结构和连续原文引句/段落/PDF页码校验，现已接入下面的显式持久任务及正常管理员界面。打开页面不触发模型；所有真实请求经chatJson/receipts和固定累计费用账本。引句存在不等于语义支持，仍须隔离第二遍证据核查及人工事实决定。内部合格不替换原文观察、来源权利或素材人工审核，不产生公开发布。
 
-未来生产调用复用现有 `chatJson`（OpenAI 风格 chat/completions、Bearer、JSON），保持模型回执、预算与熔断；存草稿时与 `completeReceipt` 在同一事务完成，并校验最新观察/正文哈希。先确认一家提供商、兼容端点、具体模型名、输入可否传给该服务、每日请求与token限额、供应商侧金额限额，再私下配置凭据。不读取或打印密钥。现有框架预算按请求次数，并非人民币金额硬上限；无对应service预算行意味着不限次。确认前 MODEL_CALLS_ENABLED 维持 false。
+## DeepSeek 试跑历史与核验范围
 
-需要单独完成的工作：生产草稿存储/审核UI、服务预算落地、获准的一次实际调用与费用核验。未调用模型不能宣称AI筛选准确率。转载权未知不可据此授权全文或匿名发布。
+`scripts/trial-deepseek.ts` 仍只允许固定独立试验库，不启动应用、worker或恢复任务。生产单任务处理另见下文run-flow.ts；迁移必须保留原累计账本并冻结原试验入口，不能同时使用两份额度。凭据只由部署配置注入，不经聊天、仓库或日志，不读取或打印密钥。
 
-## 已授权的独立 DeepSeek 小样本试跑
+2026-10-20曾核验 `deepseek-flash` 对应 DeepSeek-V4.1-Flash-1017，地址 `https://api.deepseek.com`；别名可能滚动，不声称永久固定。每次响应的原始model值由最终transport写入ledger.responseModel（缺失则null），与配置别名、历史verifiedAt分别保存。定价与参数参考既有[价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)及[思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)核验记录；usage按高峰未缓存价估算，不把估算当供应商账单。输入token上界是工程预留，不是供应商tokenizer证明或账户硬限额。
 
-仅使用 `scripts/trial-deepseek.ts`，不启动应用、worker 或恢复任务；不得连接生产数据库。脚本要求固定的独立 Docker 数据库地址与显式隔离标记，复用现有 chatJson/receipts。密钥由用户在隐藏终端录入服务器0700目录/0600配置，不经聊天、仓库或日志。配置仅由试跑容器加载，生产模型开关不变。
+初期4次/1.60元、更早12000bytes wire限制已经由下文新授权及48k包络限制替代；历史每条预留金额仍保留。最初3次中两条因数组/不完整日期结构失败，一条仅结构与锚点通过。该唯一结构合格稿的issuer把政策《通知》联合发文单位误当网页发布机构，整条事实不能视作质量正例。后续BBNJ生成4及核查5也保留原响应；5暴露了核查路径/任务契约问题，4还有治理范围误作实际作业海域及不完整句锚，均不被伪称质量正例。
 
-2026-10-20官方文档核验：`deepseek-flash` 当前对应 DeepSeek-V4.1-Flash-1017，地址 `https://api.deepseek.com`；别名将来可能滚动，不声称版本永久固定。定价和参数依据：[价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)、[思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。
-
-本程序比用户批准的20请求/2元更紧：固定试跑ID、最多4次真实发送，每次在数据库账本不可退回预留0.40元，累计不超过1.60元。发送前检查最终JSON≤12000 UTF8字节、模型/地址固定、仅两条文本消息、思考关闭、输出≤2048tokens、无工具/多输出/流式请求；禁止重定向和fallback。使用最宽松的10万输入tokens预留测算，每次高峰费用估算≤0.216384元（输入2元/百万、输出8元/百万）；输入token上界是保守工程预留，非供应商tokenizer证明或账户扣费硬限额。报告按实际usage及高峰未缓存价估算，不把估算当供应商账单。
-
-拒绝、超时、用量缺失/超界、schema或引句校验失败即停止，不自动重试。账本缺失/损坏/未明结果拒绝新请求；重启不更换试跑ID或重置额度。已有回执不重发。草稿与 completeReceipt 同事务写独立试跑库，只保存为needs_review，不触碰生产观察、审核和发布。
-
-本轮实测3次：1条通过结构和连续原文引句校验成为待审草稿；2条拒绝（evidence对象/空值违背数组格式；不完整日期 `--05-16`，并混淆事件与发布）。第四篇未请求。拒绝记录和原始回执保留，未将模型日期猜补。样本均中文网页，不能据此宣称英文翻译、PDF页码或政策适用性已通过实测。独立试跑数据库停止，卷和受保护配置保留。
-
-离线质量修复保留严格数组契约，没有运行时对象转数组或错误日期自动修补。提示词增加完整JSON骨架；正文模型的网页发布日期必须unknown，采集器的PubDate独立保留。已知日期必须在同一原文引句中明确包含其年月日组成部分，不能借发布日期补事件年份；缺年份的月日保存在引句中。真实脱敏响应回归fixture仅保存连续引文片段、原段号/偏移和完整原件哈希，不复制凭据、请求头或内部审核信息。测试中的显式格式修正版仅证明契约可满足，不算真实模型成功。
-
-原唯一结构合格草稿的两句摘要与所存官方答记者问相符；但其issuer将所述《通知》的联合发文单位与本篇新闻的网页发布机构混在同一角色，整条结构化事实审核仍待修订。禁补内容摘要不是完整清单，未核验政策原件及具体适用性。离线复核不改独立试跑库的needs_review状态，也不改生产审核。
-
-下一轮针对两类失败的最少真实复测为2次（各1篇），当前不得执行。既有更紧的4次/1.60元账本已累计3次/预留1.20元，仅剩1个请求槽；不能清零或换ID跑两次。若主会话之后决定扩容，可保留原3×0.40，后2次各预留0.30，总5次/1.80元，仍低于原20次/2元授权上界；此例仅为方案，未修改代码限额或账本。英文翻译、PDF与完整生产质量验收不在这两次最低复测内。
+严格数组与日期组成规则不作运行时容错；原始坏响应不修改，fixture只保存连续公开引文、原段/偏移和完整原件hash，不复制完整私有归档、凭据或内部审核信息。测试中的显式反事实修正版只隔离验证契约，不是实际模型成功。当前费用、次数和received/pending/unknown以同一固定账本报告为准，不在文档重置。
 
 ## 显式 AI 质量试验（累计授权 deepseek-fishery-20261020）
 
@@ -56,7 +44,7 @@ API 与采集脚本须使用同一私有 data-dir。管理员在 `/admin/fishery
 
 新增0095迁移只有一条建表语句，保存任务、证据快照、分阶段尝试和回执引用。现有采集脚本先执行受控发现/归档；`POST /api/admin/fishery/batches/:id/flows {identity}` 重新校验并导入归档，然后幂等创建每文书任务，不发送模型请求。普通文书可用 `POST documents/:id/flows {identity}`。所有接口仍需正常管理员会话及写操作CSRF；没有匿名或公开投影。
 
-`GET documents/:id/flows`、`GET flows/:id` 查看阶段、失败原因、回执、快照hash和失效原因；`POST flows/:id/run` 仅排既有pg-boss的fishery.flow队列（自动重试0）。`POST flows/:id/retry {note}` 是显式阶段重试，保留成功生成，只重跑失败审核，每阶段最多3次；unknown或在途费用仍阻断发送。进程中断留下running，系统不会自动抢占/重发，需先人工对账；此版没有自动恢复命令。
+`GET documents/:id/flows`、`GET flows/:id` 查看阶段、失败原因、回执、快照hash和失效原因；`POST flows/:id/run` 仅排既有pg-boss的fishery.flow队列（自动重试0）。`POST flows/:id/retry` 支持恢复同次回执及显式新计费尝试（参数见文末），保留成功生成；unknown或在途费用仍阻断发送。进程中断留下running，系统不会自动抢占/重发；人工对账后仅存在可复用received/completed回执才可显式恢复。
 
 生产默认不启用模型总开关。验收建议直接用单任务CLI，不启动常驻worker，也不启动任何调度：
 
@@ -70,4 +58,24 @@ MODEL_CALLS_ENABLED=true node modules/fishery/scripts/run-flow.ts --id <queued-t
 
 `POST flows/:id/decision {decision:qualified|rejected,snapshotHash,note}` 只能在确定性门禁+隔离第二遍证据核查通过后操作。qualified仅内部受控预览，保留审核者和快照；不写公开文章、不放宽原许可，不等于法律适用性通过。每次读取再次核对当前版本及实际归档正文，来源/观察/权利变化或撤回立即关闭内部预览，保留历史追溯。可再次rejected撤销内部qualified。
 
-当前局限：采集发现仍使用既有显式脚本、批次manifest；任务表从已核验归档/观察开始，不伪称持久化发现调度。planned/occurred及validity_status尚无独立生成字段，effective日期不能解释为已核实有效；同模型第二遍不是独立信源确认。没有长文分块/上下文合并；超限退人工。国际列表新规发现扩展、完整真实当前稿件质量及服务器验收仍由后续阶段验证。
+当前局限：采集发现仍使用既有显式脚本、批次manifest；任务表从已核验归档/观察开始，不伪称持久化发现调度。eventStatus和validityStatus的当前约束见下方v4说明，effective日期不能解释为已核实有效；同模型第二遍不是独立信源确认。没有长文分块/上下文合并；超限退人工。国际列表新规发现扩展、完整真实当前稿件质量及服务器验收仍由后续阶段验证。
+
+## 生成v4 / 证据核查v2与恢复语义修订
+
+核查输入显式给出非空事实claims及稳定id（如summaryZh.0），动态schema仅接受这些id，每claim恰好一条核查，缺项、重复或额外路径均拒绝。unknown日期/状态、空机构等不是断言，不要求补证；真正请求的每条断言仍必须supported且有引用，not_found/ambiguous/contradicted任一都阻断。保留真实receipt5原始响应作契约错误反例，不静默修路径或删去不利核查。
+
+生成增加eventStatus（planned / reported_occurred / unknown）与只允许unknown的validityStatus。日期过去不改变planned，文载施行日不证明独立核实现行有效。locations.policy_scope记录政策/治理范围；fishing_area必须有实际捕捞作业事实，不能把公海治理议题填为船队作业海域。符号、千分位、完整领域单位逐token核对，未知单位不剥离成裸数；这不是语义真假证明，仍需隔离核查和人工决定。
+
+0096单语句迁移为每stage/attempt保存请求指纹；实际付费幂等由attemptTag区分（仅改变subject不能创建新调用）。`POST flows/:id/retry {note,mode:"resume"}` 默认保留attempt/tag，恢复已received/completed产物的业务落盘，不新增请求。若旧回执failed/pending/unknown则禁止盲恢复；pending/unknown也禁止新尝试，须先对账。中断running仅已有可复用received/completed回执才可恢复。成功响应持久化失败只允许resume，不允许付费重生成；代码/提示词/输入指纹变化会阻断同attempt恢复。
+
+确认旧输出不可用并已对账后，`{note,mode:"regenerate",acknowledgeNewCharge:true}` 才增加attempt与attemptTag，明确可能新增计费；每stage仍最多3个显式付费尝试。恢复已有回执不占新调用容量；启动新生成仍需生成+核查两次容量。CLI试验attempt/review-attempt也已写入实际attemptTag。
+
+人工qualified保持所有当前快照、确定性与AI核查门禁；rejected可以拒绝待补证/失败或已失效旧任务，保存原任务快照、理由和审核人，不要求坏稿先通过AI。running须先结束或对账，避免覆盖在途状态。此拒绝不修改来源或原素材审核记录。
+
+
+最终wire现为48,000 UTF8bytes，仍限定官方固定端点、POST、两条纯文本消息、禁思考/工具/stream、最多2048输出tokens。每次0.40元、累计20次/10元上限不变；这只是保守工程token预留，不是供应商账户硬扣费限制。新生成前预估生成请求与最大核查请求包络；候选JSON转为消息字符串后的wire贡献上限8192bytes，核查预留两倍包络及4096bytes claims包装空间。任一完整输入预计超48k时整任务零调用退人工，不截断原文。最终真实fetch仍按实际完整请求再检查上限。
+
+
+同一文书、证据快照与当前生成/核查prompt+固定模型配置只复用一份任务；即使再次输入不同identity，也不新建同证据任务或再次收费。首次stage的attemptTag绑定证据/配置快照、stage和付费尝试编号，不含随机task id。只有明确regenerate增加编号。prompt配置版本也参与快照，配置变更后旧产物不能冒充新版本验收。
+
+每文书仅最新created任务为权威任务。旧任务保留追溯；最新任务queued/pending/rejected时，不会回读旧qualified文章。内部预览、重跑及再批准均检查这一点；rejected仍可终结历史坏稿。

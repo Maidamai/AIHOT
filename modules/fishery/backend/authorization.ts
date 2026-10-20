@@ -8,7 +8,7 @@ type Ledger={id:string;entries:Entry[];maxRequests:number;maxReservedMicroCny:nu
 export async function assertFisheryCapacity(requiredCalls=1) {
   const [row]=await sql<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${authorizationKey}`;
   if(!row||row.value.id!==TRIAL.id||row.value.maxRequests!==TRIAL.maxRequests||row.value.maxReservedMicroCny!==TRIAL.maxReservedMicroCny) throw new Error("Existing cumulative authorization ledger missing/changed");
-  trialCapacity(row.value.entries,requiredCalls);
+  if(requiredCalls!==0) trialCapacity(row.value.entries,requiredCalls);
 }
 let active=false;
 export async function withFisheryAuthorization<T>(run:()=>Promise<T>):Promise<T> {

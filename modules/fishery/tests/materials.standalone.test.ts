@@ -13,7 +13,7 @@ import { collectColumns, readBatch, readCapturedText, verifyBatchItem } from "..
 import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
-import {reviewFisheryDraft} from "../backend/ai-review.ts";
+import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
 import { createHash } from "node:crypto";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 
@@ -28,7 +28,7 @@ test("saved DeepSeek responses preserve strict evidence arrays and the accepted 
   const corrected=structuredClone(first.response);
   function arrays(v:any) {if(!v||typeof v!=="object") return;for(const [key,value]of Object.entries(v)){if(key==="evidence") v[key]=value===null?[]:Array.isArray(value)?value:[value];else arrays(value);}}
   arrays(corrected);
-  assert.throws(()=>validateFisheryDraft(input(first),corrected),/Numeric value/);
+  assert.throws(()=>validateFisheryDraft(input(first),corrected),/Actual fishing area/);
   assert.deepEqual(first.response,original,"Never rewrite the original model response");
   assert.throws(()=>validateFisheryDraft(input(accepted),accepted.response),/Ambiguous issuer/);
   assert.equal(accepted.response.dates.published.date.precision,"unknown");
@@ -457,11 +457,53 @@ test("independent review uses isolated context, distinct receipt purpose and req
   const body="远洋渔船共10艘。",input={documentId:"review",observationRevision:1,body,bodySha256:sha256(body),language:"zh"};
   const evidence=[{quote:body,paragraph:1,page:null}],date={date:unknownDate,evidence:[]};
   const draft={relevance:{decision:"unknown",reason:"待核",evidence:[]},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],uncertainties:[]};
-  const invoke=async(options:any)=>{assert.equal(options.purpose,"fishery_quality_review");assert.deepEqual(Object.keys(JSON.parse(options.user)),["source","candidate"]);return {data:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原文一致",evidence}]},receiptId:22,reused:false,model:"mock",usage:null} as any;};
+  const invoke=async(options:any)=>{assert.equal(options.purpose,"fishery_quality_review");assert.deepEqual(Object.keys(JSON.parse(options.user)),["source","candidate","claims"]);return {data:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"原文一致",evidence}]},receiptId:22,reused:false,model:"mock",usage:null} as any;};
   const result=await reviewFisheryDraft(input,draft,"mock",invoke);assert.equal(result.status,"needs_human_review");assert.equal(result.approved,false);assert.equal(result.receiptId,22);
-  const missing=await reviewFisheryDraft(input,draft,"mock",async o=>{const a=await invoke(o);a.data.findings[0].field="other";return a;});assert.equal(missing.status,"needs_evidence");assert.deepEqual(missing.missingFields,["summaryZh.0"]);
+  await assert.rejects(reviewFisheryDraft(input,draft,"mock",async o=>{const a=await invoke(o);a.data.findings[0].field="other";return a;}),/Invalid/);
+  const missing=await reviewFisheryDraft(input,draft,"mock",async o=>{const a=await invoke(o);a.data.findings[0].verdict="not_found";return a;});assert.equal(missing.status,"needs_evidence");assert.deepEqual(missing.missingFields,["summaryZh.0"]);
   assert.throws(()=>validateFisheryDraft(input,{...draft,summaryZh:[{sentence:"远洋渔船共10吨。",evidence}]}),/Numeric value\/unit/);
   assert.throws(()=>validateFisheryDraft(input,{...draft,organizations:[{role:"page_publisher",value:"远洋渔船",evidence}]}),/publisher role/);
   assert.throws(()=>trialCapacity([{state:"received",reservedMicroCny:9_800_000}]),/hard request/);
   assert.doesNotThrow(()=>trialCapacity([{state:"received",reservedMicroCny:9_500_000}]));
+});
+
+
+test("real review-v1 identifiers and absent optional fields fail the explicit claim-manifest contract",async()=>{
+  const fixture=JSON.parse(await readFile(new URL("./fixtures/ai-review-response-20261020.json",import.meta.url),"utf8")),original=structuredClone(fixture);
+  const input={documentId:"receipt4-excerpts",observationRevision:1,body:fixture.body,bodySha256:fixture.bodySha256,language:"zh"};
+  assert.throws(()=>validateFisheryDraft(input,fixture.draft),/Actual fishing area/);
+  // Test-only counterfactual to isolate the review contract. Never save or approve this edited copy.
+  const candidate=structuredClone(fixture.draft);candidate.locations=candidate.locations.map((v:any)=>v.role==="fishing_area"?{...v,role:"policy_scope"}:v);
+  const request=buildFisheryReviewRequest(input,candidate,"mock"),manifest=JSON.parse(request.user as string).claims;
+  assert.ok(manifest.some((c:any)=>c.id==="summaryZh.0"));assert.ok(!manifest.some((c:any)=>c.id.startsWith("dates.")));
+  assert.equal(request.schema.safeParse(fixture.review).success,false,"Do not normalize legacy paths or remove real conflicting findings");
+  const evidence=[{quote:fixture.sourceExcerpts[0].text.slice(0,40),paragraph:1,page:null}],findings=manifest.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic contract-only example, not a factual endorsement",evidence}));
+  assert.equal(request.schema.safeParse({decision:"supported",coverage:"complete_input",findings}).success,true);
+  for(const invalid of [findings.slice(1),[...findings,findings[0]],[...findings.slice(1),findings[1]],findings.map((f:any,i:number)=>i?f:{...f,field:"summaryZh[0].sentence"})]) assert.equal(request.schema.safeParse({decision:"supported",coverage:"complete_input",findings:invalid}).success,false);
+  assert.deepEqual(fixture,original);
+});
+
+test("numeric checks preserve signs, thousands separators and opaque domain units",()=>{
+  const date={date:unknownDate,evidence:[]};
+  const draft={relevance:{decision:"unknown",reason:"test",evidence:[]},summaryZh:[],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],uncertainties:[]};
+  for(const [body,sentence] of [["增长10%。","下降-10%。"],["增长10万吨。","增长10亿美元。"],["配额1,000吨。","配额1。"],["增长-10%。","增长10%。"],["货物10吨。","货物10未知计量。"],["quota 10 tonnes.","quota 10 USD."]]) {
+    const input={documentId:"numeric",observationRevision:1,body,bodySha256:sha256(body),language:"zh"},evidence=[{quote:body,paragraph:1,page:null}];
+    assert.throws(()=>validateFisheryDraft(input,{...draft,summaryZh:[{sentence,evidence}]}),/Numeric value\/unit/);
+    assert.doesNotThrow(()=>validateFisheryDraft(input,{...draft,summaryZh:[{sentence:body,evidence}]}));
+  }
+  const body="计划于2020年5月举行会议，讨论公海治理。",input={documentId:"planned",observationRevision:1,body,bodySha256:sha256(body),language:"zh"},evidence=[{quote:body,paragraph:1,page:null}];
+  assert.doesNotThrow(()=>validateFisheryDraft(input,{...draft,eventStatus:{value:"planned",evidence},locations:[{role:"policy_scope",value:"公海",evidence}]}));
+  assert.throws(()=>validateFisheryDraft(input,{...draft,eventStatus:{value:"reported_occurred",evidence}}),/Reported occurrence/);
+  const announced="将举行公海治理会议。",announcement={...input,body:announced,bodySha256:sha256(announced)};
+  assert.throws(()=>validateFisheryDraft(announcement,{...draft,eventStatus:{value:"reported_occurred",evidence:[{quote:announced,paragraph:1,page:null}]}}),/Reported occurrence/);
+  assert.throws(()=>validateFisheryDraft(input,{...draft,validityStatus:"in_force"}),/Invalid input/);
+  assert.throws(()=>validateFisheryDraft(input,{...draft,locations:[{role:"fishing_area",value:"公海",evidence}]}),/Actual fishing area/);
+});
+
+
+test("full-source generation and bounded review envelopes are checked before any send",()=>{
+  const body="--- Page 1 ---\n"+"International fisheries governance full source evidence. ".repeat(150),input={documentId:"full-pdf",observationRevision:1,body,bodySha256:sha256(body),language:"en",pages:[{page:1,text:body}]};
+  const sizes=assertFisheryPairFits(input);assert.ok(sizes.generationBytes<48000);assert.ok(sizes.reviewEnvelopeBytes<48000);assert.equal(sizes.maxWireBytes,48000);
+  const oversized="Complete source text. ".repeat(2000);
+  assert.throws(()=>assertFisheryPairFits({...input,body:oversized,bodySha256:sha256(oversized),pages:[]}),/zero-call manual/);
 });

@@ -2,9 +2,14 @@
 import {parseArgs} from "node:util";
 import {TRIAL,installTrialTransport,trialCapacity,trialUsage} from "../backend/trial-transport.ts";
 import {buildFisheryDraftRequest,validateFisheryDraft} from "../backend/ai-draft.ts";
-import {reviewFisheryDraft} from "../backend/ai-review.ts";
+import {reviewFisheryDraft,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {readBatch,verifyBatchItem} from "../backend/column-batches.ts";
 import {sha256} from "../backend/source-adapters.ts";
+function assertReusable(previous:{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>},options:{attemptTag?:string;promptVersion:string;system:string;user:unknown;temperature?:number;maxTokens?:number}) {
+  if(!["received","completed"].includes(previous.status)) throw new Error(`Existing ${previous.status} receipt ${previous.id}; no blind retry`);
+  const q=previous.request;
+  if(!previous.logical_key.endsWith(`:${options.attemptTag}`)||previous.model!==TRIAL.model||q.promptVersion!==options.promptVersion||q.systemHash!==sha256(options.system)||q.userHash!==sha256(options.user as string)||q.temperature!==(options.temperature??0.2)||q.maxTokens!==(options.maxTokens??1500)) throw new Error("Existing receipt belongs to another request version/attempt tag; select a new explicit identity after reconciliation");
+}
 const {values}=parseArgs({options:{initialize:{type:"boolean"},report:{type:"boolean"},"upgrade-authorization":{type:"boolean"},attempt:{type:"string"},"review-attempt":{type:"string"},"archive-id":{type:"string",multiple:true},stage:{type:"string"},"capture-dir":{type:"string"},"batch-id":{type:"string"}}});
 if(process.env.DATABASE_URL!=="postgres://fishery_trial@fishery-ai-trial-db:5432/fishery_ai_trial"||process.env.FISHERY_TRIAL_ISOLATED!=="true") throw new Error("Refuse non-isolated trial database");
 if(process.env.LLM_MODEL!==TRIAL.model||process.env.LLM_BASE_URL!=="https://api.deepseek.com"||process.env.LLM_REASONING_TOKENS!=="0"||process.env.LLM_EXTRA_JSON!=='{"thinking":{"type":"disabled"}}') throw new Error("Refuse model/endpoint/extra overrides");
@@ -71,19 +76,21 @@ try {
         const input={documentId:`capture-${item.archiveId}`,observationRevision:1,body:result.body!,bodySha256:result.sourceCapture.bodySha256!,language:"zh"};
         const request=buildFisheryDraftRequest(input,"default");
         request.subject+=`:attempt:${values.attempt}`;
-        request.system+="\n本轮输出简短JSON：摘要最多2句，每个引句不超过80字符，每字段最多1条证据，地点最多4条。不确定就保留未知。";
+        request.attemptTag=`fishery-trial:${values.attempt}:generation`;
+        request.system+="\n本轮输出简短JSON：摘要最多2句，每句只陈述一条有完整所附引证支持的具体事实，允许每句最多2引句，每引句不超过160字符，地点最多4条。不确定就保留未知。";
         request.promptVersion=`fishery-trial-v2:${sha256(request.system)}`;
         const [saved]=await sql<{value:{draft:unknown;bodySha256:string}}[]>`SELECT value FROM settings WHERE key=${sourceKey+".generation"}`;
         let draft=saved?validateFisheryDraft(input,saved.value.draft):undefined;
         if(saved&&saved.value.bodySha256!==input.bodySha256) throw new Error("Attempt source changed; use a new explicit attempt identity");
+        const [previous]=!draft?await sql<{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>}[]>`SELECT id,status,logical_key,model,request FROM receipts WHERE subject=${request.subject} AND purpose='fishery_draft' ORDER BY id DESC LIMIT 1`:[];
+        if(previous) assertReusable(previous,request);
         if(!draft&&values.stage==="both") {
+          assertFisheryPairFits(input,request);
           const [ledger]=await sql<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key}`;
           if(!ledger||ledger.value.id!==TRIAL.id) throw new Error("Existing authorization required");
-          trialCapacity(ledger.value.entries,2);
+          trialCapacity(ledger.value.entries,previous?1:2);
         }
         if(!draft&&values.stage!=="review") {
-          const [previous]=await sql<{id:number;status:string}[]>`SELECT id,status FROM receipts WHERE subject=${request.subject} AND purpose='fishery_draft' ORDER BY id DESC LIMIT 1`;
-          if(previous) throw new Error(`Existing generation receipt ${previous.id} (${previous.status}); no automatic retry; select a new explicit attempt identity`);
           const answer=await chatJson(request);draft=validateFisheryDraft(input,answer.data);
           const value={status:"needs_review",sourceUrl:item.url,bodySha256:input.bodySha256,promptVersion:request.promptVersion,receiptId:answer.receiptId,model:answer.model,draft};
           await sql.begin(async tx=>{
@@ -98,8 +105,9 @@ try {
           if((await sql`SELECT 1 FROM settings WHERE key=${reviewKey}`).length) {console.log(JSON.stringify({sourceUrl:item.url,stage:"review",status:"reused_saved_review"}));continue;}
           const review=await reviewFisheryDraft(input,draft,"default",async options=>{
             options.subject+=`:attempt:${values.attempt}:review:${values["review-attempt"]??values.attempt}`;
-            const [previous]=await sql<{id:number;status:string}[]>`SELECT id,status FROM receipts WHERE subject=${options.subject} AND purpose='fishery_quality_review' ORDER BY id DESC LIMIT 1`;
-            if(previous) throw new Error(`Existing review receipt ${previous.id} (${previous.status}); no automatic retry`);
+            options.attemptTag=`fishery-trial:${values.attempt}:review:${values["review-attempt"]??values.attempt}`;
+            const [previous]=await sql<{id:number;status:string;logical_key:string;model:string;request:Record<string,unknown>}[]>`SELECT id,status,logical_key,model,request FROM receipts WHERE subject=${options.subject} AND purpose='fishery_quality_review' ORDER BY id DESC LIMIT 1`;
+            if(previous) assertReusable(previous,options);
             return chatJson(options);
           });
           await sql.begin(async tx=>{

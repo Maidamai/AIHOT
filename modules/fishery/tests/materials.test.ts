@@ -19,7 +19,8 @@ import { workbench } from "../backend/workbench.ts";
 import { collectColumns } from "../backend/column-batches.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
-import { createFlow, flowDetail, runFlow, retryFlow, decideFlow } from "../backend/flow.ts";
+import { paidRequest } from "@aihot/backend/providers/receipts";
+import { createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls } from "../backend/flow.ts";
 
 installModules([fishery]);
 const app = await buildApp();
@@ -346,6 +347,7 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
     const created=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-flow/flows",headers:{"x-csrf-token":"dev"},payload:{identity:"test"}});
     assert.equal(created.statusCode,200,created.body);assert.equal(created.json().modelCalls,0);id=created.json().tasks[0].id;
     const again=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-flow/flows",headers:{"x-csrf-token":"dev"},payload:{identity:"test"}});assert.equal(again.json().tasks[0].id,id);
+    const otherIdentity=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-flow/flows",headers:{"x-csrf-token":"dev"},payload:{identity:"different-click-same-evidence"}});assert.equal(otherIdentity.json().tasks[0].id,id);
   } finally {config.devAdmin=null;}
   assert.equal((await app.inject(`/api/admin/fishery/flows/${id!}`)).statusCode,401);
   let generated=0,reviewed=0,failReview=true;
@@ -365,11 +367,73 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
   const qualified=await flowDetail(id!);assert.equal(qualified.status,"qualified");assert.ok(qualified.internalArticle);assert.equal(qualified.published,false);
   await decideFlow(id!,{decision:"rejected",snapshotHash:checked.snapshotHash,note:"Retract synthetic qualification"},"reviewer");assert.equal((await flowDetail(id!)).internalArticle,null);
   await decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic review again"},"reviewer");
+  // A preexisting/newer pending or rejected task is authoritative; never fall back to old qualified.
+  await sql`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor) SELECT 'superseding-'||id,document_id,'superseding-'||identity,snapshot,'queued','generation',actor FROM fishery_flow_tasks WHERE id=${id!}`;
+  const historical=await flowDetail(id!);assert.equal(historical.authoritative,false);assert.equal(historical.internalArticle,null);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot revive old article"},"reviewer"),/newer authoritative/);
+  const newer=await flowDetail("superseding-"+id!);await decideFlow(newer.id,{decision:"rejected",snapshotHash:newer.snapshotHash,note:"Reject latest task; older qualified must stay hidden"},"reviewer");assert.equal((await flowDetail(id!)).internalArticle,null);
   const document=await documentHistory(checked.document_id),sourceId=document.document.source_id;
   await registerSource(sourceId,{expectedRevision:1,healthNote:"Changed source rights metadata"},"tester");
   const stale=await flowDetail(id!);assert.equal(stale.stale,true);assert.equal(stale.internalArticle,null);
-  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Old snapshot"},"reviewer"),/snapshot changed/);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Old snapshot"},"reviewer"),/snapshot changed|newer authoritative/);
   await assert.rejects(createFlow(checked.document_id,{identity:"test"},"tester"),/old evidence/);
   const next=await createFlow(checked.document_id,{identity:"new-version"},"tester");assert.notEqual(next.id,id!);
   await withdraw(checked.document_id,{expectedRevision:1,reason:"Synthetic withdrawal"},"tester");assert.equal((await flowDetail(next.id)).stale,true);assert.equal((await flowDetail(id!)).internalArticle,null);
+});
+
+
+test("stage persistence failures resume the same received receipt; only explicit regeneration creates a new paid identity",async()=>{
+  const body="合成公海远洋渔业事实。",date={date:{precision:"unknown",value:null},evidence:[]},evidence=[{quote:body,paragraph:1,page:null}];
+  const output={relevance:{decision:"unknown",reason:"test",evidence:[]},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],uncertainties:[]};
+  async function task(identity:string) {
+    const f=await fixture({unknownRights:true});
+    await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
+    await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/private-${f.id}`,title:"Synthetic source",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+    return createFlow(f.id,{identity},"tester");
+  }
+  const sends={generation:0,review:0};let badReview=false;
+  const invoke=async(options:any)=>{
+    const generation=options.purpose==="fishery_draft";
+    const receipt=await paidRequest({service:"flow-local-mock",model:"mock",purpose:options.purpose,subject:options.subject,identity:{promptVersion:options.promptVersion,system:options.system,user:options.user},attemptTag:options.attemptTag},async()=>{
+      if(generation)sends.generation++;else sends.review++;
+      const data=generation?output:{decision:badReview?"needs_evidence":"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:badReview?"not_found":"supported",reason:"Synthetic mock claim check",evidence:badReview?[]:evidence}]};
+      return {response:data};
+    });
+    return {data:options.schema.parse(receipt.response),receiptId:receipt.receiptId,reused:receipt.reused,model:"mock",usage:null};
+  };
+  await sql.unsafe(`CREATE FUNCTION fishery_test_persist_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF (NEW.draft IS NOT NULL AND OLD.draft IS NULL AND EXISTS (SELECT 1 FROM settings WHERE key='flow-test-fault' AND value='"generation"'::jsonb))
+      OR (NEW.quality_review IS NOT NULL AND EXISTS (SELECT 1 FROM settings WHERE key='flow-test-fault' AND value='"review"'::jsonb))
+    THEN RAISE EXCEPTION 'Synthetic stage transaction failure'; END IF; RETURN NEW; END $$`);
+  await sql.unsafe(`CREATE TRIGGER fishery_test_persist_fault BEFORE UPDATE ON fishery_flow_tasks FOR EACH ROW EXECUTE FUNCTION fishery_test_persist_fault()`);
+  try {
+    const g=await task("persist-generation");
+    await sql`INSERT INTO settings(key,value) VALUES ('flow-test-fault','"generation"'::jsonb)`;
+    const failed=await runFlow(g.id,invoke);assert.equal(failed.status,"failed");assert.equal(failed.error.phase,"persist");assert.equal(failed.draft,null);assert.equal(sends.generation,1);
+    await assert.rejects(retryFlow(g.id,{note:"Do not pay for a received output again",mode:"regenerate",acknowledgeNewCharge:true},"tester"),/resume same attempt/);
+    await sql`DELETE FROM settings WHERE key='flow-test-fault'`;
+    const resumed=await retryFlow(g.id,{note:"Resume durable received generation"},"tester");assert.equal(resumed.attempt,1);assert.equal(await flowRequiredCalls(g.id),1);
+    const saved=await runFlow(g.id,invoke);assert.equal(saved.status,"needs_human_review");assert.equal(sends.generation,1);assert.equal(sends.review,1);
+    const r=await task("persist-review");
+    await sql`INSERT INTO settings(key,value) VALUES ('flow-test-fault','"review"'::jsonb)`;
+    const reviewFailed=await runFlow(r.id,invoke);assert.equal(reviewFailed.status,"failed");assert.equal(reviewFailed.error.phase,"persist");assert.ok(reviewFailed.draft);assert.equal(reviewFailed.quality_review,null);
+    await sql`DELETE FROM settings WHERE key='flow-test-fault'`;
+    // Simulate a crash after receiving the answer: a running row can only resume a reusable receipt.
+    await sql`UPDATE fishery_flow_tasks SET status='running' WHERE id=${r.id}`;
+    await sql`UPDATE receipts SET status='unknown' WHERE id=${reviewFailed.error.receiptId}`;
+    await assert.rejects(retryFlow(r.id,{note:"Unknown outcome must block"},"tester"),/pending\/unknown/);
+    await assert.rejects(retryFlow(r.id,{note:"Unknown cannot regenerate",mode:"regenerate",acknowledgeNewCharge:true},"tester"),/pending\/unknown/);
+    await sql`UPDATE receipts SET status='received' WHERE id=${reviewFailed.error.receiptId}`;
+    const before={...sends};await retryFlow(r.id,{note:"Reconciled interrupted received review"},"tester");assert.equal(await flowRequiredCalls(r.id),0);
+    assert.equal((await runFlow(r.id,invoke)).status,"needs_human_review");assert.deepEqual(sends,before);
+    const bad=await task("semantic-negative");badReview=true;
+    const first=await runFlow(bad.id,invoke);assert.equal(first.status,"needs_evidence");const sent=sends.review;
+    await retryFlow(bad.id,{note:"Resume returns existing negative review"},"tester");assert.equal((await runFlow(bad.id,invoke)).status,"needs_evidence");assert.equal(sends.review,sent);
+    await assert.rejects(retryFlow(bad.id,{note:"Missing charge acknowledgement",mode:"regenerate"},"tester"),/acknowledgement/);
+    await retryFlow(bad.id,{note:"Reconciled prior negative; explicitly request another paid check",mode:"regenerate",acknowledgeNewCharge:true},"tester");
+    assert.equal((await runFlow(bad.id,invoke)).review_attempt,2);assert.equal(sends.review,sent+1);
+    const rejected=await flowDetail(bad.id);await decideFlow(bad.id,{decision:"rejected",snapshotHash:rejected.snapshotHash,note:"Reject unsupported facts"},"reviewer");assert.equal((await flowDetail(bad.id)).status,"rejected");
+    await withdraw(saved.document_id,{expectedRevision:2,reason:"Synthetic source withdrawal"},"tester");
+    await decideFlow(g.id,{decision:"rejected",snapshotHash:saved.snapshotHash,note:"Reject stale withdrawn material, retain old snapshot"},"reviewer");assert.equal((await flowDetail(g.id)).status,"rejected");
+  } finally {await sql.unsafe('DROP TRIGGER fishery_test_persist_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION fishery_test_persist_fault()');await sql`DELETE FROM settings WHERE key='flow-test-fault'`;}
 });
