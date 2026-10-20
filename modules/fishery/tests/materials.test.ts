@@ -654,8 +654,8 @@ test("private reader projects only the current real qualified set and never expo
 
 
 test("human revision preserves received provenance, saves without calls and only reviews the hash-bound current candidate",async()=>{
-  const f=await fixture({unknownRights:true}),body="合成远洋渔业资料，仅用于人工修订测试。";
-  const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
+  const f=await fixture({unknownRights:true}),body="合成远洋渔业资料，仅用于人工修订测试。合成资料第二句。合成资料第三句。合成资料第四句。合成资料第五句。";
+  const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1","p1s2","p1s3","p1s4","p1s5"];
   const wire={relevance:{decision:"relevant",reason:"合成远洋渔业资料",evidence},summaryZh:[{sentence:body,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",uncertainties:[]};
   await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-revision/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
   await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/revision-${f.id}`,title:"SYNTHETIC FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
@@ -663,6 +663,11 @@ test("human revision preserves received provenance, saves without calls and only
   const received=await paidRequest({service:"revision-local-mock",model:"mock",purpose:"fishery_draft",subject:original.id,identity:{original:original.id}},async()=>({response:{choices:[{message:{content:JSON.stringify(wire)}}]}}));
   await sql`UPDATE fishery_flow_tasks SET status='failed',stage_requests=${sql.json({'generation:1':{subject:original.id,purpose:'fishery_draft'}})},error=${sql.json({receiptId:received.receiptId,phase:"validate",reason:"synthetic invalid original"})} WHERE id=${original.id}`;
   const [receiptBefore]=await sql`SELECT * FROM receipts WHERE id=${received.receiptId}`,[taskBefore]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${original.id}`;
+  await sql`UPDATE receipts SET status='unknown' WHERE id=${received.receiptId}`;
+  await assert.rejects(revisionContext(original.id),/pending\/unknown|reconciled/);
+  await sql`UPDATE receipts SET status=${receiptBefore.status},purpose='fishery_quality_review' WHERE id=${received.receiptId}`;
+  await assert.rejects(revisionContext(original.id),/generation stage/);
+  await sql`UPDATE receipts SET purpose=${receiptBefore.purpose} WHERE id=${received.receiptId}`;
   const context=await revisionContext(original.id),request={identity:"revision-candidate",snapshotHash:context.snapshotHash,evidenceHash:context.evidenceCatalog.hash,reason:"PRIVATE_REVISION_REASON",candidate:wire};
   await assert.rejects(createHumanRevision(original.id,{...request,candidate:{...wire,summaryZh:[{sentence:body,evidence:["wrong-id"]}]}},"PRIVATE_REVISION_ACTOR"),/Invalid/);
   await assert.rejects(createHumanRevision(original.id,{...request,snapshotHash:"0".repeat(64)},"fixture-admin"),/snapshot/);

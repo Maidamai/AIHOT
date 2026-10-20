@@ -11,12 +11,12 @@ import { completeReceipt } from "@aihot/backend/providers/receipts";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { hash, lockDocument, NotFound } from "./store.ts";
 import { readCapturedText } from "./column-batches.ts";
-import { prepareFisheryDraft, buildFisheryDraftRequest, fisheryDraftWireSchema, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
+import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
 import { reviewFisheryDraft, buildFisheryReviewRequest, fisheryWireBytes, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
 import { sha256 } from "./source-adapters.ts";
 import { withFisheryAuthorization, assertFisheryCapacity } from "./authorization.ts";
 
-import { buildEvidenceCatalog, evidenceBinding, anchorIds } from "./evidence.ts";
+import { buildEvidenceCatalog, anchorIds, assertSavedEvidenceArtifact } from "./evidence.ts";
 import { TRIAL } from "./trial-transport.ts";
 
 const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
@@ -106,14 +106,14 @@ export async function createHumanRevision(id:string,raw:unknown,actor:string) {
   const data=z.strictObject({identity,snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),evidenceHash:z.string().regex(/^[a-f0-9]{64}$/),reason:z.string().trim().min(1).max(2000),candidate:z.unknown()}).parse(raw);
   const context=await revisionContext(id);
   if(data.snapshotHash!==context.snapshotHash||data.evidenceHash!==context.evidenceCatalog.hash) throw new Conflict("Current snapshot or evidence catalog changed; reload and select current IDs");
-  const input=await inputFor(context.documentId,context.snapshotHash),catalog=buildEvidenceCatalog(input);
-  const candidate=(()=>{try{return validateFisheryDraft(input,fisheryDraftWireSchema(catalog).parse(data.candidate));}catch(error){throw new Conflict(`Candidate validation refused: ${(error as Error).message.slice(0,2000)}`);}})();
+  const input=await inputFor(context.documentId,context.snapshotHash);
+  const parsed=(()=>{try{return parseFisheryManualRevision(input,data.candidate);}catch(error){throw new Conflict(`Candidate validation refused: ${(error as Error).message.slice(0,2000)}`);}})(),candidate=parsed.draft;
   if(candidate.relevance.decision!=="relevant"||!candidate.summaryZh.length) throw new Conflict("Revision requires relevant nonempty supported summary");
-  if(fisheryWireBytes(buildFisheryReviewRequest(input,candidate,"default"))>TRIAL.maxWireBytes) throw new Conflict("Full source and revision review exceed wire capacity; no request sent");
+  if(fisheryWireBytes(buildFisheryReviewRequest(input,candidate,"default",{mode:"manual_revision"}))>TRIAL.maxWireBytes) throw new Conflict("Full source and revision review exceed wire capacity; no request sent");
   const candidateHash=sha256(JSON.stringify(candidate)),current=await snapshot(context.documentId);
   const provenance={origin:"human_revision",originalTaskId:id,directParentTaskId:id,originalGenerationTaskId:context.originalGenerationTaskId,receiptId:context.receiptId,responseHash:context.responseHash,actor,at:new Date().toISOString(),reason:data.reason,candidateHash,
     diff:{before:context.originalCandidate,after:data.candidate}};
-  const draft={receiptId:null,model:"human_revision",promptVersion:buildFisheryDraftRequest(input,"default").promptVersion,schemaVersion:"fishery-draft-wire-v5",evidenceCatalog:evidenceBinding(catalog),draft:candidate,provenance};
+  const draft={receiptId:null,model:"human_revision",promptVersion:buildFisheryDraftRequest(input,"default").promptVersion,schemaVersion:parsed.schemaVersion,evidenceCatalog:parsed.evidenceCatalog,draft:candidate,provenance};
   return sql.begin(async tx=>{
     await lockDocument(tx,context.documentId);
     if((await snapshot(context.documentId)).hash!==context.snapshotHash) throw new Conflict("Snapshot changed while saving revision");
@@ -198,8 +198,9 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
       let draft=claimed.draft;
       if(draft?.provenance?.origin==="human_revision") {
         if(stage!=="review"||draft.provenance.candidateHash!==sha256(JSON.stringify(fisheryDraftSchema.parse(draft.draft)))) throw new Conflict("Human revision candidate hash or review-only stage changed");
-        validateFisheryDraft(input,draft.draft);
-        if(fisheryWireBytes(buildFisheryReviewRequest(input,draft.draft,"default"))>TRIAL.maxWireBytes) throw new Conflict("Revision review exceeds wire capacity");
+        assertSavedEvidenceArtifact(input,draft,{promptVersion:buildFisheryDraftRequest(input,"default").promptVersion,schemaVersion:"fishery-manual-revision-wire-v1"});
+        validateFisheryDraft(input,draft.draft,{mode:"manual_revision"});
+        if(fisheryWireBytes(buildFisheryReviewRequest(input,draft.draft,"default",{mode:"manual_revision"}))>TRIAL.maxWireBytes) throw new Conflict("Revision review exceeds wire capacity");
       }
       if(stage==="generation") assertFisheryPairFits(input);
       if(stage==="generation") {
@@ -218,7 +219,7 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
       phase="call";
       const quality=await reviewFisheryDraft(input,draft.draft,"default",async options=>{
         const answer=await stageInvoke(id,hash(claimed.snapshot),"review",claimed.review_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
-      });
+      },draft.provenance?.origin==="human_revision"?{mode:"manual_revision"}:{});
       phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
       await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET quality_review=${tx.json(quality)},status=${quality.status},stage='human',error=NULL,updated_at=now() WHERE id=${id}`;await completeReceipt(tx,quality.receiptId);await audit(claimed.actor,"fishery.flow.checked",`fishery:${claimed.document_id}`,null,null,{id,receiptId:quality.receiptId,status:quality.status},{db:tx});});
     });
