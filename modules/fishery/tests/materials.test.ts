@@ -18,7 +18,8 @@ import { sourceFixture, observationFixture } from "./fixtures.ts";
 import { materialDetail } from "../backend/workbench.ts";
 import { sha256 } from "../backend/source-adapters.ts";
 import { workbench } from "../backend/workbench.ts";
-import { collectColumns } from "../backend/column-batches.ts";
+import { collectColumns,readCapturedText } from "../backend/column-batches.ts";
+import { importBatch } from "../backend/import-batch.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
 import { paidRequest } from "@aihot/backend/providers/receipts";
@@ -837,4 +838,45 @@ test("human revision preserves received provenance, saves without calls and only
   const fresh=await revisionContext(original.id);assert.deepEqual((fresh.candidate as any).summaryZh,[],"new observation never auto-migrates old IDs");
   const freshTask=await createHumanRevision(original.id,{...request,identity:"fresh-observation-revision",snapshotHash:fresh.snapshotHash,evidenceHash:fresh.evidenceCatalog.hash},"fixture-admin");
   assert.equal(freshTask.snapshot.observationRevision,3);assert.equal(freshTask.stage,"review");
+});
+
+
+test("a verified irrelevant recapture supersedes qualified evidence while 404 and timeout only record unavailability",async()=>{
+  const url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_99821.htm",newUrl=url.replace("99821","99822"),fact="远洋渔业公海履约管理措施已经公布。";
+  const relevant=`<p>${fact}</p><p>本材料用于离线采集回归，全部请求由本地合成数据提供，第二段保留完整上下文供审核。</p>`,nearshore="近海养殖场开展池塘设备维护培训。参加人员学习饲料管理、车间清洁和水质监测。本地课程安排另行公布。";
+  const capture=async(id:string,target:string,mode:"relevant"|"irrelevant"|"404"|"timeout")=>collectColumns({id,dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>{
+    if(request===target&&mode==="timeout") throw new Error("Synthetic acquisition timeout");
+    const robots=request.endsWith("robots.txt"),listing=request===COLUMNS.moa.url;
+    return {url:request,status:robots||request===target&&mode==="404"?404:200,headers:{get:()=>"text/html"},body:Buffer.from(robots?"missing":listing?`<ul class="sj_e_tonzhi_list"><li><a href="${target}">远洋渔业素材更新</a></li></ul>`:mode==="404"?"<h1>404</h1>":`<meta name="ArticleTitle" content="离线正文变更材料"><meta name="PubDate" content="2026-10-20"><div class="sj_arc_body"><div class="TRS_Editor">${mode==="relevant"?relevant:`<p>${nearshore}</p>`}</div></div>`)};
+  }});
+  const ready=await capture("recapture-current-ready",url,"relevant"),first=await importBatch(ready.id,"tester"),id=first.rows[0]!.id;
+  const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+  await approve(id,1,source!.revision);
+  const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
+  const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"Synthetic public-sea source evidence",evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",organizations:[],locations:[],uncertainties:[]}:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic source sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevance",evidence}]}),receiptId:999999,model:"mock",reused:false,usage:null});
+  const task=await createFlow(id,{identity:"before-irrelevant-recapture"},"tester"),checked=await runFlow(task.id,invoke);
+  assert.equal(checked.status,"needs_human_review");await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic original snapshot approved"},"reviewer");
+  assert.equal((await readerItem(id)).id,id);
+  const original=await documentHistory(id),oldCapture=original.observations[0]!.payload.sourceCapture,oldBody=await readCapturedText(config.dataDir,oldCapture.archiveId,oldCapture.bodySha256);
+  for(const mode of ["404","timeout"] as const) {
+    const unavailable=await capture(`recapture-current-${mode}`,url,mode);assert.equal(unavailable.items[0]!.state,"failed");
+    await importBatch(unavailable.id,"tester");
+    assert.equal((await documentHistory(id)).observations.length,1);assert.equal((await flowDetail(task.id)).stale,false);assert.equal((await readerItem(id)).id,id);
+    const [audit]=await sql`SELECT after,reason FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${unavailable.id}`;
+    assert.equal(audit!.after.outcome,"unavailable");assert.match(audit!.reason,/no confirmed source-body change/);
+    if(mode==="timeout") assert.match(audit!.after.reason,/timeout/);
+  }
+  const recaptured=await capture("recapture-current-irrelevant",url,"irrelevant");assert.equal(recaptured.items[0]!.state,"irrelevant");
+  const update=await importBatch(recaptured.id,"tester");
+  assert.deepEqual(update.rows,[],"Irrelevant updates cannot seed processing tasks");
+  const history=await documentHistory(id);assert.equal(history.observations.length,2);assert.equal(history.observations[1]!.revision,2);assert.equal(history.reviews.length,1);
+  const latest=history.observations[1]!.payload;assert.match(latest.summaryZh,/未提供明确远洋/);assert.equal(await readCapturedText(config.dataDir,latest.sourceCapture.archiveId,latest.sourceCapture.bodySha256),nearshore);
+  assert.equal(await readCapturedText(config.dataDir,oldCapture.archiveId,oldCapture.bodySha256),oldBody,"The previous source archive is retained");
+  const stale=await flowDetail(task.id);assert.equal(stale.stale,true);assert.equal(stale.internalArticle,null);await assert.rejects(readerItem(id),/No current/);
+  const [trace]=await sql`SELECT after FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`;
+  assert.equal(trace!.after.outcome,"irrelevant");assert.equal(trace!.after.relevance.decision,"not_proven");
+  await importBatch(recaptured.id,"tester");assert.equal((await documentHistory(id)).observations.length,2);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`)[0]!.n,1,"Reimporting the same archive does not fabricate another acquisition");
+  const newIrrelevant=await capture("recapture-new-irrelevant",newUrl,"irrelevant");await importBatch(newIrrelevant.id,"tester");
+  assert.equal((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${newUrl}`).length,0,"A new irrelevant URL is not registered as a fishery material");
 });

@@ -117,12 +117,21 @@ export function evidenceIdentity(input: unknown) {
   if (capture) { const { capturedAt: _time, attachmentCapturedAt: _attachmentTime, archiveId: _archive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
   return hash(payload);
 }
-export async function importCapturedMaterial(column: { id: string; name: string; issuer: string }, canonicalUrl: string, input: unknown, actor: string) {
+type CaptureColumn={id:string;name:string;issuer:string};
+type CapturedImport={id:string;revision:number;unchanged:boolean};
+export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true}):Promise<CapturedImport|null>;
+export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string):Promise<CapturedImport>;
+export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean}={}) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const sourceId = `fishery-column-${column.id}`;
   // A configured column owner is attribution only; do not infer a page publisher or policy issuer.
   const sourceAttribution = column.issuer;
   return sql.begin(async tx => {
+    // Take the same source -> document lock order as normal imports. An unrelated URL must never be registered here.
+    if(options.existingOnly) {
+      await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
+      if(!(await tx`SELECT id FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`).length) return null;
+    }
     await tx`INSERT INTO sources (id,name,kind,enabled,participation_mode,site_fulltext,next_fetch_at)
       VALUES (${sourceId},${column.name},'external',false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
     // Lock the source to serialize imports of the same URL and preserve operator rights settings.
@@ -152,4 +161,15 @@ export async function documentHistory(id: string) {
   const observations = await sql`SELECT * FROM fishery_observations WHERE document_id = ${id} ORDER BY revision`;
   const reviews = await sql`SELECT * FROM fishery_reviews WHERE document_id = ${id} ORDER BY id`;
   return { document: Object.assign({}, document, sourceAttributionOf(document.issuer)), observations, reviews };
+}
+
+export async function recordCapturedAcquisition(columnId:string,canonicalUrl:string,record:{batchId:string;archiveId:string;outcome:"ready"|"irrelevant"|"unavailable";capture:unknown;relevance:unknown;reason:string},actor:string) {
+  return sql.begin(async tx=>{
+    const [document]=await tx`SELECT id FROM fishery_documents WHERE source_id=${`fishery-column-${columnId}`} AND canonical_url=${canonicalUrl} FOR UPDATE`;
+    if(!document) return null;
+    const subject=`fishery:${document.id}`;
+    if(!(await tx`SELECT 1 FROM audit_log WHERE subject=${subject} AND action='fishery.acquisition' AND after->>'batchId'=${record.batchId} AND after->>'archiveId'=${record.archiveId} LIMIT 1`).length)
+      await audit(actor,"fishery.acquisition",subject,record.outcome==="unavailable"?"Acquisition unavailable; no confirmed source-body change":"Verified archived acquisition result",null,record,{db:tx});
+    return {documentId:String(document.id),...record};
+  });
 }
