@@ -409,6 +409,8 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
   await retryFlow(id!,{note:"Explicit reconciled mock failure"},"tester");failReview=false;
   const checked=await runFlow(id!,invoke);assert.equal(checked.status,"needs_human_review");assert.equal(generated,1);assert.equal(reviewed,2);assert.equal(checked.internalArticle,null);
   await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:"a".repeat(64),note:"wrong snapshot"},"reviewer"),/snapshot changed/);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"AI support cannot approve raw material"},"reviewer"),/must be approved/);
+  await approve(checked.document_id,checked.snapshot.observationRevision,checked.snapshot.sourceRevision);
   await decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic internal decision only"},"reviewer");
   const qualified=await flowDetail(id!);assert.equal(qualified.status,"qualified");assert.ok(qualified.internalArticle);assert.equal(qualified.published,false);
   await decideFlow(id!,{decision:"rejected",snapshotHash:checked.snapshotHash,note:"Retract synthetic qualification"},"reviewer");assert.equal((await flowDetail(id!)).internalArticle,null);
@@ -424,7 +426,14 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
   await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Old snapshot"},"reviewer"),/snapshot changed|newer authoritative/);
   await assert.rejects(createFlow(checked.document_id,{identity:"test"},"tester"),/old evidence/);
   const next=await createFlow(checked.document_id,{identity:"new-version"},"tester");assert.notEqual(next.id,id!);
-  await withdraw(checked.document_id,{expectedRevision:1,reason:"Synthetic withdrawal"},"tester");assert.equal((await flowDetail(next.id)).stale,true);assert.equal((await flowDetail(id!)).internalArticle,null);
+  const rechecked=await runFlow(next.id,invoke);assert.equal(rechecked.status,"needs_human_review");assert.equal(rechecked.materialApproved,false);
+  await assert.rejects(decideFlow(next.id,{decision:"qualified",snapshotHash:rechecked.snapshotHash,note:"Old source approval cannot approve a new source version"},"reviewer"),/must be approved/);
+  await approve(checked.document_id,rechecked.snapshot.observationRevision,rechecked.snapshot.sourceRevision);
+  await decideFlow(next.id,{decision:"qualified",snapshotHash:rechecked.snapshotHash,note:"Current source and observation approved"},"reviewer");assert.ok((await flowDetail(next.id)).internalArticle);
+  await observe(checked.document_id,{...document.observations[0]!.payload,expectedRevision:1,originalTitle:"合成新原标题，未经核查",title:"合成标题变更"},"tester");
+  assert.equal((await flowDetail(next.id)).materialApproved,false);assert.equal((await flowDetail(next.id)).internalArticle,null);
+  await assert.rejects(decideFlow(next.id,{decision:"qualified",snapshotHash:rechecked.snapshotHash,note:"Old raw approval cannot approve a new observation title"},"reviewer"),/must be approved/);
+  await withdraw(checked.document_id,{expectedRevision:2,reason:"Synthetic withdrawal"},"tester");assert.equal((await flowDetail(next.id)).stale,true);assert.equal((await flowDetail(id!)).internalArticle,null);
 });
 
 
@@ -558,6 +567,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     assert.equal(goodTask.timeline.originalAgeDays,186);assert.equal(goodTask.timeline.historical,true);assert.equal(goodTask.timeline.isOriginalDay,false);
     assert.equal(goodTask.timeline.candidateEvent.precision,"unknown");assert.equal(goodTask.timeline.sourceEvent.precision,"unknown");
     assert.ok(goodTask.timeline.generatedAt);assert.ok(goodTask.timeline.checkedAt);assert.equal(goodTask.timeline.sourceCapturedAt,"2026-10-20T00:00:00Z");
+    await approve(goodTask.document_id,goodTask.snapshot.observationRevision,goodTask.snapshot.sourceRevision);
     await decideFlow(good.id,{decision:"qualified",snapshotHash:goodTask.snapshotHash,note:"Synthetic historical internal article"},"reviewer");
     const article=(await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"))).internalArticle;
     assert.equal(article.timeline.historical,true);assert.equal(article.timeline.originalAgeDays,186);assert.equal(article.timeline.candidateEvent.precision,"unknown");
@@ -587,6 +597,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     ineligible=true;
     const unknown=await task("manual-unknown"),unknownJob=await enqueueOn(flowQueue,{id:unknown.id});
     assert.equal((await settled(unknownJob)).state,"completed");const unknownTask=await flowDetail(unknown.id);assert.equal(unknownTask.status,"needs_evidence");assert.equal(unknownTask.error.code,"FISHERY_ARTICLE_INELIGIBLE");assert.equal(calls,4,"unknown relevance skips paid review");
+    await approve(unknownTask.document_id,unknownTask.snapshot.observationRevision,unknownTask.snapshot.sourceRevision);
     await assert.rejects(decideFlow(unknown.id,{decision:"qualified",snapshotHash:unknownTask.snapshotHash,note:"Unknown cannot qualify"},"reviewer"),/relevant/);
     await sql`UPDATE fishery_flow_tasks SET status='qualified',quality_review=${sql.json({status:"needs_human_review",receiptId:999999,review:{decision:"supported",coverage:"complete_input",findings:[]},missingFields:[]})},human_decision=${sql.json({actor:"legacy-reviewer",decision:"qualified"})} WHERE id=${unknown.id}`;
     assert.equal((await flowDetail(unknown.id)).internalArticle,null,"legacy unknown qualified tasks have no internal article preview even with a formerly passing review");
@@ -598,6 +609,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     assert.equal((await settled(await enqueueOn(flowQueue,{id:unknown.id}))).state,"completed");assert.equal((await flowDetail(unknown.id)).status,"needs_human_review");assert.equal(calls,6);
     emptySummary=true;
     const empty=await task("manual-empty"),emptyJob=await enqueueOn(flowQueue,{id:empty.id});assert.equal((await settled(emptyJob)).state,"completed");const emptyTask=await flowDetail(empty.id);assert.equal(emptyTask.status,"needs_evidence");assert.equal(calls,7,"empty summary skips paid review");
+    await approve(emptyTask.document_id,emptyTask.snapshot.observationRevision,emptyTask.snapshot.sourceRevision);
     await assert.rejects(decideFlow(empty.id,{decision:"qualified",snapshotHash:emptyTask.snapshotHash,note:"Empty article cannot qualify"},"reviewer"),/非空/);
   } finally {
     releaseHold?.();
@@ -610,23 +622,29 @@ test("manual processor only consumes explicit flows, persists blocks and failure
 
 test("private reader projects only the current real qualified set and never exposes audit data or charges on reads",async()=>{
   const baseline=(await readerPage({},now)).total;
-  const f=await fixture({unknownRights:true}),quote="合成验收：远洋捕捞配额10吨，仅用于接口门禁测试。",body=quote+"\nRAW_BODY_SENTINEL_NOT_FOR_READER";
-  await observe(f.id,{...observationFixture,expectedRevision:1,title:"[合成接口验收，非真实资料] 远洋捕捞配额资料",sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-reader/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+  const f=await fixture({unknownRights:true}),quote="合成验收：仅在2026年10月20日且安全条件满足时，远洋研究资料用于接口门禁测试。",body=quote+"\nRAW_BODY_SENTINEL_NOT_FOR_READER";
+  await observe(f.id,{...observationFixture,expectedRevision:1,originalTitle:"配额增100%（合成未核查原标题）",title:"配额增100%（合成未核查原标题）",sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-reader/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
   const material=await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/private-reader-${f.id}`,title:"SYNTHETIC FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
   const task=await createFlow(f.id,{identity:"reader-synthetic-contract"},"fixture-admin"),evidence=["p1s1"],date={date:{precision:"unknown",value:null},evidence:[]};let calls=0;
   const invoke=async(options:any)=>{calls++;const output=options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"公海远洋政策合成样例",evidence},summaryZh:[{sentence:quote,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",uncertainties:[]}: {decision:"supported",coverage:"complete_input",findings:JSON.parse(options.user).claims.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic contract verification only",evidence:c.evidenceIds}))};return {data:options.schema.parse(output),receiptId:999999,model:"mock",reused:false,usage:null};};
   const checked=await runFlow(task.id,invoke);assert.equal(checked.status,"needs_human_review",JSON.stringify(checked.error));
+  assert.equal(checked.materialApproved,false);
+  await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Must not bypass raw material approval"},"fixture-admin"),/must be approved/);
+  await sql`UPDATE fishery_flow_tasks SET status='qualified',human_decision=${sql.json({actor:"synthetic-legacy",decision:"qualified",snapshotHash:checked.snapshotHash})} WHERE id=${task.id}`;
+  assert.equal((await flowDetail(task.id)).internalArticle,null);await assert.rejects(readerItem(f.id,now),/No current/);
+  await sql`UPDATE fishery_flow_tasks SET status='needs_human_review',human_decision=NULL WHERE id=${task.id}`;
+  await approve(f.id,2,1);assert.equal((await flowDetail(task.id)).materialApproved,true);
   await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"INTERNAL_AUDIT_SENTINEL_DO_NOT_PROJECT"},"PRIVATE_REVIEWER_SENTINEL");
   const [original]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${task.id}`;
-  const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"policy");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
-  assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"policy"},now)).rows.some(r=>r.id===f.id));
-  assert.equal(one.verification.label,"摘要已完成内部核对");
+  const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"safety");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
+  assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"safety"},now)).rows.some(r=>r.id===f.id));
+  assert.equal(one.verification.label,"摘要已完成内部核对");assert.equal(one.title,quote);assert.equal(one.source.originalTitle,"配额增100%（合成未核查原标题）");assert.ok(!one.title.includes("100%"));
   const categoriesBefore=page.categories;
   await review(f.id,{revision:2,sourceRevision:1,decision:"rejected",applicabilityReviewed:false,note:"Synthetic current-version material rejection"},"fixture-admin");
   assert.equal((await flowDetail(task.id)).materialRejected,true);assert.equal((await flowDetail(task.id)).internalArticle,null);
   await assert.rejects(readerItem(f.id,now),/No current/);assert.equal((await readerPage({},now)).total,baseline);
   assert.equal((await readerPage({},now)).categories.reduce((n,c)=>n+c.count,0),baseline);
-  await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot bypass current material rejection"},"fixture-admin"),/material observation review is rejected/);
+  await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot bypass current material rejection"},"fixture-admin"),/must be approved/);
   await review(f.id,{revision:2,sourceRevision:1,decision:"approved",applicabilityReviewed:false,note:"Synthetic latest current review replaces rejection"},"fixture-admin");
   assert.deepEqual((await readerPage({},now)).categories,categoriesBefore);
   // A historic-version rejection is not a rejection of the current observation.
@@ -648,7 +666,9 @@ test("private reader projects only the current real qualified set and never expo
   await sql`UPDATE fishery_documents SET article_id=${material.articleId} WHERE id=${f.id}`;await absent();await sql`UPDATE fishery_documents SET article_id=NULL WHERE id=${f.id}`;
   await sql`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor) VALUES (${task.id+"-newer"},${f.id},'newer-reader-pending',${sql.json(original.snapshot)},'queued','generation','fixture-admin')`;await absent();
   await sql`UPDATE fishery_flow_tasks SET status='rejected' WHERE id=${task.id+"-newer"}`;await absent();
-  await observe(f.id,{...observationFixture,expectedRevision:2,title:"合成新版本，旧稿失效"},"fixture-admin");await absent();
+  await registerSource(f.sourceId,{...source.profile,expectedRevision:1},"fixture-admin");
+  assert.equal((await flowDetail(task.id)).materialApproved,false);await absent();
+  await observe(f.id,{...observationFixture,expectedRevision:2,originalTitle:"合成新原标题增200%",title:"合成新版本，旧稿失效"},"fixture-admin");assert.equal((await flowDetail(task.id)).materialApproved,false);await absent();
   await withdraw(f.id,{expectedRevision:3,reason:"Synthetic withdrawal"},"fixture-admin");await absent();
 });
 
@@ -700,6 +720,7 @@ test("human revision preserves received provenance, saves without calls and only
   await assert.rejects(createHumanRevision(original.id,request,"fixture-admin"),/running/);
   release();const result=await running;
   assert.equal(calls,1);assert.equal(result.status,"needs_human_review",JSON.stringify(result.error));
+  await approve(f.id,2,1);
   await decideFlow(revised.id,{decision:"qualified",snapshotHash:result.snapshotHash,note:"synthetic qualification"},"fixture-admin");
   assert.ok((await flowDetail(revised.id)).internalArticle);
   assert.equal((await readerItem(f.id,now)).verification.label,"人工修订候选，经模型辅助核查与人工审核");

@@ -167,20 +167,20 @@ async function flowTimeline(row:Record<string,any>,now:Date):Promise<FlowTimelin
     sourceCapturedAt:capture?.capturedAt??null,generatedAt:iso(times?.generated_at),checkedAt:iso(times?.checked_at),taskCreatedAt:iso(row.created_at)!,taskUpdatedAt:iso(row.updated_at)!,
     referenceDate,originalAgeDays,isOriginalDay:originalAgeDays===null?null:originalAgeDays===0,historical,label};
 }
-async function currentMaterialRejected(documentId:string,db:Db=sql) {
+async function currentMaterialDecision(documentId:string,db:Db=sql) {
   const [row]=await db`SELECT r.decision,r.revision,r.source_revision,o.revision AS current_revision,s.revision AS current_source_revision
     FROM fishery_documents d JOIN fishery_sources s ON s.source_id=d.source_id
     JOIN LATERAL (SELECT revision FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1) o ON true
     LEFT JOIN LATERAL (SELECT decision,revision,source_revision FROM fishery_reviews WHERE document_id=d.id AND revision=o.revision AND source_revision=s.revision ORDER BY id DESC LIMIT 1) r ON true WHERE d.id=${documentId}`;
-  return row?.decision==="rejected"&&row.revision===row.current_revision&&row.source_revision===row.current_source_revision;
+  return row?.revision===row?.current_revision&&row?.source_revision===row?.current_source_revision?row?.decision??null:null;
 }
 export async function flowDetail(id:string,now=new Date()):Promise<Record<string,any>> {
   const [row]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${id}`;if(!row) throw new NotFound("Flow not found");
   let staleReason:string|null=null;try{await inputFor(row.document_id,hash(row.snapshot));}catch(error){staleReason=(error as Error).message;}
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
-  const authoritative=latest?.id===id,timeline=await flowTimeline(row,now),materialRejected=await currentMaterialRejected(row.document_id);
-  return {...row,authoritative,timeline,materialRejected,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
-    internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&!materialRejected&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
+  const authoritative=latest?.id===id,timeline=await flowTimeline(row,now),materialDecision=await currentMaterialDecision(row.document_id),materialRejected=materialDecision==="rejected",materialApproved=materialDecision==="approved";
+  return {...row,authoritative,timeline,materialRejected,materialApproved,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
+    internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&materialApproved&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
 async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,stage:string,attempt:number,options:ChatJsonOptions<S>,invoke:FisheryInvoke) {
@@ -293,7 +293,7 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
     if(data.decision==="qualified") {
       const [latest]=await tx`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
       if(latest?.id!==id) throw new Conflict("A newer authoritative task supersedes this internal article");
-      if(await currentMaterialRejected(row.document_id,tx)) throw new Conflict("Current material observation review is rejected; internal qualification is blocked");
+      if(await currentMaterialDecision(row.document_id,tx)!=="approved") throw new Conflict("Current material observation and source revision must be approved; pending or rejected material blocks internal qualification");
       const before=await snapshot(row.document_id);
       await tx`SELECT source_id FROM fishery_sources WHERE source_id=${before.value.sourceId} FOR SHARE`;
       const current=await snapshot(row.document_id);

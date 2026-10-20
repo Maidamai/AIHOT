@@ -31,7 +31,7 @@ export interface FlowTimeline {
   referenceDate:string;originalAgeDays:number|null;isOriginalDay:boolean|null;historical:boolean;label:string;
 }
 export interface FlowView {
-  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;materialRejected:boolean;stale:boolean;staleReason:string|null;
+  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;materialRejected:boolean;materialApproved:boolean;stale:boolean;staleReason:string|null;
   timeline:FlowTimeline;
   generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
   draft:{receiptId:number|null;promptVersion:string;model:string;provenance?:{origin:"human_revision";candidateHash:string;originalTaskId:string;receiptId:number;responseHash:string;reason:string;actor:string;at:string;diff:unknown};draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
@@ -44,7 +44,7 @@ export interface FlowView {
 export type ReaderCategoryId="policy"|"safety"|"market"|"research"|"equipment"|"operations"|"reference";
 export interface ReaderCategory { id:ReaderCategoryId;label:string;count:number; }
 export interface FisheryReaderItem {
-  id:string;title:string;source:{name:string;url:string};category:{id:ReaderCategoryId;label:string};
+  id:string;title:string;source:{name:string;url:string;originalTitle:string};category:{id:ReaderCategoryId;label:string};
   summary:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null;url:string}[]}[];
   dates:{published:{precision:"unknown"|"year"|"month"|"day";value:string|null};event:{precision:"unknown"|"year"|"month"|"day";value:string|null}};
   age:{referenceDate:string;days:number|null;historical:boolean;label:string};
