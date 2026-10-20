@@ -85,6 +85,45 @@ test("captured imports are unreviewed, unchanged captures deduplicate and A→B�
   config.devAdmin=null;
 });
 
+test("column attribution never becomes a page publisher or policy issuer in main records and exports", async () => {
+  // Offline counterexample: column owner, page source and joint policy issuers are distinct roles.
+  const column = { id: "synthetic-attribution", name: "渔业渔政管理局栏目", issuer: "农业农村部渔业渔政管理局" };
+  const url = "https://yyj.moa.gov.cn/gzdt/202609/t20260930_6488348.htm";
+  const imported = await importCapturedMaterial(column, url, {
+    ...observationFixture, originalTitle: "合成政策报道", title: "合成政策报道",
+    summaryZh: "离线角色反例：网页来源为新闻办公室；正文提到农业农村部、财政部联合印发通知。",
+  }, "tester");
+  const sourceId = `fishery-column-${column.id}`;
+  const history = await documentHistory(imported.id);
+  assert.equal(history.document.issuer, column.issuer, "preserve legacy user data");
+  assert.equal(history.document.sourceAttribution, column.issuer);
+  assert.equal(history.document.legacyIssuerMeaning, "source_attribution_only");
+  config.devAdmin = { displayName: "ISOLATED TEST ATTRIBUTION ONLY" };
+  try {
+    const response = await app.inject(`/api/admin/fishery/documents/${imported.id}/detail`);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().sourceAttribution, column.issuer);
+    assert.equal(response.json().legacyIssuerMeaning, "source_attribution_only");
+    const list = await app.inject("/api/admin/fishery/workbench?scope=all&q=合成政策报道");
+    assert.equal(list.json().rows.find((r: { id: string }) => r.id === imported.id).sourceAttribution, column.issuer);
+  } finally { config.devAdmin = null; }
+  await approve(imported.id);
+  await assert.rejects(exportMaterial(imported.id, 1, "tester", now), /rights/);
+  // Explicit isolated permission fixture is required; no real source rights are changed.
+  await registerSource(sourceId, { ...sourceFixture, expectedRevision: 1 }, "tester");
+  await approve(imported.id, 1, 2);
+  const bundle = await exportMaterial(imported.id, 1, "tester", now);
+  assert.equal(bundle.source.sourceAttribution, column.issuer);
+  assert.equal(bundle.source.issuer, column.issuer);
+  assert.equal(bundle.source.legacyIssuerMeaning, "source_attribution_only");
+  assert.equal(bundle.source.pagePublisher, null, "column owner and mentioned source do not verify a page publisher");
+  assert.equal(bundle.policy.issuers, null, "mentioning a notice does not verify its issuers in main-record metadata");
+  const markdown = materialMarkdown(bundle);
+  assert.match(markdown, /来源归属：农业农村部渔业渔政管理局/);
+  assert.match(markdown, /网页发布机构：未知/);
+  assert.match(markdown, /政策发文机关：未知/);
+});
+
 test("isolated test exports keep the test-review warning in JSON, Markdown and their content hash", async () => {
   const environment = config.environmentName;
   config.environmentName = "test";

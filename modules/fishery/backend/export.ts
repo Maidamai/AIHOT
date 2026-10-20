@@ -5,7 +5,7 @@ import { audit, Conflict } from "@aihot/backend/audit";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { publicSourceName } from "@aihot/backend/publication/rules";
 import { effectiveState, canExportSummary, type Observation, type SourceProfile } from "../contracts.ts";
-import { hash, lockDocument } from "./store.ts";
+import { hash, lockDocument, sourceAttributionOf } from "./store.ts";
 import type { Blocker } from "../ui-contracts.ts";
 
 /** Read-only explanations and the export command use exactly the same eligibility checks. */
@@ -68,12 +68,12 @@ export async function exportMaterial(id: string, revision: number, actor: string
     const o = observation.payload;
     assertCaptureExportable(o);
     const payload = {
-      schemaVersion: "fishery-material/0.2", id, revision, state: "approved",
+      schemaVersion: "fishery-material/0.3", id, revision, state: "approved",
       title: o.title, originalTitle: o.originalTitle, summaryZh: o.summaryZh,
-      source: { id: doc.source_id, name: publicSourceName(source.name), issuer: doc.issuer, originalUrl: doc.canonical_url },
+      source: { id: doc.source_id, name: publicSourceName(source.name), ...sourceAttributionOf(doc.issuer), pagePublisher: null, originalUrl: doc.canonical_url },
       dates: o.dates, scope: o.scope, language: o.language, evidence: o.evidence, sourceCapture: o.sourceCapture ?? null,
       observation: { observedAt: observation.observed_at.toISOString(), hashAssurance: "admin_declared_not_fetched", rawSha256: o.rawSha256, contentHash: observation.content_hash },
-      policy: { context: o.policyContext ?? null, dateComparisonReference: { date: now.toISOString().slice(0, 10), timezone: "UTC" }, documentNumber: doc.document_number, status: o.policyStatus, effectiveDateState: effectiveState(o.dates.effectiveFrom, now.toISOString().slice(0, 10)), applicabilityReviewed: review.applicability_reviewed },
+      policy: { context: o.policyContext ?? null, dateComparisonReference: { date: now.toISOString().slice(0, 10), timezone: "UTC" }, documentNumber: doc.document_number, issuers: null, status: o.policyStatus, effectiveDateState: effectiveState(o.dates.effectiveFrom, now.toISOString().slice(0, 10)), applicabilityReviewed: review.applicability_reviewed },
       rights: { revision: source.revision, mode: "summary_link", attribution: p.attribution, evidenceUrl: p.evidenceUrl, checkedAt: p.rightsCheckedAt, fulltextExport: false, translationExport: false },
       editorial: { confidence: config.environmentName === "test" ? "isolated_test_workflow_not_business_approval" : "human_reviewed_metadata", reviewer: review.actor, reviewedAt: review.reviewed_at.toISOString(), cautions: [
         ...(config.environmentName === "test" ? ["隔离测试审核：不代表人工业务批准或真实转载授权"] : []),
@@ -90,7 +90,8 @@ export async function exportMaterial(id: string, revision: number, actor: string
 const md = (value: string) => value.replace(/[\\`*_{}\[\]()<>#+.!|~-]/g, "\\$&").replace(/\r?\n/g, " ");
 export function materialMarkdown(b: Awaited<ReturnType<typeof exportMaterial>>) {
   return [`# ${md(b.title)}`, "", ...(b.editorial.confidence === "isolated_test_workflow_not_business_approval" ? ["> 隔离测试审核：不代表人工业务批准或真实转载授权", ""] : []), md(b.summaryZh), "", `- 原标题：${md(b.originalTitle)}`,
-    `- 来源：${md(b.source.name)} / ${md(b.source.issuer)}`, `- 原文：${md(b.source.originalUrl)}`,
+    `- 刊载来源：${md(b.source.name)}`, `- 来源归属：${md(b.source.sourceAttribution)}`, `- 原文：${md(b.source.originalUrl)}`,
+    "- 网页发布机构：未知；政策发文机关：未知（主记录未核验，不能从栏目归属或正文提及推定）",
     `- 文号：${md(b.policy.documentNumber ?? "未知")}`,
     ...Object.entries(b.dates).map(([name, date]) => `- ${name}：${date.value ?? "未知"}（${date.precision}）`),
     `- 生效日期进度：${b.policy.effectiveDateState}；对照 ${b.policy.dateComparisonReference.date} UTC日，不代表法定生效时刻或完整法律适用判断`, `- 适用范围：${md(JSON.stringify(b.scope))}`,

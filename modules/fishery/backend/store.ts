@@ -11,6 +11,9 @@ function canonical(value: unknown): unknown {
 export const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 export class NotFound extends Error { statusCode = 404; }
 
+// The existing issuer column stores source attribution, never verified publishing authority.
+export const sourceAttributionOf = (issuer: string) => ({ issuer, sourceAttribution: issuer, legacyIssuerMeaning: "source_attribution_only" as const });
+
 export async function registerSource(sourceId: string, input: unknown, actor: string) {
   const { expectedRevision, ...profile } = sourceSchema.parse(input);
   return sql.begin(async (tx) => {
@@ -38,7 +41,7 @@ export async function createDocument(input: unknown, actor: string) {
       ON CONFLICT (source_id, canonical_url) DO NOTHING RETURNING *`;
     if (!row) throw new Conflict("This source URL is registered; append an observation to its document");
     await audit(actor, "fishery.document", `fishery:${id}`, null, null, row, { db: tx });
-    return row;
+    return Object.assign({}, row, sourceAttributionOf(row.issuer));
   });
 }
 
@@ -98,12 +101,13 @@ export async function listSources() {
   return sql`SELECT f.*, s.name, s.health, s.last_fetch_at, s.last_ok_at, s.last_error, s.enabled, s.participation_mode FROM fishery_sources f JOIN sources s ON s.id = f.source_id ORDER BY f.source_id`;
 }
 export async function listDocuments() {
-  return sql`SELECT d.*, o.revision, o.observed_at, o.actor, o.content_hash, o.payload, o.payload->>'title' AS title,
+  const rows = await sql`SELECT d.*, o.revision, o.observed_at, o.actor, o.content_hash, o.payload, o.payload->>'title' AS title,
     r.decision, r.note, r.reviewed_at, r.actor AS reviewer, r.applicability_reviewed, r.revision AS reviewed_revision, r.source_revision AS reviewed_source_revision, s.revision AS source_revision
     FROM fishery_documents d JOIN fishery_sources s ON s.source_id = d.source_id
     LEFT JOIN LATERAL (SELECT * FROM fishery_observations WHERE document_id = d.id ORDER BY revision DESC LIMIT 1) o ON true
     LEFT JOIN LATERAL (SELECT * FROM fishery_reviews WHERE document_id = d.id ORDER BY id DESC LIMIT 1) r ON true
     ORDER BY coalesce(o.observed_at, d.created_at) DESC, d.id DESC`;
+  return rows.map(row => (Object.assign({}, row, sourceAttributionOf(row.issuer))));
 }
 
 // Idempotency compares the latest evidence, not any historic hash (A → B → A is a new version).
@@ -116,19 +120,21 @@ export function evidenceIdentity(input: unknown) {
 export async function importCapturedMaterial(column: { id: string; name: string; issuer: string }, canonicalUrl: string, input: unknown, actor: string) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const sourceId = `fishery-column-${column.id}`;
+  // A configured column owner is attribution only; do not infer a page publisher or policy issuer.
+  const sourceAttribution = column.issuer;
   return sql.begin(async tx => {
     await tx`INSERT INTO sources (id,name,kind,enabled,participation_mode,site_fulltext,next_fetch_at)
       VALUES (${sourceId},${column.name},'external',false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
     // Lock the source to serialize imports of the same URL and preserve operator rights settings.
     await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
     if (!(await tx`SELECT 1 FROM fishery_sources WHERE source_id=${sourceId}`).length) {
-      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: column.issuer, healthNote: "手动官方栏目试采；自动采集关闭，转载权未知" });
+      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: sourceAttribution, healthNote: "手动官方栏目试采；自动采集关闭，转载权未知" });
       await tx`INSERT INTO fishery_sources(source_id,revision,profile) VALUES (${sourceId},1,${tx.json(profile)})`;
       await audit(actor,"fishery.source",`source:${sourceId}`,"Manual batch registration",null,{ revision:1, profile },{db:tx});
     }
     let [doc] = await tx`SELECT * FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`;
     if (!doc) {
-      [doc] = await tx`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES (${randomUUID()},${sourceId},${column.issuer},${canonicalUrl}) RETURNING *`;
+      [doc] = await tx`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES (${randomUUID()},${sourceId},${sourceAttribution},${canonicalUrl}) RETURNING *`;
       await audit(actor,"fishery.document",`fishery:${doc!.id}`,null,null,doc!,{db:tx});
     }
     if (doc!.withdrawn_reason) throw new Conflict("Document withdrawn; batch cannot restore it");
@@ -145,5 +151,5 @@ export async function documentHistory(id: string) {
   if (!document) throw new NotFound("Document not found");
   const observations = await sql`SELECT * FROM fishery_observations WHERE document_id = ${id} ORDER BY revision`;
   const reviews = await sql`SELECT * FROM fishery_reviews WHERE document_id = ${id} ORDER BY id`;
-  return { document, observations, reviews };
+  return { document: Object.assign({}, document, sourceAttributionOf(document.issuer)), observations, reviews };
 }

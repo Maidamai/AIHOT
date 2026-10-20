@@ -53,7 +53,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
         </Card>
         <Card title="来源与日期"><KV items={[
           ["原始URL", <a className="break-all text-accent" href={d.canonicalUrl} target="_blank" rel="noreferrer">{d.canonicalUrl}</a>],
-          ["发布机构", d.issuer], ["文号", d.documentNumber ?? "未知"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],
+          ["来源归属", d.sourceAttribution], ["网页发布机构", "未知（主记录未核验）"], ["政策发文机关", "未知（主记录未核验）"], ["文号", d.documentNumber ?? "未知"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],
           ["获取时间", c ? `${bj(c.capturedAt, true)} 北京时间` : "未知"], ["发布日期", o ? dateLabel(o.dates.published) : "未知"],
           ["事件日期", o?.dates.event ? dateLabel(o.dates.event) : "未知，不用抓取或发布日期代替"], ["通过日期", o ? dateLabel(o.dates.adopted) : "未知"],
           ["生效日期", o ? dateLabel(o.dates.effectiveFrom) : "未知"], ["终止日期", o ? dateLabel(o.dates.effectiveUntil) : "未知"],

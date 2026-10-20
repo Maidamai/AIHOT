@@ -3,7 +3,7 @@ import { itemAvailability } from "@aihot/backend/publication/availability";
 import { createHash } from "node:crypto";
 import { config } from "@aihot/backend/config";
 import { readCapturedText } from "./column-batches.ts";
-import { documentHistory, listDocuments, listSources, NotFound } from "./store.ts";
+import { documentHistory, listDocuments, listSources, NotFound, sourceAttributionOf } from "./store.ts";
 import { exportBlockers } from "./export.ts";
 import type { MaterialDetail, MaterialObservation, MaterialReview, MaterialRow, MaterialSource, Workbench } from "../ui-contracts.ts";
 
@@ -19,7 +19,7 @@ function rowOf(d: Record<string, any>, source: MaterialSource, latest: MaterialO
     : c && (c.parseStatus === "unverified" || !c.bodySha256 || c.conflicts.length) ? "unverified"
     : review && (review.revision !== latest?.revision || review.sourceRevision !== source.revision) ? "stale"
     : review?.decision === "rejected" ? "rejected" : review?.decision === "approved" ? "approved" : "pending";
-  return { id: d.id, sourceId: d.source_id, title: latest?.payload.title ?? "尚无观察记录", issuer: d.issuer, canonicalUrl: d.canonical_url,
+  return { id: d.id, sourceId: d.source_id, title: latest?.payload.title ?? "尚无观察记录", ...sourceAttributionOf(d.issuer), canonicalUrl: d.canonical_url,
     documentNumber: d.document_number, articleId: d.article_id, withdrawnReason: d.withdrawn_reason, source, latest, review, state,
     testOnly: source.testOnly || d.issuer.startsWith("ISOLATED TEST"), blockers: exportBlockers({ withdrawn_reason: d.withdrawn_reason, article_id: d.article_id },
       { revision: source.revision, profile: source.profile, participation_mode: source.participationMode },

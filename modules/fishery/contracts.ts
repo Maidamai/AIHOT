@@ -44,7 +44,7 @@ export const sourceSchema = z.strictObject({
 export type SourceProfile = Omit<z.infer<typeof sourceSchema>, "expectedRevision">;
 export const documentSchema = z.strictObject({
   sourceId: idSchema, articleId: idSchema.nullable().default(null),
-  issuer: text.max(300), documentNumber: text.max(200).nullable().default(null), canonicalUrl: linkSchema,
+  issuer: text.max(300).describe("Legacy input for source attribution only; does not verify a page publisher or policy issuer"), documentNumber: text.max(200).nullable().default(null), canonicalUrl: linkSchema,
 });
 export const policyContextSchema = z.strictObject({
   entryIntoForce: z.enum(["unknown", "pending", "in_force"]),
