@@ -59,7 +59,10 @@ export default function Home() {
       {loaded.mode === "pool" ? (
         <>
           <p className="mb-5 mt-2 text-[13px] leading-relaxed text-ink-3">按实际收录展示，尚未标为精选。资料的收录时间不代表原文发布或更新；历史依据与适用条件请核对原文。</p>
-          {loaded.data.items.length > 0 ? <DayList items={loaded.data.items} /> : <EmptyState title="暂无相关资讯与资料">这个筛选下暂时没有可读内容，可切换分类或使用搜索。</EmptyState>}
+          {loaded.data.items.length > 0 ? <>
+            {loaded.data.items.some(i => !i.reference && i.category !== "reference") && <section aria-label="行业文章"><h2 className="mt-5 text-[18px] font-semibold">行业文章</h2><DayList items={loaded.data.items.filter(i => !i.reference && i.category !== "reference")} /></section>}
+            {loaded.data.items.some(i => !!i.reference || i.category === "reference") && <section aria-label="参考资料"><h2 className="mt-7 text-[18px] font-semibold">参考资料</h2><p className="mt-1 text-[13px] text-ink-3">按内容分类归档，包含历史与时效未知资料，不代表正在开放办理。</p><DayList items={loaded.data.items.filter(i => !!i.reference || i.category === "reference")} /></section>}
+          </> : <EmptyState title="暂无相关资讯与资料">这个筛选下暂时没有可读内容，可切换分类或使用搜索。</EmptyState>}
           <Pagination page={loaded.data.page} pageCount={loaded.data.pageCount} href={page => listPath("/", { ...filterParams(filters), page: page > 1 ? page : null })} />
         </>
       ) : (

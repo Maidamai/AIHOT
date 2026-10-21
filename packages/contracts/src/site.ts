@@ -38,7 +38,16 @@ export interface StoryRef {
 }
 
 /** What every site answer about an article carries; a card and a page each add the X post in their own form. */
+export interface ReferenceMetadata {
+  kind: "business_guide";
+  checkedAt: string;
+  /** Conservative final day from reviewed source dates; null remains unknown. */
+  deadlineDate: string | null;
+  expiryDate: string | null;
+}
+
 export interface ItemSummary {
+  reference?: ReferenceMetadata;
   id: string;
   title: string;
   originalTitle: string | null;
@@ -58,7 +67,7 @@ export interface ItemSummary {
 }
 
 /** The fields rendered by a site feed card; full original text lives in the item detail. */
-export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "source" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel"> {
+export interface FeedItemSummary extends Pick<ItemSummary, "id" | "title" | "summary" | "reason" | "source" | "publishedAt" | "timelineAt" | "category" | "tags" | "score" | "selected" | "channel" | "reference"> {
   x: (Pick<XPostView, "authorName" | "handle" | "avatarUrl" | "avatarSrcSet" | "media"> & {
     quoted: Omit<NonNullable<XPostView["quoted"]>, "url"> | null;
   }) | null;
@@ -446,6 +455,8 @@ export interface Brand {
 }
 
 export interface TopicSummary extends TopicLink {
+  /** Currently qualified listed content, including references; independent of selected counts. */
+  poolTotal?: number;
   group: TopicGroupKey;
   definition: string;
   /** Companies: their logo mark where the site has one, else their initial. */

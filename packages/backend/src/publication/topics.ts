@@ -270,7 +270,10 @@ function summarize(t: Topic, seats: TopicMember[], now: Date, brands: Map<string
 export async function listTopicSummaries(): Promise<TopicsResponse> {
   const [index, brands] = await Promise.all([topicIndex(), companyBrands()]);
   const live = await currentSeats(TOPICS.flatMap((t) => index.bySlug.get(t.slug)!.slice(0, LATEST_CANDIDATES).map((s) => s.id)), new Date());
-  return { groups: TOPIC_GROUPS, topics: TOPICS.map((t) => summarize(t, index.bySlug.get(t.slug)!, index.at, brands, live)) };
+  const condition = (await listedCondition(new Date())).condition;
+  const branches = TOPICS.map(t => sql`SELECT ${t.slug}::text AS slug,count(*)::int AS n FROM publications p WHERE ${condition} AND ${inTopic(t)}`);
+  const counts = new Map(branches.length ? (await branches.reduce((a, b) => sql`${a} UNION ALL ${b}`)).map(row => [String(row.slug), Number(row.n)]) : []);
+  return { groups: TOPIC_GROUPS, topics: TOPICS.map(t => ({ ...summarize(t, index.bySlug.get(t.slug)!, index.at, brands, live), poolTotal: counts.get(t.slug) ?? 0 })) };
 }
 
 export interface TopicCount {

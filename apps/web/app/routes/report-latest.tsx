@@ -1,4 +1,4 @@
-import { useLoaderData } from "react-router";
+import { Link, useLoaderData } from "react-router";
 import type { Route } from "./+types/report-latest";
 import { REPORT_NAMES, type ReportLatestPage } from "@aihot/contracts/site";
 import { REPORTS, subjectAfter, withSubject } from "@aihot/site";
@@ -40,7 +40,7 @@ export default function ReportLatestPage() {
   const { kind, report, index, today } = useLoaderData<typeof loader>();
   return (
     <ReportLayout kind={kind} index={index} current={report?.key ?? null} today={today} outline={report ? reportOutline(report) : []}>
-      {report ? <ReportPaper report={report} index={index} /> : <EmptyState title={subjectAfter("还没有发布", REPORT_NAMES[kind])}>第一期发布后会出现在这里。</EmptyState>}
+      {report ? <ReportPaper report={report} index={index} /> : <EmptyState title={subjectAfter("还没有发布", REPORT_NAMES[kind])}>此汇总入口尚未启用，暂无已发布期刊。<Link to="/" className="mt-3 block text-accent">阅读行业动态与资料 →</Link></EmptyState>}
     </ReportLayout>
   );
 }

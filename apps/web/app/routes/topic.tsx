@@ -1,7 +1,7 @@
 import { REPORTS, SITE } from "@aihot/site";
 import { Link, redirect, useLoaderData } from "react-router";
 import type { Route } from "./+types/topic";
-import type { TopicPage } from "@aihot/contracts/site";
+import type { TopicPage, PoolResponse } from "@aihot/contracts/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
 import { pageReuse } from "../lib/page-reuse";
 import { breadcrumbLd, pageMeta, titled, topicLd } from "../lib/seo";
@@ -31,7 +31,10 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // Page 1 lives at the topic's own address (308).
   if (params.page === "1") throw redirect(`/topics/${encodeURIComponent(params.slug)}`, 308);
   const data = await loadOr404<TopicPage>(`/api/site/topics/${encodeURIComponent(params.slug)}?page=${page}`, { signal: request.signal });
-  return cachedPage(60, { data });
+  const pool = data.items.length === 0 && data.topic.poolTotal > 0 && data.topic.poolHref
+    ? await loadOr404<PoolResponse>(`/api/site/pool${new URL(data.topic.poolHref, request.url).search}`, { signal: request.signal })
+    : null;
+  return cachedPage(60, { data, pool });
 }
 
 const PARTS = await loadParts((m) => m.topicPage);
@@ -66,7 +69,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
   return pageMeta({
     title: page > 1
       ? `${topic.name} 精选 · 第 ${page} 页`
-      : `${topic.name} 最新动态${parts.length ? `与${parts.map((p) => p.name).join("、")}` : ""}`,
+      : `${topic.name} 动态与资料${parts.length ? `与${parts.map((p) => p.name).join("、")}` : ""}`,
     description: text,
     path,
     image: `/og/topics/${topic.slug}.png`,
@@ -76,7 +79,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
       : [
           topicLd({
             path,
-            name: `${topic.name} 最新动态`,
+            name: `${topic.name} 动态与资料`,
             description: text,
             dateModified: topic.latest?.at ?? null,
             lists: parts.map((p) => ({ name: p.name, entries: p.entries(p.data) })),
@@ -87,7 +90,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function TopicRoute() {
-  const { data } = useLoaderData<typeof loader>();
+  const { data, pool } = useLoaderData<typeof loader>();
   const { topic, items, page, pageCount, pageSize } = data;
   const parts = partsOf(data);
   const href = (p: number) => (p <= 1 ? `/topics/${topic.slug}` : `/topics/${topic.slug}/page/${p}`);
@@ -106,7 +109,7 @@ export default function TopicRoute() {
             {topic.brand && <BrandMark brand={topic.brand} size={34} />}
             <span>
               {topic.name}{" "}
-              <span className="whitespace-nowrap font-semibold text-ink-4">最新动态</span>
+              <span className="whitespace-nowrap font-semibold text-ink-4">动态与资料</span>
             </span>
           </h1>
           <p className="mt-1.5 text-pretty text-[13.5px] leading-relaxed text-ink-3">{topic.definition}</p>
@@ -115,7 +118,7 @@ export default function TopicRoute() {
               <span className="num font-semibold text-ink-2">{topic.total.toLocaleString("zh-CN")}</span>{` ${REPORTS.metricUnits.selectedCount}`}
             </span>
             <span>
-              近 30 天 <span className="num font-semibold text-ink-2">{topic.recent.toLocaleString("zh-CN")}</span> 条
+              近 30 天精选 <span className="num font-semibold text-ink-2">{topic.recent.toLocaleString("zh-CN")}</span> 条
             </span>
             <span>
               共收录 <span className="num font-semibold text-ink-2">{topic.poolTotal.toLocaleString("zh-CN")}</span> 条
@@ -145,7 +148,9 @@ export default function TopicRoute() {
       )}
 
       <h2 className="sr-only">{page === 1 ? `${topic.name}的精选` : `精选归档 · 第 ${page} 页`}</h2>
-      {items.length === 0 ? (
+      {pool && pool.items.length > 0 ? (
+        <section aria-label="本主题已收录内容"><p className="mb-3 text-[13px] text-ink-3">本主题尚无精选，以下为已收录的合格资料与报道；收录不代表近期发布或当前有效。</p><DayList items={pool.items} />{pool.pageCount > 1 && <Link to={topic.poolHref!} className="text-accent">查看全部已收录内容（{pool.total}） →</Link>}</section>
+      ) : items.length === 0 ? (
         <div className="lg:card">
           <EmptyState title="这个主题暂时还没有精选内容" />
         </div>

@@ -1,3 +1,5 @@
+import type { ReferenceMetadata } from "@aihot/contracts/site";
+import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { publicationDecisionCurrent, type PublicationJob } from "./publication-queue.ts";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
 import { beijingAt } from "@aihot/contracts/time";
@@ -12,7 +14,7 @@ import { eligibleReaderItems } from "./reader.ts";
 import { eligibleBusinessGuideItems, businessGuideReaderItem } from "./business-guides.ts";
 import { lockDocument, hash } from "./store.ts";
 
-type Projection = { kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; tags: string[]; url: string; publicationTime: string | null; binding: string };
+type Projection = { reference?: ReferenceMetadata; kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; tags: string[]; url: string; publicationTime: string | null; binding: string };
 
 async function currentProjections(now: Date, db: Db = sql, target?: { kind: "article" | "business_guide"; id: string }): Promise<Projection[]> {
   const articles = target?.kind === "business_guide" ? [] : (await eligibleReaderItems(now)).filter(item => !target || item.id === target.id);
@@ -31,7 +33,8 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
       const topic = BUSINESS_TOPICS.find(topic => topic.id === item.payload.topicId);
       if (!topic) throw new Conflict("Reviewed guide topic is absent from the configured business topics");
       const tags = [topic.label, "资料"];
-      return { kind: "business_guide" as const, id: item.id, documentId: item.documentId, title: item.payload.title.value,
+      const time = projectBusinessTimeliness(item.payload.dates, now);
+      return { reference: { kind: "business_guide" as const, checkedAt: time.checkedAt, deadlineDate: time.deadline.lastDate, expiryDate: time.expiry.lastDate }, kind: "business_guide" as const, id: item.id, documentId: item.documentId, title: item.payload.title.value,
       summary: item.payload.summary.map(s => s.value).join("\n"), category: "reference", tags, url: item.source.url,
       publicationTime: item.payload.dates.published.value.precision === "day" ? item.payload.dates.published.value.value : null,
       binding: hash({ tags, revision: item.revision, payload: item.payload, source: item.source, snapshot: item.snapshot, evidence: item.evidence, verifiedAt: item.verifiedAt }) };
@@ -148,4 +151,17 @@ export async function fisheryPublicationItemDetails(articleId: string) {
       .map(([id, anchor]) => [id, { ...anchor, quote: anchor.quote.length > 240 ? `${anchor.quote.slice(0, 240)}…` : anchor.quote }])) } };
   }
   catch (error) { if (error instanceof Conflict || (error as { statusCode?: number }).statusCode === 404) return null; throw error; }
+}
+
+/** Only approved public guide date boundaries, never source bodies or review drafts. */
+export async function fisheryReferenceMetadata(articleIds: string[], now: Date): Promise<Record<string, ReferenceMetadata>> {
+  if (!articleIds.length) return {};
+  const bindings = await sql`SELECT article_id,item_id,projection_hash FROM fishery_publication_bindings
+    WHERE article_id=ANY(${articleIds}::text[]) AND kind='business_guide'`;
+  const projections = await currentProjections(now);
+  const byId = new Map(projections.filter(p => p.kind === "business_guide").map(p => [p.id, p]));
+  return Object.fromEntries(bindings.flatMap(binding => {
+    const projection = byId.get(binding.item_id);
+    return projection?.reference && projection.binding === binding.projection_hash ? [[binding.article_id, projection.reference]] : [];
+  }));
 }

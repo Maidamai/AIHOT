@@ -6,7 +6,7 @@ import type postgres from "postgres";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { WorkOptions } from "pg-boss";
 import type { z } from "zod";
-import type { Brand } from "@aihot/contracts/site";
+import type { ReferenceMetadata, Brand } from "@aihot/contracts/site";
 import type { Db } from "./db.ts";
 import type { QueueOptions } from "./jobs/queue.ts";
 import type { Finding } from "./notify/feishu.ts";
@@ -189,6 +189,7 @@ export interface ServerModule {
   independentSelectedSources?: readonly string[];
   /** Current read-time restrictions over publications alias `p`; missing approval must fail closed. */
   publication?: {
+    referenceMetadata?: (articleIds: string[], now: Date) => Promise<Record<string, ReferenceMetadata>>;
     itemDetails?: (articleId: string) => Promise<unknown | null>;
     /** Reviewed reference archives may be listed without inventing a publication date. */
     allowUndatedArchive?: (articleId: string, db: Db) => Promise<boolean>;

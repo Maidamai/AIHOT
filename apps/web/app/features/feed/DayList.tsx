@@ -18,6 +18,7 @@ export function DayList({ items, todayCount = null, headerAside }: { items: Feed
     <div>
       {days.map(({ day, entries: list }, i) => (
         <section key={day} aria-label={day}>
+          <p className="mb-1 mt-4 text-[12px] font-medium text-ink-3">收录日期 · 不代表原文发布或更新</p>
           <DayHeader day={day} today={today} count={day === today ? todayCount : null} aside={i === 0 ? headerAside : undefined} />
           <ol className="lg:pt-1">
             {list.map((it) => (

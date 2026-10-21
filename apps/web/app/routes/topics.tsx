@@ -30,7 +30,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
   const base = siteUrl();
   return pageMeta({
     title: SITE.topicsTitle,
-    description: `按${by}${subjectAfter("追踪", "最新动态")}：${named ? `${named}等 ` : ""}${topics.length} 个主题，浏览最新精选与重要进展，持续更新。`,
+    description: `按${by}${subjectAfter("追踪", "最新动态")}：${named ? `${named}等 ` : ""}${topics.length} 个主题，浏览已收录资料与精选。`,
     path: "/topics",
     image: "/og/pages/topics.png",
     jsonLd: [
@@ -79,6 +79,7 @@ function TopicCard({ t }: { t: TopicSummary }) {
           {t.latest?.title ?? t.definition}
         </span>
         <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-ink-4 lg:mt-3 lg:justify-between">
+          {t.poolTotal !== undefined && <span>合格收录 <span className="num font-semibold text-ink-3">{t.poolTotal}</span> 条</span>}
           {t.latest && <time dateTime={t.latest.at} suppressHydrationWarning>{relativeTime(t.latest.at)}</time>}
           <span>
             {t.recent > 0 ? (
@@ -105,7 +106,7 @@ export default function TopicsPage() {
         <h1 data-page-title="" className="text-[24px] font-semibold leading-[1.3] text-ink">{subjectAfter("按主题看")}</h1>
         <p className="mt-1.5 text-[13px] leading-relaxed text-ink-3">
           {`按${groups.map((g) => g.name).join("、")}浏览 `}
-          <span className="num">{topics.length}</span> 个主题，追踪最新精选与重要进展。
+          <span className="num">{topics.length}</span> 个主题，浏览已收录资料与精选。
         </p>
       </header>
       {groups.map((g) => (

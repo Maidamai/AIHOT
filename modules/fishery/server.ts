@@ -1,5 +1,5 @@
 import { publicationQueue } from "./backend/publication-queue.ts";
-import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails } from "./backend/publication-bridge.ts";
+import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata } from "./backend/publication-bridge.ts";
 import {archiveStatus,startArchiveProfile} from "./backend/archive-worker.ts";
 import { defineServerModule } from "@aihot/backend/modules";
 import { adminHandler, type AdminHandler } from "@aihot/api/routes/admin-auth";
@@ -32,7 +32,7 @@ const param = (req: { params: unknown }) => idSchema.parse((req.params as Record
 
 export default defineServerModule({
   name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, queues:[flowQueue,publicationQueue],
-  publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
+  publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
   http(app) {
     installManualSourceRoutes(app);
     registerBusinessGuideRoutes(app);

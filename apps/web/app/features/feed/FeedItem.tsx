@@ -1,7 +1,7 @@
 // One report in a feed. Desktop (≥ 961px): a white card beside the time rail. Phones: a compact row with
 // the time in the source line, the bookmark at hand, the reason in one line and duplicate reports
 // behind one button that opens a sheet. One markup, two presentations.
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { IntentLink } from "../../components/ui/IntentLink";
 import type { GroupInfo, FeedItemSummary, TimelineFilters } from "@aihot/contracts/site";
@@ -9,7 +9,7 @@ import { CATEGORY_LABELS } from "@aihot/contracts/taxonomy";
 import { ITEM_COPY } from "@aihot/site";
 import { SameEventBadge, SelectedBadge } from "../../components/ui/Badge";
 import { ScoreLabel } from "../../components/ui/Score";
-import { beijingDate, beijingTime } from "@aihot/contracts/time";
+import { addDays, beijingMidnight, beijingDate, beijingTime } from "@aihot/contracts/time";
 import { MediaThumbs, SourceLine, StarButton, readTone } from "./parts";
 import { GroupButton, GroupSources } from "./ReadingGroup";
 import { QuotedLine } from "../item/QuotedPost";
@@ -28,6 +28,21 @@ export interface FeedItemProps {
 }
 
 export const FeedItem = memo(function FeedItem({ item, group, filters, read = false, onOpen, showTags = false, at }: FeedItemProps) {
+  const [referenceDay, setReferenceDay] = useState(() => item.reference ? beijingDate(item.reference.checkedAt) : "");
+  useEffect(() => {
+    if (!item.reference) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      clearTimeout(timer);
+      const now = Date.now();
+      const day = beijingDate(now);
+      setReferenceDay(day);
+      timer = setTimeout(refresh, Math.max(1, beijingMidnight(addDays(day, 1)).getTime() - now + 50));
+    };
+    const visible = () => { if (document.visibilityState === "visible") refresh(); };
+    refresh(); window.addEventListener("focus", refresh); document.addEventListener("visibilitychange", visible);
+    return () => { clearTimeout(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", visible); };
+  }, [item.reference]);
   const isX = item.channel === "x" && !!item.x;
   const open = () => {
     rememberPreview(item);
@@ -63,8 +78,17 @@ export const FeedItem = memo(function FeedItem({ item, group, filters, read = fa
         </span>
       </header>
 
-      {showTags && (!item.publishedAt || beijingDate(item.publishedAt) !== beijingDate(at ?? item.timelineAt)) && (
-        <p className="mt-1 text-[12px] leading-relaxed text-ink-4">{item.publishedAt ? `原文发布于 ${beijingDate(item.publishedAt)}` : "原文发布日期未知，列表时间为收录时间"}</p>
+      {item.reference && <p role="status" aria-label="文载时效" className="mt-2 text-[13px] font-semibold text-note">
+        {item.reference.expiryDate && item.reference.expiryDate < referenceDay ? "已过文载失效日期 · 仅供历史参考" : item.reference.deadlineDate && item.reference.deadlineDate < referenceDay ? "已截止（按原文日期）· 仅供历史参考" : "可申请状态未知／待核实"}
+      </p>}
+      {showTags && (
+        <p className="mt-2 text-[12px] font-medium leading-relaxed text-ink-3">
+          {item.category === "reference" && "参考资料 · "}
+          {item.publishedAt
+            ? `${beijingDate(item.publishedAt).slice(0, 4) < beijingDate(Date.now()).slice(0, 4) ? "历史原文 · " : ""}原文发布于 ${beijingDate(item.publishedAt)}`
+            : "原文发布日期未知"}
+          {item.category === "reference" && " · 适用与截止状态请核对文载证据"}
+        </p>
       )}
 
       {isX ? (

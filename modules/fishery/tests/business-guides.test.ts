@@ -6,9 +6,9 @@ import { publicationQueue, enqueuePublication, type PublicationJob } from "../ba
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { flowQueue } from "../backend/flow.ts";
 import { getBoss, stopBoss, enqueueOn } from "@aihot/backend/jobs/queue";
-import { loadTopicPage } from "@aihot/backend/publication/topics";
+import { listTopicSummaries, loadTopicPage } from "@aihot/backend/publication/topics";
 import { installModules } from "@aihot/backend/modules";
-import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, syncFisheryPublications } from "../backend/publication-bridge.ts";
+import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata, syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadPool } from "@aihot/backend/publication/pool";
 import { loadItemDetail } from "@aihot/backend/publication/detail";
 import { loadItemShare } from "@aihot/backend/publication/og";
@@ -327,7 +327,7 @@ test("new final decisions explicitly distinguish declared executor kinds without
 test("reviewed guides use original publication pool/detail and immediately disappear when canonical review or body changes", async () => {
   const f = await fixture(), created = await draft(f.id);
   await finalApproval(created, "synthetic-reviewer");
-  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
   try {
     const before = (await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
     const sync = await syncFisheryPublications("synthetic-bridge");
@@ -388,18 +388,28 @@ test("reviewed business topics reuse the original tag-filtered pool and disappea
   candidate.topicId = "crew"; candidate.kind = "business_guide";
   const created = await createBusinessGuide({ documentId: f.id, snapshotHash: context.snapshotHash, payload: candidate, reason: "Synthetic crew navigation fixture" }, "synthetic-editor");
   await finalApproval(created, "synthetic-reviewer");
-  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, allowUndatedArchive: allowFisheryUndatedArchive } }]);
   try {
     const id = (await syncFisheryPublications("synthetic-topic-bridge")).rows.find(row => row.itemId === created.id)!.articleId;
     const page = (await loadTopicPage("crew", 1))!;
     assert.equal(page.topic.poolTotal, 1);
+    assert.equal((await listTopicSummaries()).topics.find(t => t.slug === "crew")!.poolTotal, 1);
     assert.equal(page.topic.total, 0, "Reference collection does not invent a selected report");
     const pool = await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"});
     assert.deepEqual(pool.items.map(item => item.id), [id]);
+    assert.deepEqual(pool.items[0]!.reference, { kind: "business_guide", checkedAt: pool.items[0]!.reference!.checkedAt, deadlineDate: "2026-11-01", expiryDate: null });
+    const beforeMidnight = await fisheryReferenceMetadata([id], new Date("2026-11-01T15:59:59Z"));
+    const afterMidnight = await fisheryReferenceMetadata([id], new Date("2026-11-01T16:00:00Z"));
+    assert.equal(beforeMidnight[id]!.deadlineDate, "2026-11-01");
+    assert.equal(afterMidnight[id]!.deadlineDate, "2026-11-01");
+    assert.equal(afterMidnight[id]!.checkedAt, "2026-11-01T16:00:00.000Z");
+    assert.deepEqual(Object.keys(afterMidnight[id]!).sort(), ["checkedAt", "deadlineDate", "expiryDate", "kind"]);
     const [row] = await sql`SELECT tags,selected,score FROM publications WHERE article_id=${id}`;
     assert.deepEqual(row!.tags, ["船员/外籍用工", "资料"]); assert.equal(row!.selected, false); assert.equal(row!.score, null);
     await withdraw(f.id, { expectedRevision: 1, reason: "Synthetic source withdrawal" }, "synthetic-reviewer");
     assert.equal((await loadTopicPage("crew", 1))!.topic.poolTotal, 0);
+    assert.equal((await listTopicSummaries()).topics.find(t => t.slug === "crew")!.poolTotal, 0);
+    assert.deepEqual(await fisheryReferenceMetadata([id], new Date()), {});
     assert.equal((await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"})).total, 0);
   } finally { installModules([]); }
 });
@@ -416,7 +426,7 @@ test("normal final approval durably schedules non-paid publication with bounded 
   assert.equal((await sql`SELECT 1 FROM fishery_publication_bindings WHERE item_id=${created.id}`).length, 0);
   const receipts = (await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
   let attempts = 0;
-  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
   const release = await registerManualFlowConsumer(boss, async () => {}, { publicationMaintenanceMs: 100, publicationRun: async jobs => {
     if (++attempts === 1) throw new Error("Synthetic transient non-paid publication failure");
     return publicationQueue.run(jobs);
@@ -495,7 +505,7 @@ test("real consumer entry installs only configured modules and preserves unknown
   if (old.length) await boss.cancel(publicationQueue.name, old.map(row => row.id));
   const f = await fixture(), approved = await finalApproval(await draft(f.id), "synthetic-entry-reviewer");
   const unapproved = await fixture(); await draft(unapproved.id);
-  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
   const bootstrap = await syncFisheryPublications("synthetic-entry-bootstrap");
   const articleId = bootstrap.rows.find(row => row.itemId === approved.id)!.articleId;
   const beforePool = await loadPool({channel:"all",category:null,tag:null});
