@@ -19,7 +19,7 @@ export async function fisheryAuthorizationReport() {
   return {authorization:TRIAL.id,policy:amountOnlyPolicy,maxRequests:null,maxReservedMicroCny:TRIAL.maxReservedMicroCny,entryCount:row.value.entries.length,...trialBudget(row.value.entries),historicalReservedMicroCny:row.value.entries.reduce((sum,e)=>sum+e.reservedMicroCny,0),states:row.value.entries.map(e=>e.state)};
 }
 let active=false;
-export async function withFisheryAuthorization<T>(run:()=>Promise<T>):Promise<T> {
+export async function withFisheryAuthorization<T>(run:()=>Promise<T>,options:{assertAuthorized?:()=>Promise<void>}={}):Promise<T> {
   await assertProcessingLease();
   if(active) throw new Error("Fishery authorization transport already in use; explicit retry required");
   if(process.env.LLM_MODEL!==TRIAL.model||process.env.LLM_BASE_URL!=="https://api.deepseek.com"||process.env.LLM_REASONING_TOKENS!=="0"||process.env.LLM_EXTRA_JSON!=='{"thinking":{"type":"disabled"}}') throw new Error("Fishery model/endpoint configuration refused");
@@ -30,10 +30,11 @@ export async function withFisheryAuthorization<T>(run:()=>Promise<T>):Promise<T>
     // The ledger row is locked before checking the retained session lease. Never reserve after
     // a disconnect/reconnect, even if another process has not acquired the lock yet.
     await assertProcessingLease();
+    await options.assertAuthorized?.();
     trialCapacity(row.value.entries);
     const id=row.value.entries.length+1;row.value.entries.push({id,state:"pending",wireBytes,reservedMicroCny:TRIAL.reserveMicroCny});
     await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${authorizationKey}`;return id;
-  }),beforeSend:assertProcessingLease,settle:async(id,state,usage,responseModel)=>sql.begin(async tx=>{
+  }),beforeSend:async()=>{await assertProcessingLease();await options.assertAuthorized?.();},settle:async(id,state,usage,responseModel)=>sql.begin(async tx=>{
     const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${authorizationKey} FOR UPDATE`;
     const entry=row?.value.entries.find(e=>e.id===id);
     if(!entry||entry.state!=="pending") throw new Error("Cumulative reservation mismatch");

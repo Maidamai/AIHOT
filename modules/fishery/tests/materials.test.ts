@@ -1,4 +1,5 @@
 import { publicationQueue } from "../backend/publication-queue.ts";
+import {AUTOMATIC_FLOW_KEY,configureAutomaticFlows,dispatchAutomaticDocuments,automaticFlowPermit} from '../backend/automatic-flows.ts';
 import { syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadItemDetail } from "@aihot/backend/publication/detail";
 import assert from "node:assert/strict";
@@ -82,6 +83,97 @@ async function fixture(options: { unknownRights?: boolean; articleId?: string; s
   return { id: String(doc.id), sourceId };
 }
 const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { revision, sourceRevision, decision: "approved", applicabilityReviewed: false, note: "Manual fixture review" }, "reviewer");
+
+async function automaticFixture(number:number){
+  const body='合成公海远洋渔业事实，仅供自动派发离线测试。',url=`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto${number}.htm`;
+  const doc=await importCapturedMaterial({id:'moa',...COLUMNS.moa},url,{...observationFixture,language:'zh',sourceCapture:{adapter:'moa',sourceUrl:url,capturedAt:'2026-10-21T08:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+  await upsertMaterial({sourceId:'fishery-column-moa',url:`https://example.org/auto-body-${number}`,title:'Synthetic automatic source',bodyText:body,bodyStatus:'ok',via:'fishery-mock',raw:{fisheryDocumentId:doc.id}});
+  return {...doc,body};
+}
+const autoPolicy=(documentIds?:string[])=>({enabled:true,sourceId:'fishery-column-moa',createdAfter:'2026-10-21T00:00:00Z',...documentIds?{documentIds}:{}});
+test('automatic dispatch waits for ordinary material approval, deduplicates queue and consumer, then retains final approval',async()=>{
+  const d=await automaticFixture(1),boss=await getBoss({schedule:false,supervise:false});
+  const keys=['LLM_MODEL','LLM_BASE_URL','LLM_REASONING_TOKENS','LLM_EXTRA_JSON'] as const,old=keys.map(k=>process.env[k]),enabled=config.modelCallsEnabled;
+  const [priorLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+  let sends=0;
+  const invoke=async(options:any)=>{
+    const e=['p1s1'],u={date:{precision:'unknown',value:null},evidence:[]};
+    const data=options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:d.body,evidence:e}],dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound original',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
+    const r=await paidRequest({service:'auto-local-mock',model:'mock',purpose:options.purpose,subject:options.subject,identity:{promptVersion:options.promptVersion,system:options.system,user:options.user},attemptTag:options.attemptTag},async()=>{sends++;return {response:data};});
+    return {data:options.schema.parse(r.response),receiptId:r.receiptId,reused:r.reused,model:'mock',usage:null};
+  };
+  let lease:Awaited<ReturnType<typeof acquireProcessingLease>>|undefined;
+  try{
+    await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic bounded automatic authorization');
+    const pending=await dispatchAutomaticDocuments();assert.equal(pending.rows.length,1);assert.match(pending.rows[0].reason!,/Waiting for current material approval/);
+    const [task]=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id}`;assert.equal(task.status,'queued');assert.equal((await documentHistory(d.id)).reviews.length,0);
+    assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,0);
+    const [version]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,version.revision);
+    const dispatched=await dispatchAutomaticDocuments(),jobId=dispatched.rows[0].jobId!;assert.ok(jobId);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
+    const job=await boss.getJobById<{id:string;automatic:any}>(flowQueue.name,jobId);assert.equal(job!.retryLimit,0);assert.ok(job!.data.automatic);
+    process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL='https://api.deepseek.com';process.env.LLM_REASONING_TOKENS='0';process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';config.modelCallsEnabled=true;
+    await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
+    lease=await acquireProcessingLease();await lease.run(()=>runQueuedFlows([job!.data],invoke));
+    let detail=await flowDetail(task.id);assert.equal(detail.status,'needs_human_review');assert.equal(detail.internalArticle,null);assert.equal(sends,2);
+    await lease.run(()=>runQueuedFlows([job!.data],invoke));assert.equal(sends,2,'Redelivery cannot start a second paid attempt');
+    await decideFlow(task.id,{decision:'qualified',snapshotHash:detail.snapshotHash,note:'Synthetic explicit final approval'},'authorized-agent:test-final');
+    detail=await flowDetail(task.id);assert.ok(detail.internalArticle);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,2);
+    await boss.cancel(flowQueue.name,jobId);
+  }finally{
+    await lease?.release();config.modelCallsEnabled=enabled;keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});
+    await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;
+    if(priorLedger)await sql`UPDATE settings SET value=${sql.json(priorLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
+  }
+});
+test('automatic dispatch recovers committed import and task before enqueue without paying or retrying failed tasks',async()=>{
+ const d=await automaticFixture(2),boss=await getBoss({schedule:false,supervise:false});
+ await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic crash between import and enqueue');
+ const [v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
+ await sql.unsafe(`CREATE FUNCTION auto_test_enqueue_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.name='fishery.flow' THEN RAISE EXCEPTION 'Synthetic enqueue outage'; END IF; RETURN NEW; END $$`);
+ await sql.unsafe(`CREATE TRIGGER auto_test_enqueue_fault BEFORE INSERT ON pgboss.job FOR EACH ROW EXECUTE FUNCTION auto_test_enqueue_fault()`);
+ try{
+  await assert.rejects(dispatchAutomaticDocuments(),/Synthetic enqueue outage/);
+  const [t]=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id}`;assert.equal(t.status,'queued');
+  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.flow.auto_enqueued' AND subject=${`fishery:${d.id}`}`)[0].n,0);
+  await sql.unsafe('DROP TRIGGER auto_test_enqueue_fault ON pgboss.job');
+  const recovered=await dispatchAutomaticDocuments();assert.equal(recovered.rows[0].taskId,t.id);assert.equal(recovered.rows[0].state,'enqueued');
+  await sql`UPDATE fishery_flow_tasks SET status='failed',error='{"reason":"Synthetic received/persist failure; explicit reconciliation required"}'::jsonb WHERE id=${t.id}`;
+  assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.job WHERE name='fishery.flow' AND data->>'id'=${t.id}`)[0].n,1);
+  await boss.cancel(flowQueue.name,recovered.rows[0].jobId!);
+ }finally{await sql.unsafe('DROP TRIGGER IF EXISTS auto_test_enqueue_fault ON pgboss.job');await sql.unsafe('DROP FUNCTION auto_test_enqueue_fault()');await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
+});
+test('automatic dispatch rejects stale body, material rejection and isolated source before model sends; sixth pending document is not starved',async()=>{
+ const docs=[];for(let i=10;i<16;i++)docs.push(await automaticFixture(i));
+ await configureAutomaticFlows(autoPolicy(docs.map(d=>d.id)),'tester','Synthetic bounded version and source gates');
+ const boss=await getBoss({schedule:false,supervise:false});let sends=0;
+ try{
+  assert.equal((await dispatchAutomaticDocuments()).rows.length,5);assert.equal((await dispatchAutomaticDocuments()).rows.length,1);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
+  const d=docs[5],[v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
+  const dispatched=await dispatchAutomaticDocuments(),job=await boss.getJobById<any>(flowQueue.name,dispatched.rows[0].jobId!);
+  await review(d.id,{revision:1,sourceRevision:v.revision,decision:'rejected',applicabilityReviewed:false,note:'Synthetic evidence rejection'},'reviewer');
+  await runQueuedFlows([job!.data],async()=>{sends++;throw new Error('Must not send');});assert.equal(sends,0);
+  await observe(d.id,{...observationFixture,expectedRevision:1,summaryZh:'Synthetic changed version',sourceCapture:{adapter:'moa',sourceUrl:`https://example.org/changed-auto`,capturedAt:'2026-10-21T08:01:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(d.body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+  await dispatchAutomaticDocuments();const tasks=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY created_at,id`;assert.equal(tasks.length,2);assert.equal(tasks[0].status,'rejected');assert.equal(tasks[1].status,'queued');
+  await assert.rejects(automaticFlowPermit(tasks[1].id),/Waiting for current material approval/);
+  await approve(d.id,2,v.revision);const next=await dispatchAutomaticDocuments();assert.equal(next.rows[0].state,'enqueued');
+  await sql`UPDATE sources SET participation_mode='isolated' WHERE id='fishery-column-moa'`;
+  const newer=await boss.getJobById<any>(flowQueue.name,next.rows[0].jobId!);await runQueuedFlows([newer!.data],async()=>{sends++;throw new Error('Must not send');});assert.equal(sends,0);
+  await assert.rejects(automaticFlowPermit(tasks[1].id),/isolated/);
+  for(const id of [dispatched.rows[0].jobId,next.rows[0].jobId])await boss.cancel(flowQueue.name,id!);
+ }finally{await sql`UPDATE sources SET participation_mode='editorial' WHERE id='fishery-column-moa'`;await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
+});
+test('automatic dispatch stale reader cannot reject a newer pristine version',async()=>{
+ const d=await automaticFixture(30);
+ await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic concurrent dispatch evidence versions');
+ try{
+  await dispatchAutomaticDocuments();const [v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
+  let enter!:()=>void,release!:()=>void,first=true;const entered=new Promise<void>(r=>enter=r),barrier=new Promise<void>(r=>release=r);
+  const older=dispatchAutomaticDocuments(undefined,{assertHeld:async()=>{if(first){first=false;enter();await barrier;}}});await entered;
+  await observe(d.id,{...observationFixture,expectedRevision:1,summaryZh:'Synthetic version two',sourceCapture:{adapter:'moa',sourceUrl:'https://example.org/auto-version-two',capturedAt:'2026-10-21T08:01:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(d.body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+  await dispatchAutomaticDocuments();const [newer]=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY created_at DESC,id DESC LIMIT 1`;assert.equal(newer.status,'queued');
+  release();await older;assert.equal((await flowDetail(newer.id)).status,'queued');assert.equal((await flowDetail(newer.id)).stale,false);
+ }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
+});
 
 test("archived batch imports through the guarded route and displays only its version-bound body",async()=>{
   const url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_1.htm",body="合成远洋渔业与公海履约原文，仅用于隔离测试，不是真实资讯。".repeat(4);

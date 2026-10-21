@@ -433,12 +433,14 @@ export async function flowRequiredCalls(id:string) {
   }
   return calls;
 }
-export async function runQueuedFlows(jobs:{id:string}[],invoke:FisheryInvoke=chatJson) {
+export async function runQueuedFlows(jobs:FlowJob[],invoke:FisheryInvoke=chatJson) {
   const rows=[];
   for(const job of jobs) {
-    const result=await runFlow(job.id,invoke,async run=>{
+    const permit=job.automatic?async()=>{const {automaticFlowPermit}=await import('./automatic-flows.ts');await automaticFlowPermit(job.id,job.automatic);}:null;
+    if(permit){try{await permit();}catch(error){rows.push({id:job.id,skipped:'Automatic approval, source or configuration no longer current',reason:(error as Error).message});continue;}}
+    const result=await runFlow(job.id,permit?async options=>{await permit();return invoke(options);}:invoke,async run=>{
       if(!config.modelCallsEnabled) throw new Conflict("MODEL_CALLS_ENABLED is closed; 模型调用开关关闭，未发送请求");
-      await withFisheryAuthorization(async()=>{await assertFisheryCapacity(await flowRequiredCalls(job.id));await run();});
+      await withFisheryAuthorization(async()=>{await assertFisheryCapacity(await flowRequiredCalls(job.id));await run();},permit?{assertAuthorized:permit}:{});
     },{requireProcessingLease:true});
     // runFlow persists business failures so the UI remains authoritative. Throw as well so
     // pg-boss cannot report a failed task as a successfully completed queue job.
@@ -447,7 +449,8 @@ export async function runQueuedFlows(jobs:{id:string}[],invoke:FisheryInvoke=cha
   }
   return rows;
 }
-export const flowQueue=defineQueue<{id:string}>({name:"fishery.flow",options:{policy:"short",retryLimit:0,expireInSeconds:600},worker:{batchSize:1,localConcurrency:1},run:runQueuedFlows});
+export interface FlowJob {id:string;automatic?:import('./automatic-flows.ts').AutomaticFlowBinding;}
+export const flowQueue=defineQueue<FlowJob>({name:"fishery.flow",options:{policy:"short",retryLimit:0,expireInSeconds:600},worker:{batchSize:1,localConcurrency:1},run:runQueuedFlows});
 export async function enqueueFlow(id:string) {
   const [task]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;if(!task) throw new NotFound("Flow not found");
   return sql.begin(async tx=>{

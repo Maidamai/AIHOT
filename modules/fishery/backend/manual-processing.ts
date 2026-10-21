@@ -1,11 +1,13 @@
 import { publicationQueue, type PublicationJob } from "./publication-queue.ts";
-// This consumer handles only administrator-enqueued flows; it never registers business schedules.
+// Existing flow/publication consumer plus bounded, opt-in import continuation; no business schedules.
 import type { PgBoss } from "pg-boss";
 import { sql } from "@aihot/backend/db";
 import { ensureQueue } from "@aihot/backend/jobs/queue";
 import { flowQueue } from "./flow.ts";
 import { authorizationKey } from "./authorization.ts";
 import { acquireProcessingLease, type ProcessingLease } from "./processing-lease.ts";
+import { dispatchAutomaticDocuments } from './automatic-flows.ts';
+import type {FlowJob} from './flow.ts';
 
 export function startProcessingHeartbeat(lease:ProcessingLease,currentTask:()=>string|null) {
   let busy=false,stopped=false;
@@ -40,7 +42,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     const actual=await boss.getQueue(flowQueue.name);
     if(!actual||actual.retryLimit!==0||!(Number(actual.expireInSeconds)>=600)) throw new Error("fishery.flow queue requires retryLimit=0 and expireInSeconds>=600; reconcile deployed queue before starting");
     await lease.assertHeld();
-    await boss.work<{id:string}>(flowQueue.name,{batchSize:1,localConcurrency:1},async jobs=>{
+    await boss.work<FlowJob>(flowQueue.name,{batchSize:1,localConcurrency:1},async jobs=>{
       if(stopping) throw new Error("Fishery processor stopped; no new task may be claimed");
       return lease.run(async()=>{
         await lease.assertHeld();currentTask=jobs[0]?.data.id??null;
@@ -58,7 +60,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     let maintaining=false;
     const maintain=async()=>{
       if(stopping) return;if(maintaining) return publicationMaintenance;maintaining=true;
-      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);}
+      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});}
       catch {if(!stopping) console.error(JSON.stringify({level:"error",msg:"fishery publication queue maintenance failed",queue:publicationQueue.name}));}
       finally {maintaining=false;}
     };

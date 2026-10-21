@@ -96,6 +96,20 @@ test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工
 
 按使用者决定，`fishery-column-iotc` 已停止运营采集，`collect-columns.ts --columns iotc` 在任何网络请求或归档创建前拒绝。保留 IOTC 适配器与既有回执供离线核验，不影响农业农村部、福建或其他机构的来源。源停用后应通过正常内容管理把仅依赖该源的条目下架，使原站发布投影与缓存同步；不启动全站付费 worker 来完成此事。
 
+### 现有生成链的自动派发
+
+`fishery.flow.dispatch` 设置缺失时关闭。显式启用后仅接农业农村部这个已接通来源，按 `createdAfter` 和可选 `documentIds` 限定范围，不回溯全库。导入可以建立零调用的 `auto-` 任务占位；当前观察和信源版本的普通素材审核未通过时，不入付费队列。已有处理进程的维护循环每次最多检查5条，按证据、审核、配置与规则版本保存检查记录；前5条待审不会使第6条永久遗漏。导入落库到入队之间中断，下一次维护补派；入队与派发审计在同一事务，重放不重复入队。
+
+```bash
+node modules/fishery/scripts/automatic-flows.ts --status
+node modules/fishery/scripts/automatic-flows.ts --enable --after 2026-10-21T07:13:00Z \
+  --documents <本轮明确核验的文档UUID> --reason '明确授权的现有MARA证据化流水线试运行'
+```
+
+启用不写素材 `approved`，不写最终 `qualified`。队列仍是既有 `fishery.flow`、单消费者、`retryLimit:0`，使用既有阶段回执及累计10元金额闸门。自动任务在消费时、取得金额锁后和发送前重新核对配置、来源隔离、观察及素材审核版本。已收到结果复用；失败、pending/unknown、执行中断须走既有明确对账流程，维护不会自动付费重试。最终审批仍通过正常管理流程，事务派发已有 `fishery.publication` 后才进入原站阅读投影。
+
+停止自动派发使用相同范围的 `--disable --after ... --documents ... --reason ...`；它不清空任务、收据、费用、采集游标或归档计划，已发出请求的结果仍正常结算。此功能没有恢复原版双评分、热点归组或日报，也不开放匿名访问。
+
 `collect-columns.ts --incremental` 默认 `--storage file`，仅用于指定私有目录中的隔离归档验收。明确选择 `--storage db` 才读取既有 `fishery-column-moa/fujian/iotc` 的 `sources.cursor.fisheryColumnProgress`；缺失来源、数据库故障或游标/配置冲突立即停止，不回退文件游标，也不创建或启用来源。每轮仍有每源1–5文章、1–3列表页的上限，没有新增队列消费者或定时任务。
 
 数据库模式在GET前将来源绑定意图写入本轮journal，再使用原 `fetch_runs.detail` 登记相同轮次/来源的幂等意图。GET期间不持数据库事务；结束时锁定来源和运行记录，核对配置、游标及来源绑定，复用原 `recordFetch` 更新健康、失败次数和退避。只有完整成功才合并当前整份来源游标中的模块命名空间；失败/部分完成保留整份成功游标和 `last_ok_at`，待完成证据仅留在运行detail和归档journal，下一轮可保守重复请求。归档候选不是新入库素材，`new_count` 始终为0。进程在数据库提交后中断时，原 `--resume --acknowledge-stopped --reason ...` 可对账，已结束的运行不会再次计数或覆盖较新进度。

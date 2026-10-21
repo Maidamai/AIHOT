@@ -1,6 +1,6 @@
 import { installModules } from "@aihot/backend/modules";
 import { SERVER_MODULES } from "@aihot/site/modules/server";
-// Dedicated manual queue consumer. No general worker or schedules; only publication continuation has bounded non-paid recovery.
+// Dedicated flow consumer. No general worker/schedules; opt-in dispatch only wakes current approved materials.
 import { closeDb } from "@aihot/backend/db";
 import { getBoss, stopBoss } from "@aihot/backend/jobs/queue";
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";

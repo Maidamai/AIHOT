@@ -32,6 +32,31 @@ function configure(t:TestContext) {
   }
 }
 
+test('automatic authorization is checked after waiting for the cumulative amount lock, before any reservation or HTTP',async t=>{
+ configure(t);await seedTestLedger();const lease=await acquireProcessingLease();let allowed=true,sends=0,unlock!:()=>void,entered!:()=>void;
+ const ready=new Promise<void>(r=>entered=r),barrier=new Promise<void>(r=>unlock=r);
+ t.mock.method(globalThis,'fetch',async()=>{sends++;return response();});
+ const held=sql.begin(async tx=>{await tx`SELECT value FROM settings WHERE key=${authorizationKey} FOR UPDATE`;entered();await barrier;});await ready;
+ try{
+  const run=lease.run(()=>withFisheryAuthorization(()=>fetch(TRIAL.endpoint,wire),{assertAuthorized:async()=>{if(!allowed)throw new Error('Automatic material authorization revoked');}}));
+  const until=Date.now()+5000;let waiting=false;
+  while(Date.now()<until){const [r]=await sql`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%settings%FOR UPDATE%') AS waiting`;if(r.waiting){waiting=true;break;}await new Promise(r=>setTimeout(r,10));}
+  assert.equal(waiting,true,'Real reservation must be waiting on the held ledger row');allowed=false;unlock();await held;
+  await assert.rejects(run,/authorization revoked/);assert.equal(sends,0);assert.equal((await entries()).length,0);
+ }finally{unlock();await held;await lease.release();}
+});
+test('automatic authorization revoked after reserve leaves pending evidence and blocks further paid sends',async t=>{
+ configure(t);await seedTestLedger();const lease=await acquireProcessingLease();let allowed=true,sends=0,checks=0,release!:()=>void,entered!:()=>void;
+ const ready=new Promise<void>(r=>entered=r),barrier=new Promise<void>(r=>release=r);
+ t.mock.method(globalThis,'fetch',async()=>{sends++;return response();});
+ try{
+  const run=lease.run(()=>withFisheryAuthorization(()=>fetch(TRIAL.endpoint,wire),{assertAuthorized:async()=>{if(++checks===2){entered();await barrier;}if(!allowed)throw new Error('Automatic material authorization revoked before send');}}));
+  await ready;assert.equal((await entries()).at(-1)?.state,'pending');allowed=false;release();
+  await assert.rejects(run,/revoked before send/);assert.equal(sends,0);assert.equal((await entries()).length,1);assert.equal((await entries())[0].state,'pending');
+  await assert.rejects(lease.run(()=>withFisheryAuthorization(()=>fetch(TRIAL.endpoint,wire))),/pending/);assert.equal(sends,0);assert.equal((await entries()).length,1);
+ }finally{release();await lease.release();}
+});
+
 test("consumer and single-task CLI share one lease, and terminating its session permanently fences the old owner",async()=>{
   const boss=await getBoss({schedule:false,supervise:false}),lease=await acquireProcessingLease();
   let replacement:ProcessingLease|undefined;

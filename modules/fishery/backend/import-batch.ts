@@ -45,5 +45,7 @@ async function importBatchContents(id: string, actor: string) {
     if(acquisition) acquisitions.push(acquisition);
   }
   // Only ready imports can seed new processing tasks; irrelevant updates merely invalidate old evidence snapshots.
-  return { batchId:id,rows,evidenceUpdates,acquisitions,reviewState:"unreviewed",published:false };
+  const {dispatchAutomaticDocuments}=await import('./automatic-flows.ts');
+  const automatic=await dispatchAutomaticDocuments(rows.map(row=>String(row.id)));
+  return { batchId:id,rows,evidenceUpdates,acquisitions,automatic,reviewState:"unreviewed",published:false };
 }
