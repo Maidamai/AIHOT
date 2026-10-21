@@ -1,3 +1,4 @@
+import { readerFetch } from "../../lib/private-preview.ts";
 // Duplicate reports of one news fact. Desktop expands inline; phones use a sheet.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
@@ -47,7 +48,7 @@ function useReports(url: string, saved: GroupReport[] | null = null) {
     const controller = (request.current = new AbortController());
     setState((s) => ({ url, reports: s.url === url ? s.reports : null, loading: true, error: false }));
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await readerFetch(url, { signal: controller.signal });
       if (!res.ok && !(again && res.status === 404)) throw new Error(String(res.status));
       const reports = res.ok ? ((await res.json()) as GroupReportsResponse).reports : [];
       if (!controller.signal.aborted) setState({ url, reports, loading: false, error: false });

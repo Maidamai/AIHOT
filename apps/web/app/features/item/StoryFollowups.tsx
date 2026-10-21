@@ -1,3 +1,4 @@
+import { readerFetch } from "../../lib/private-preview.ts";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { StoryFollowup, StoryFollowupsResponse, StoryRef } from "@aihot/contracts/site";
@@ -19,7 +20,7 @@ export function StoryFollowups({ story, currentId }: { story: StoryRef; currentI
     const load = () => {
       if (started) return;
       started = true;
-      fetch(`/api/site/stories/${encodeURIComponent(story.publicId)}/followups`, { signal: controller.signal })
+      readerFetch(`/api/site/stories/${encodeURIComponent(story.publicId)}/followups`, { signal: controller.signal })
         .then((r) => (r.ok ? r.json() : null))
         .then((body: StoryFollowupsResponse | null) => {
           if (!body || controller.signal.aborted) return;

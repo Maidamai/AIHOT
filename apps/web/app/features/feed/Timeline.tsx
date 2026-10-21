@@ -1,3 +1,4 @@
+import { readerFetch } from "../../lib/private-preview.ts";
 // The 精选 home's day-grouped feed: a time rail with cards on desktop, rows under grey day bars on phones.
 // Keeps its place across back navigation and loads further pages. There is no "new items" prompt:
 // readers refresh for the latest head — on phones also by tapping the tab again. The paged lists
@@ -225,10 +226,10 @@ export function Timeline({ initial, filters }: { initial: TimelineResponse; filt
     setLoadingMore(true);
     setLoadError(false);
     try {
-      const res = await fetch(listPath("/api/site/timeline", { ...filterParams(filters), cursor: s.nextCursor }), { signal: controller.signal });
+      const res = await readerFetch(listPath("/api/site/timeline", { ...filterParams(filters), cursor: s.nextCursor }), { signal: controller.signal });
       if (res.status === 400) {
         // Cursor no longer fits: start over from the head.
-        const head = await fetch(key, { signal: controller.signal });
+        const head = await readerFetch(key, { signal: controller.signal });
         if (!head.ok) throw new Error(String(head.status));
         if (current()) setState(fromResponse((await head.json()) as TimelineResponse, stateRef.current.unreadOnly));
         return;

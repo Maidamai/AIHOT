@@ -1,3 +1,4 @@
+import { readerFetch } from "../../lib/private-preview.ts";
 // Share poster: the server-rendered poster (with a QR code to the article), to save or hand to the
 // system share sheet. Loaded on demand from the article page; a bottom sheet on phones, centred above.
 import { useEffect, useState } from "react";
@@ -22,7 +23,7 @@ export default function PosterSheet({ id, title, open, onClose }: { id: string; 
 
   async function share() {
     try {
-      const blob = await (await fetch(src)).blob();
+      const blob = await (await readerFetch(src)).blob();
       await navigator.share({ files: [new File([blob], `${SITE.mcpPrefix}-${id}.png`, { type: "image/png" })], title });
     } catch {
       // cancelled or unsupported: saving stays available

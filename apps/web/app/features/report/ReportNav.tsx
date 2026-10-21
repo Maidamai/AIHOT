@@ -1,3 +1,4 @@
+import { readerFetch } from "../../lib/private-preview.ts";
 // Moving between reports: the archive column on desktop; on phones the kind switch in the bar
 // (ReportLayout) and recent-issue chips under it.
 import { IntentLink } from "../../components/ui/IntentLink";
@@ -55,7 +56,7 @@ function ArchiveGroup({ g, kind, current, initiallyOpen }: {
   useEffect(() => {
     if (!open || loaded || kind !== "daily" || !g.entries.some((e) => e.title === undefined)) return;
     const controller = new AbortController();
-    fetch(`/api/site/reports/daily/months/${g.id}`, { signal: controller.signal })
+    readerFetch(`/api/site/reports/daily/months/${g.id}`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((data: ReportNavigationResponse | null) => { if (data && !controller.signal.aborted) setLoaded(data.items); })
       .catch(() => {});

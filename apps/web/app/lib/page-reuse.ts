@@ -1,6 +1,7 @@
 // Public pages already rendered in this document can be revisited until their server deadline.
 // Nothing persists across a document reload; list snapshots separately own the reader's position.
 import type { ClientLoaderFunctionArgs, ShouldRevalidateFunction } from 'react-router';
+import { isPrivatePreview } from './private-preview.ts';
 
 const pages = new Map<string, unknown>();
 const MAX_PAGES = 16;
@@ -8,6 +9,7 @@ const addressOf = (url: URL) => url.pathname + url.search;
 const deadlineOf = (value: unknown) => (value as { expiresAt?: number } | null)?.expiresAt ?? 0;
 
 export function hasFreshPage(url: URL): boolean {
+  if (isPrivatePreview()) { pages.clear(); return false; }
   return deadlineOf(pages.get(addressOf(url))) > Date.now();
 }
 
@@ -19,6 +21,7 @@ export function hasFreshPage(url: URL): boolean {
  */
 export function pageReuse<T>(key: (url: URL) => string = addressOf) {
   async function clientLoader({ request, serverLoader }: ClientLoaderFunctionArgs) {
+    if (isPrivatePreview()) { pages.clear(); return serverLoader<T>(); }
     const held = key(new URL(request.url));
     const previous = pages.get(held);
     pages.delete(held);
@@ -37,6 +40,7 @@ export function pageReuse<T>(key: (url: URL) => string = addressOf) {
   clientLoader.hydrate = true as const;
 
   const shouldRevalidate: ShouldRevalidateFunction = ({ currentUrl, nextUrl, defaultShouldRevalidate }) => {
+    if (isPrivatePreview()) { pages.clear(); return true; }
     // Revalidator/retry, or tapping the current page again: ask for its data normally.
     if (defaultShouldRevalidate && addressOf(currentUrl) === addressOf(nextUrl)) pages.delete(key(nextUrl));
     // Moving between addresses that share a result still runs the loader, which keeps the result while it is fresh.

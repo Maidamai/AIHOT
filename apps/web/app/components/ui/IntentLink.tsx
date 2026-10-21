@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { Link, PrefetchPageLinks, UNSAFE_DataRouterContext, UNSAFE_FrameworkContext, useHref, useLocation, type LinkProps } from "react-router";
+import { isPrivatePreview } from "../../lib/private-preview";
 import { hasFreshPage } from '../../lib/page-reuse';
 
 /**
@@ -25,7 +26,7 @@ export function IntentLink({ onPointerDown, onTouchStart, onTouchMove, onTouchEn
   // assets nor that revalidation decision, which is reserved for an actual refresh. The prefetch is
   // mounted here rather than through Link's prop: Link keeps prefetching after the prop is switched
   // off, and would ask that question again about the page its own click has just opened.
-  const shouldPrefetch = ready && differentPage && !hasFreshPage(target);
+  const shouldPrefetch = !isPrivatePreview() && ready && differentPage && !hasFreshPage(target);
   const clients = shouldPrefetch && href.startsWith('/') && !href.startsWith('//')
     ? context?.router.match(href)?.filter(m => framework?.manifest.routes[m.route.id]?.hasLoader && framework.manifest.routes[m.route.id]?.hasClientLoader).map(m => m.route.id) ?? []
     : [];

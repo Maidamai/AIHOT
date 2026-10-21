@@ -1,3 +1,4 @@
+import { readerFetch } from "../lib/private-preview.ts";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Await, isRouteErrorResponse, Link, useAsyncError, useLoaderData, useNavigate, useRevalidator, type ClientLoaderFunctionArgs } from "react-router";
 import type { Route } from "./+types/item";
@@ -308,7 +309,7 @@ function ItemView({ item }: { item: SiteItemDetail }) {
   };
   const copyMarkdown = async () => {
     try {
-      const res = await fetch(`/items/${item.id}/markdown`);
+      const res = await readerFetch(`/items/${item.id}/markdown`);
       if (!res.ok) throw new Error(String(res.status));
       await copyText(await res.text());
       setToast("Markdown 已复制");

@@ -1,5 +1,6 @@
 // History-entry caches keep same-document returns synchronous. Writes are coalesced after interaction;
 // hiding/leaving the document flushes them so a browser back/forward reload can restore the same data.
+import { isPrivatePreview } from "./private-preview.ts";
 import { readJson, storedKeys, writeRaw } from "./local-state.ts";
 
 interface Timed { savedAt: number }
@@ -11,12 +12,23 @@ export function sessionCache<T extends Timed>(prefix: string, maxAge: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let listening = false;
 
+  function disabled(): boolean {
+    if (!isPrivatePreview()) return false;
+    clearTimeout(timer);
+    timer = undefined;
+    memory.clear();
+    dirty.clear();
+    for (const key of storedKeys("session")) if (key.startsWith(prefix)) writeRaw(key, null, "session");
+    return true;
+  }
+
   /** A stored entry still young enough to use; null when it is missing, unreadable or expired. */
   function stored(storedKey: string): T | null {
     const value = readJson(storedKey, "session") as T | null;
     return value && Number.isFinite(value.savedAt) && Date.now() - value.savedAt <= maxAge ? value : null;
   }
   function flush() {
+    if (disabled()) return;
     clearTimeout(timer);
     timer = undefined;
     // Storage unavailable or full: memory still works.
@@ -29,6 +41,7 @@ export function sessionCache<T extends Timed>(prefix: string, maxAge: number) {
     if (memory.size > MAX_MEMORY_ENTRIES) memory.delete(memory.keys().next().value!);
   }
   function peek(key: string): T | null {
+    if (disabled()) return null;
     const value = memory.get(key) ?? dirty.get(key);
     if (!value) return null;
     if (Date.now() - value.savedAt <= maxAge) return value;
@@ -38,6 +51,7 @@ export function sessionCache<T extends Timed>(prefix: string, maxAge: number) {
     return null;
   }
   function read(key: string): T | null {
+    if (disabled()) return null;
     const hit = peek(key);
     if (hit) return hit;
     const value = stored(prefix + key);
@@ -46,6 +60,7 @@ export function sessionCache<T extends Timed>(prefix: string, maxAge: number) {
     return value;
   }
   function set(key: string, value: T) {
+    if (disabled()) return;
     remember(key, value);
     dirty.set(key, value);
     if (!listening) {
@@ -61,5 +76,6 @@ export function sessionCache<T extends Timed>(prefix: string, maxAge: number) {
     // pagehide handlers may save a newer anchor after our flush handler has already run.
     if (document.visibilityState === "hidden") flush();
   }
+  disabled();
   return { peek, read, set, flush };
 }

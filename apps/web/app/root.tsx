@@ -19,6 +19,7 @@ import { rememberPage, APPEARANCE_BOOT_SCRIPT, useAppearanceSync } from "./lib/l
 import { apiGet } from "./lib/api.server";
 import { useHydratedFlag } from "./lib/hydration";
 import { titled } from "./lib/seo";
+import { isPrivatePreview } from "./lib/private-preview";
 import { webModules } from "./site-modules";
 
 export const links: Route.LinksFunction = () => [
@@ -38,26 +39,29 @@ export const headers = ({ loaderHeaders }: Route.HeadersArgs) => loaderHeaders;
 /** The release rendering this document: once a newer one is deployed, a render error reloads the page (entry.client). */
 export async function loader({ request }: Route.LoaderArgs) {
   const release = process.env.AIHOT_RELEASE ?? null;
-  if (moduleShell(new URL(request.url).pathname)) return data({ changelogVersion: null, release }, { headers: privateShellHeaders });
+  const privatePreview = process.env.PRIVATE_PREVIEW === "true";
+  if (moduleShell(new URL(request.url).pathname)) return data({ changelogVersion: null, release, privatePreview }, { headers: privateShellHeaders });
   try {
     const meta = await apiGet<SiteMeta>("/api/site/meta", {
       headers: Object.assign({}, ...webModules().map((m) => m.root?.documentHeaders?.(request) ?? {})),
       signal: request.signal,
     });
-    return { ...meta, release };
+    const result = { ...meta, release, privatePreview };
+    return privatePreview ? data(result, { headers: privateShellHeaders }) : result;
   } catch {
-    return { changelogVersion: null, release };
+    const result = { changelogVersion: null, release, privatePreview };
+    return privatePreview ? data(result, { headers: privateShellHeaders }) : result;
   }
 }
 
-export const shouldRevalidate: ShouldRevalidateFunction = () => false;
+export const shouldRevalidate: ShouldRevalidateFunction = () => isPrivatePreview();
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const site = useRouteLoaderData<typeof loader>("root");
   const shell = moduleShell(useLocation().pathname);
   const [documentRelease] = useState(site?.release ?? null);
   return (
-    <html lang={SITE.locale} suppressHydrationWarning>
+    <html lang={SITE.locale} data-private-preview={site?.privatePreview ? "true" : undefined} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         {documentRelease && <meta name="aihot-release" content={documentRelease} />}

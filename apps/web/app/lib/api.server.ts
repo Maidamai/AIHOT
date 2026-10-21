@@ -67,7 +67,7 @@ export const BROWSER_MAX_SECONDS = 300;
 
 /** How long shared caches may keep a page that has no data to reuse; the web server writes its final cache headers (server.ts). */
 export function edgeTtl(seconds: number): Record<string, string> {
-  return { "Cache-Control": `public, s-maxage=${seconds}` };
+  return process.env.PRIVATE_PREVIEW === "true" ? { "Cache-Control": "private, no-store", "X-Accel-Expires": "0" } : { "Cache-Control": `public, s-maxage=${seconds}` };
 }
 
 /**
@@ -77,6 +77,7 @@ export function edgeTtl(seconds: number): Record<string, string> {
  * Time the page already spent in a cache is used up, and a revisit never renews it. Pair it with `pageHeaders`.
  */
 export function cachedPage<T extends object>(seconds: number, value: T, upstream?: Headers) {
+  if (process.env.PRIVATE_PREVIEW === "true") return data({ ...value, expiresAt: 0 }, { headers: { "Cache-Control": "private, no-store", "X-Accel-Expires": "0" } });
   const now = Date.now();
   const second = Math.floor(now / 1000);
   let deadline = second + seconds;

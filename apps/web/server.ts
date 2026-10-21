@@ -113,7 +113,7 @@ function pageResponse(req: import("node:http").IncomingMessage, res: import("nod
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
     }
     const cc = String(res.getHeader("Cache-Control") ?? "");
-    if (!publicRead || status !== 200 || res.hasHeader("Set-Cookie") || !cc || /(?:private|no-store)/i.test(cc)) {
+    if (process.env.PRIVATE_PREVIEW === "true" || !publicRead || status !== 200 || res.hasHeader("Set-Cookie") || !cc || /(?:private|no-store)/i.test(cc)) {
       res.removeHeader("Expires");
       res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("X-Accel-Expires", "0");
