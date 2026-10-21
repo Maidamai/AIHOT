@@ -16,6 +16,8 @@ import { after, before, test } from "node:test";
 import { closeDb, sql } from "@aihot/backend/db";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { stopBoss } from "@aihot/backend/jobs/queue";
+import { loadPool } from "@aihot/backend/publication/pool";
+import { topicMembership, findTopic } from "@aihot/backend/publication/topics";
 import { publishArticle } from "@aihot/backend/publication/publish";
 import { TOPICS, loadTopicPage, listTopicSummaries, topicsOfStory } from "@aihot/backend/publication/topics";
 import { buildApp } from "../apps/api/src/app.ts";
@@ -127,4 +129,31 @@ test("every topic has a page; unknown topics and pages past the end have none", 
   const body = JSON.parse(index.body) as { groups: Array<{ key: string }>; topics: Array<{ slug: string }> };
   assert.deepEqual(body.groups.map((g) => g.key), ["field", "genre"]);
   assert.deepEqual(body.topics.map((t) => t.slug).sort(), TOPICS.map((t) => t.slug).sort(), "the index lists every topic");
+});
+
+
+for (const category of ["policy", "reference"] as const) test(`explicit ${category} category includes tagless articles with matching directory, detail and pool counts`, async () => {
+  const before = await loadPool({ channel: "all", category, tag: null, now: new Date() });
+  const id = await report({ at: hoursAgo(2), title: `合成：无标签政策文章 ${T}`, category, selected: false });
+  // Synthetic projection reproduces the approved reader's tagless article shape.
+  await sql`UPDATE publications SET tags='{}'::text[] WHERE article_id=${id}`;
+  const pool = await loadPool({ channel: "all", category, tag: null, now: new Date() });
+  const detail = await page(category);
+  const directory = (await listTopicSummaries()).topics.find(t => t.slug === category)!;
+  assert.equal(pool.total, before.total + 1);
+  assert.equal(directory.poolTotal, pool.total);
+  assert.equal(detail.topic.poolTotal, pool.total);
+  assert.equal(detail.topic.poolHref, `/all?category=${category}`);
+  assert.ok(pool.items.some(item => item.id === id));
+  const membership = await sql`SELECT ${topicMembership()} AS topics FROM publications p WHERE p.article_id=${id}`;
+  assert.ok(membership[0]!.topics.includes(category));
+  assert.ok(!membership[0]!.topics.includes("funding"), "category does not invent a business-topic tag");
+  assert.equal(findTopic("funding")!.category, null);
+  assert.equal((await page("funding")).topic.poolHref, "/all?tag=" + encodeURIComponent("补贴融资"));
+  await sql`UPDATE publications SET visibility='withdrawn' WHERE article_id=${id}`;
+  const hidden = await loadPool({ channel: "all", category, tag: null, now: new Date() });
+  assert.equal(hidden.total, before.total);
+  assert.ok(!hidden.items.some(item => item.id === id));
+  assert.equal((await page(category)).topic.poolTotal, hidden.total);
+  assert.equal((await listTopicSummaries()).topics.find(t => t.slug === category)!.poolTotal, hidden.total);
 });

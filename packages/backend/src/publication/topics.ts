@@ -1,6 +1,7 @@
 // Topics: stable slugs in three groups (companies, directions, content forms), defined by the industry
 // pack (industry/topics.json) and read from there when the process starts. Which reports a topic takes
-// is one SQL predicate, `membership`: a direction or a form takes its tags; a company takes the reports
+// is one SQL predicate, `membership`: an explicit category takes that category, other directions/forms
+// take their tags; a company takes the reports
 // it is a subject of, but not those that only mention it — among several subject companies, its name must
 // appear in the Chinese or the original title. Lists and counts read the selected set one report per
 // fact, as v1 and RSS do.
@@ -24,6 +25,8 @@ export interface Topic {
   name: string;
   group: TopicGroupKey;
   definition: string;
+  /** Explicit category topics match publication category instead of tags. Omitted preserves tag membership. */
+  category?: CategoryKey | null;
   /** Companies: the subject id (industry/taxonomy.ts ENTITIES). */
   entityId: string | null;
   /** Tags that put a report in the topic: a company's subject tag, a direction's or a form's tags. */
@@ -37,7 +40,7 @@ export interface Topic {
 interface TopicFile {
   groups: TopicGroup[];
   topics: Array<{
-    slug: string; name: string; group: TopicGroupKey; entityId?: string; aliases?: string[]; tags?: string[]; definition: string;
+    slug: string; name: string; group: TopicGroupKey; entityId?: string; aliases?: string[]; tags?: string[]; category?: CategoryKey; definition: string;
   }>;
 }
 
@@ -61,6 +64,7 @@ export const TOPICS: Topic[] = file.topics.map((t) => ({
   group: t.group,
   definition: t.definition,
   entityId: t.entityId ?? null,
+  category: t.category ?? null,
   tags: t.entityId ? [`entity:${t.entityId}`] : (t.tags ?? []),
   pattern: t.entityId ? titlePattern(t.name, t.entityId) : null,
   aliases: t.entityId ? [t.slug, t.name, ...nameParts(t.name), ...(t.aliases ?? [])] : [],
@@ -84,27 +88,27 @@ export function topicBrowseLinks() {
 }
 
 /** One membership rule for topic discovery and a single topic's page and count. */
-function topicMatch(tags: ReturnType<typeof sql>, pattern: ReturnType<typeof sql>) {
-  return sql`p.tags && ${tags} AND (${pattern} IS NULL OR p.title ~* ${pattern} OR coalesce(p.original_title, '') ~* ${pattern}
-    OR (SELECT count(*) FROM unnest(p.tags) AS e(tag) WHERE e.tag LIKE 'entity:%') = 1)`;
+function topicMatch(tags: ReturnType<typeof sql>, pattern: ReturnType<typeof sql>, category: ReturnType<typeof sql>) {
+  return sql`((${category} IS NOT NULL AND p.category = ${category}) OR (${category} IS NULL AND p.tags && ${tags} AND (${pattern} IS NULL OR p.title ~* ${pattern} OR coalesce(p.original_title, '') ~* ${pattern}
+    OR (SELECT count(*) FROM unnest(p.tags) AS e(tag) WHERE e.tag LIKE 'entity:%') = 1)))`;
 }
 
 /**
- * The topics report `p` belongs to, in topic order: its tags meet the topic's and, for a company, the
- * title names it or it is the report's only subject company.
+ * The topics report `p` belongs to, in topic order: an explicit category matches directly; otherwise
+ * its tags meet the topic's and company-title restrictions still apply.
  */
 export function topicMembership(topics: Topic[] = TOPICS) {
-  const rows = topics.map((t) => ({ slug: t.slug, tags: t.tags, pattern: t.pattern, position: position(t.slug) }));
+  const rows = topics.map((t) => ({ slug: t.slug, tags: t.tags, pattern: t.pattern, category: t.category ?? null, position: position(t.slug) }));
   return sql`ARRAY(
-    SELECT t.slug FROM jsonb_to_recordset(${sql.json(rows)}::jsonb) AS t(slug text, tags text[], pattern text, position int)
-    WHERE ${topicMatch(sql`t.tags`, sql`t.pattern`)}
+    SELECT t.slug FROM jsonb_to_recordset(${sql.json(rows)}::jsonb) AS t(slug text, tags text[], pattern text, category text, position int)
+    WHERE ${topicMatch(sql`t.tags`, sql`t.pattern`, sql`t.category`)}
     ORDER BY t.position)`;
 }
 
-/** Report `p` is in topic `t`; the tag overlap comes first, for the tags index. */
+/** Report `p` is in topic `t`, with the same explicit category or default tag membership. */
 function inTopic(t: Topic) {
   const pattern: ReturnType<typeof sql> = t.pattern === null ? sql`NULL::text` : sql`${t.pattern}::text`;
-  return topicMatch(sql`${t.tags}::text[]`, pattern);
+  return topicMatch(sql`${t.tags}::text[]`, pattern, sql`${t.category ?? null}::text`);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -348,7 +352,7 @@ export async function loadTopicPage(slug: string, page: number, now?: Date): Pro
   const groupName = TOPIC_GROUPS.find((g) => g.key === topic.group)?.name ?? "";
   return {
     topic: { ...summarize(topic, seats, index.at, brands, live), groupName, poolTotal: pool,
-      poolHref: !topic.entityId && topic.tags.length === 1 ? `/all?${new URLSearchParams({ tag: topic.tags[0]! })}` : null },
+      poolHref: topic.category ? `/all?${new URLSearchParams({ category: topic.category })}` : !topic.entityId && topic.tags.length === 1 ? `/all?${new URLSearchParams({ tag: topic.tags[0]! })}` : null },
     modules: Object.fromEntries(parts.map((part) => [part.name, part.part(live)])),
     items: rows.map(toFeedItemSummary),
     page,

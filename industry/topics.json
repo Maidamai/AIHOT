@@ -109,7 +109,8 @@
       "tags": [
         "政策"
       ],
-      "definition": "政策法规、许可配额、履约和正式征求意见。区分生效、拟议和历史文件。"
+      "definition": "政策法规、许可配额、履约和正式征求意见。区分生效、拟议和历史文件。",
+      "category": "policy"
     },
     {
       "slug": "safety",
@@ -118,7 +119,8 @@
       "tags": [
         "安全"
       ],
-      "definition": "事故调查、航行安全、官方气象预警与应急。预警时效只按原文，不推断当前状态。"
+      "definition": "事故调查、航行安全、官方气象预警与应急。预警时效只按原文，不推断当前状态。",
+      "category": "safety"
     },
     {
       "slug": "market",
@@ -127,7 +129,8 @@
       "tags": [
         "市场"
       ],
-      "definition": "水产品贸易、销售、通关、价格和融资补贴消息。价格须保留时间、币种、地区与统计口径。"
+      "definition": "水产品贸易、销售、通关、价格和融资补贴消息。价格须保留时间、币种、地区与统计口径。",
+      "category": "market"
     },
     {
       "slug": "research",
@@ -136,7 +139,8 @@
       "tags": [
         "研究"
       ],
-      "definition": "渔业资源评估、科研成果、调查和研究报告；研究结果不等于实时鱼情。"
+      "definition": "渔业资源评估、科研成果、调查和研究报告；研究结果不等于实时鱼情。",
+      "category": "research"
     },
     {
       "slug": "equipment",
@@ -145,7 +149,8 @@
       "tags": [
         "装备"
       ],
-      "definition": "船舶、捕捞装备、检修改造和技术产品的实质变化。"
+      "definition": "船舶、捕捞装备、检修改造和技术产品的实质变化。",
+      "category": "equipment"
     },
     {
       "slug": "operations",
@@ -154,7 +159,8 @@
       "tags": [
         "运营"
       ],
-      "definition": "船员用工、备航补给、港口、转运追溯、回港和经营活动。"
+      "definition": "船员用工、备航补给、港口、转运追溯、回港和经营活动。",
+      "category": "operations"
     },
     {
       "slug": "reference",
@@ -163,7 +169,8 @@
       "tags": [
         "资料"
       ],
-      "definition": "指南、解读、观点和历史参考资料；不将参考内容写成办理承诺。"
+      "definition": "指南、解读、观点和历史参考资料；不将参考内容写成办理承诺。",
+      "category": "reference"
     }
   ]
 }
