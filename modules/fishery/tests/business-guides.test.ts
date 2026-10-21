@@ -1,3 +1,4 @@
+import { loadTopicPage } from "@aihot/backend/publication/topics";
 import { installModules } from "@aihot/backend/modules";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadPool } from "@aihot/backend/publication/pool";
@@ -327,6 +328,9 @@ test("reviewed guides use original publication pool/detail and immediately disap
     const id = linked.articleId;
     const [publication] = await sql`SELECT p.*,a.publication_time,a.backfill,a.grouping_status FROM publications p JOIN articles a ON a.id=p.article_id WHERE p.article_id=${id}`;
     assert.equal(publication!.selected, false); assert.equal(publication!.score, null);
+    assert.deepEqual(publication!.tags, ["补贴融资", "资料"]);
+    assert.ok((await loadTopicPage("funding", 1))!.topic.poolTotal > 0);
+    assert.ok((await loadPool({channel:"all",category:"reference",tag:"补贴融资",q:"合成通知"})).items.some(item => item.id === id));
     assert.equal(publication!.published_at, null); assert.equal(publication!.publication_time, null); assert.equal(publication!.backfill, true);
     assert.equal(publication!.grouping_status, "pending"); assert.equal(publication!.body_mode, "summary"); assert.equal(publication!.syndicate, false);
     assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${id}`).length, 0);
@@ -342,6 +346,7 @@ test("reviewed guides use original publication pool/detail and immediately disap
         throw rollback;
       }), error => error === rollback);
     };
+    await barrier(tx => tx`UPDATE publications SET tags=ARRAY['Unreviewed navigation tag'] WHERE article_id=${id}`);
     await barrier(tx => tx`UPDATE fishery_documents SET withdrawn_reason='Controlled race withdrawal' WHERE id=${f.id}`);
     await barrier(tx => tx`INSERT INTO fishery_reviews(document_id,revision,source_revision,decision,applicability_reviewed,note,actor)
       VALUES (${f.id},1,1,'rejected',false,'Controlled newer material decision','synthetic-barrier')`);
@@ -366,5 +371,27 @@ test("reviewed guides use original publication pool/detail and immediately disap
     assert.equal((await itemAvailability([id]))[id]!.status, "unavailable");
     assert.ok(!(await itemFeed("all", null)).includes(id));
     assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n, before);
+  } finally { installModules([]); }
+});
+
+
+test("reviewed business topics reuse the original tag-filtered pool and disappear from topic collection after withdrawal", async () => {
+  const f = await fixture(), context = await businessGuideContext(f.id), candidate = payload(context);
+  candidate.topicId = "crew"; candidate.kind = "business_guide";
+  const created = await createBusinessGuide({ documentId: f.id, snapshotHash: context.snapshotHash, payload: candidate, reason: "Synthetic crew navigation fixture" }, "synthetic-editor");
+  await finalApproval(created, "synthetic-reviewer");
+  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  try {
+    const id = (await syncFisheryPublications("synthetic-topic-bridge")).rows.find(row => row.itemId === created.id)!.articleId;
+    const page = (await loadTopicPage("crew", 1))!;
+    assert.equal(page.topic.poolTotal, 1);
+    assert.equal(page.topic.total, 0, "Reference collection does not invent a selected report");
+    const pool = await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"});
+    assert.deepEqual(pool.items.map(item => item.id), [id]);
+    const [row] = await sql`SELECT tags,selected,score FROM publications WHERE article_id=${id}`;
+    assert.deepEqual(row!.tags, ["船员/外籍用工", "资料"]); assert.equal(row!.selected, false); assert.equal(row!.score, null);
+    await withdraw(f.id, { expectedRevision: 1, reason: "Synthetic source withdrawal" }, "synthetic-reviewer");
+    assert.equal((await loadTopicPage("crew", 1))!.topic.poolTotal, 0);
+    assert.equal((await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"})).total, 0);
   } finally { installModules([]); }
 });

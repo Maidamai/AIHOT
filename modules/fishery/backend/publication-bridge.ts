@@ -1,3 +1,4 @@
+import { BUSINESS_TOPICS } from "../business-topics.ts";
 import { beijingAt } from "@aihot/contracts/time";
 import type postgres from "postgres";
 // A normal core material identity and editorial projection; qualification remains owned by the
@@ -10,7 +11,7 @@ import { eligibleReaderItems } from "./reader.ts";
 import { eligibleBusinessGuideItems, businessGuideReaderItem } from "./business-guides.ts";
 import { hash } from "./store.ts";
 
-type Projection = { kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; url: string; publicationTime: string | null; binding: string };
+type Projection = { kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; tags: string[]; url: string; publicationTime: string | null; binding: string };
 
 async function currentProjections(now: Date): Promise<Projection[]> {
   const articles = await eligibleReaderItems(now);
@@ -20,13 +21,18 @@ async function currentProjections(now: Date): Promise<Projection[]> {
   const guides = await sql.begin(tx => eligibleBusinessGuideItems(tx, now));
   return [
     ...articles.map(item => ({ kind: "article" as const, id: item.id, documentId: item.id, title: item.title,
-      summary: item.summary.map(s => s.sentence).join("\n"), category: item.category.id, url: item.source.url,
+      summary: item.summary.map(s => s.sentence).join("\n"), category: item.category.id, tags: [], url: item.source.url,
       publicationTime: item.dates.published.precision === "day" ? item.dates.published.value : null,
       binding: hash({ task: taskBindings.get(item.id), title: item.title, source: item.source, category: item.category, summary: item.summary, dates: item.dates, verification: item.verification }) })),
-    ...guides.map(item => ({ kind: "business_guide" as const, id: item.id, documentId: item.documentId, title: item.payload.title.value,
-      summary: item.payload.summary.map(s => s.value).join("\n"), category: "reference", url: item.source.url,
+    ...guides.map(item => {
+      const topic = BUSINESS_TOPICS.find(topic => topic.id === item.payload.topicId);
+      if (!topic) throw new Conflict("Reviewed guide topic is absent from the configured business topics");
+      const tags = [topic.label, "资料"];
+      return { kind: "business_guide" as const, id: item.id, documentId: item.documentId, title: item.payload.title.value,
+      summary: item.payload.summary.map(s => s.value).join("\n"), category: "reference", tags, url: item.source.url,
       publicationTime: item.payload.dates.published.value.precision === "day" ? item.payload.dates.published.value.value : null,
-      binding: hash({ revision: item.revision, payload: item.payload, source: item.source, snapshot: item.snapshot, evidence: item.evidence, verifiedAt: item.verifiedAt }) })),
+      binding: hash({ tags, revision: item.revision, payload: item.payload, source: item.source, snapshot: item.snapshot, evidence: item.evidence, verifiedAt: item.verifiedAt }) };
+    }),
   ];
 }
 
@@ -57,12 +63,12 @@ export async function fisheryPublicationCondition(now: Date) {
   const bindings = await sql`SELECT b.*,${qualificationState(sql`b.document_id`, sql`b.kind`, sql`b.item_id`)} AS qualification_state FROM fishery_publication_bindings b`;
   const projections = await currentProjections(now);
   const current = new Map(projections.map(p => [`${p.kind}:${p.id}`, p]));
-  const allowed = bindings.filter(b => current.get(`${b.kind}:${b.item_id}`)?.binding === b.projection_hash).map(b => ({ article_id: String(b.article_id), state: b.qualification_state, projection_hash: b.projection_hash }));
+  const allowed = bindings.filter(b => current.get(`${b.kind}:${b.item_id}`)?.binding === b.projection_hash).map(b => ({ article_id: String(b.article_id), state: b.qualification_state, projection_hash: b.projection_hash, tags: current.get(`${b.kind}:${b.item_id}`)!.tags }));
   return { condition: sql`(
     NOT EXISTS (SELECT 1 FROM fishery_sources managed WHERE managed.source_id = p.source_id)
     AND NOT EXISTS (SELECT 1 FROM fishery_publication_bindings managed WHERE managed.article_id = p.article_id)
     OR EXISTS (
-      SELECT 1 FROM jsonb_to_recordset(${sql.json(allowed)}) approved(article_id text,state text,projection_hash text)
+      SELECT 1 FROM jsonb_to_recordset(${sql.json(allowed)}) approved(article_id text,state text,projection_hash text,tags text[])
       JOIN fishery_publication_bindings binding ON binding.article_id=approved.article_id
       JOIN articles material ON material.id = binding.article_id
       JOIN fishery_documents document ON document.id = binding.document_id
@@ -70,7 +76,7 @@ export async function fisheryPublicationCondition(now: Date) {
         AND binding.projection_hash=approved.projection_hash
         AND ${qualificationState(sql`binding.document_id`, sql`binding.kind`, sql`binding.item_id`)}=approved.state
         AND p.title = binding.title AND p.summary = binding.summary AND p.category = binding.category AND p.url = binding.url
-        AND p.source_id = document.source_id AND material.source_id = document.source_id AND cardinality(p.tags) = 0
+        AND p.source_id = document.source_id AND material.source_id = document.source_id AND p.tags = approved.tags
         AND p.body_mode = 'summary' AND NOT p.syndicate AND p.score IS NULL AND NOT p.selected))` };
 }
 
@@ -93,7 +99,7 @@ export async function syncFisheryPublications(actor: string, now = new Date()) {
         raw: { fisheryPublicationKind: projection.kind, fisheryPublicationId: projection.id, fisheryPublicationDocumentId: projection.documentId },
       }, tx);
       const [article] = await tx`SELECT revision FROM articles WHERE id=${material.articleId}`;
-      const fields = { title: projection.title, summary: projection.summary, category: projection.category, relevance: "pass", score: null, selected: false, tags: [] };
+      const fields = { title: projection.title, summary: projection.summary, category: projection.category, relevance: "pass", score: null, selected: false, tags: projection.tags };
       const [oldOverride] = await tx`SELECT fields,version FROM editorial_overrides WHERE article_id=${material.articleId}`;
       if (hash(oldOverride?.fields ?? null) !== hash(fields)) {
         await tx`INSERT INTO editorial_overrides(article_id,fields,reason,version,updated_by)
