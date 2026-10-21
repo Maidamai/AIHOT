@@ -21,7 +21,8 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
   const [doc] = await db`SELECT * FROM fishery_documents WHERE id=${documentId} FOR SHARE`;
   if (!doc) throw new NotFound("Business guide source document not found");
   if (doc.withdrawn_reason) throw new Conflict("Source document withdrawn");
-  const [source] = await db`SELECT f.*,s.name FROM fishery_sources f JOIN sources s ON s.id=f.source_id WHERE f.source_id=${doc.source_id} FOR SHARE OF f`;
+  const [source] = await db`SELECT f.*,s.name,s.participation_mode FROM fishery_sources f JOIN sources s ON s.id=f.source_id WHERE f.source_id=${doc.source_id} FOR SHARE OF f`;
+  if (source?.participation_mode === "isolated") throw new Conflict("Source is isolated; guide processing is disabled");
   const [observation] = await db`SELECT * FROM fishery_observations WHERE document_id=${documentId} ORDER BY revision DESC LIMIT 1`;
   const [review] = await db`SELECT * FROM fishery_reviews WHERE document_id=${documentId} ORDER BY id DESC LIMIT 1`;
   if (!source || !observation || !review || review.decision !== "approved" || review.revision !== observation.revision || review.source_revision !== source.revision)

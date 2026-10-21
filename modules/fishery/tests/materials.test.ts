@@ -42,6 +42,37 @@ let count = 0;
 const now = new Date("2026-10-20T00:00:00Z");
 before(() => { config.devAdmin = null; });
 after(async () => { await app.close(); await stopBoss(); await closeDb(); });
+
+test("isolated source blocks existing and new processing before any paid request", async () => {
+  const f=await fixture({unknownRights:true}),body="合成远洋渔业原文，仅用于停用信源回归。";
+  await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"tester");
+  await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/private-${f.id}`,title:"Synthetic source",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+  const task=await createFlow(f.id,{identity:"before-source-isolation"},"tester");
+  const [before]=await sql`SELECT count(*)::int AS n FROM receipts`;let sends=0;
+  await sql`UPDATE sources SET participation_mode='isolated' WHERE id=${f.sourceId}`;
+  try {
+    await assert.rejects(createFlow(f.id,{identity:"after-source-isolation"},"tester"),/Source is isolated/);
+    const blocked=await runFlow(task.id,async()=>{sends++;throw new Error("Must not send");});
+    assert.equal(blocked.status,"failed");assert.match(blocked.error.reason,/isolated/);
+    assert.equal(sends,0);assert.equal((await flowDetail(task.id)).stale,true);assert.equal((await flowDetail(task.id)).internalArticle,null);
+    const [after]=await sql`SELECT count(*)::int AS n FROM receipts`;assert.equal(after!.n,before!.n);
+    assert.equal((await documentHistory(f.id)).observations.length,2,"Original evidence is retained");
+  } finally {await sql`UPDATE sources SET participation_mode='editorial' WHERE id=${f.sourceId}`;}
+});
+
+test("isolated registered IOTC cannot acquire or reimport and sync never revives it",async()=>{
+  await sql`INSERT INTO sources(id,name,kind,enabled,participation_mode) VALUES('fishery-column-iotc','Synthetic retired IOTC','external',false,'editorial') ON CONFLICT(id) DO NOTHING`;
+  const [old]=await sql`SELECT participation_mode,cursor FROM sources WHERE id='fishery-column-iotc'`;
+  await sql`UPDATE sources SET participation_mode='isolated' WHERE id='fishery-column-iotc'`;
+  const [before]=await sql`SELECT count(*)::int AS n FROM fishery_documents WHERE source_id='fishery-column-iotc'`;let gets=0;
+  try {
+    await assert.rejects(collectColumnRound({id:"retired-iotc-round",dataDir:config.dataDir,columns:["iotc"],limit:1,maxPages:1,storage:"db",store:columnDbProgress,fetch:async()=>{gets++;throw new Error("Must not fetch");}}),/isolated/);
+    await assert.rejects(importCapturedMaterial({id:"iotc",...COLUMNS.iotc},"https://iotc.org/cmm/synthetic-retired",observationFixture,"tester"),/Source is isolated/);
+    const [current]=await sql`SELECT enabled,participation_mode,cursor FROM sources WHERE id='fishery-column-iotc'`;
+    const [after]=await sql`SELECT count(*)::int AS n FROM fishery_documents WHERE source_id='fishery-column-iotc'`;
+    assert.equal(gets,0);assert.equal(current!.enabled,false);assert.equal(current!.participation_mode,"isolated");assert.deepEqual(current!.cursor,old!.cursor);assert.equal(after!.n,before!.n);
+  } finally {await sql`UPDATE sources SET participation_mode=${old!.participation_mode} WHERE id='fishery-column-iotc'`;}
+});
 async function fixture(options: { unknownRights?: boolean; articleId?: string; sourceId?: string } = {}) {
   const sourceId = options.sourceId ?? `fishery-${++count}`;
   if (!options.sourceId) await sql`INSERT INTO sources (id, name, kind, enabled, next_fetch_at) VALUES (${sourceId}, 'Fixture', 'external', false, '2100-01-01')`;

@@ -71,6 +71,18 @@ function payload(c: Pick<BusinessGuideContext, "catalog">): BusinessGuidePayload
   };
 }
 async function draft(id: string) { const c = await businessGuideContext(id); return createBusinessGuide({ documentId: id, snapshotHash: c.snapshotHash, payload: payload(c), reason: "Synthetic editorial draft" }, "synthetic-editor"); }
+
+test("isolated source rejects guide context and new AI review without changing evidence",async()=>{
+  const f=await fixture(),row=await draft(f.id);
+  const [before]=await sql`SELECT count(*)::int AS n FROM receipts`;
+  await sql`UPDATE sources SET participation_mode='isolated' WHERE id=${f.sourceId}`;
+  try {
+    await assert.rejects(businessGuideContext(f.id),/Source is isolated/);
+    await assert.rejects(createGuideAIReview(row.id,{identity:"isolated-guide-ai",expectedRevision:row.revision,payloadHash:row.payloadHash,snapshotHash:row.snapshotHash},"tester"),/Source is isolated/);
+    const [after]=await sql`SELECT count(*)::int AS n FROM receipts`;assert.equal(after!.n,before!.n);
+    const [evidence]=await sql`SELECT count(*)::int AS n FROM fishery_observations WHERE document_id=${f.id}`;assert.equal(evidence!.n,1);
+  } finally {await sql`UPDATE sources SET participation_mode='editorial' WHERE id=${f.sourceId}`;}
+});
 const decision = (row: BusinessGuideAdminRecord, value: "approved" | "rejected" | "withdrawn" = "approved") => ({ expectedRevision: row.revision, snapshotHash: row.snapshotHash, payloadHash: row.payloadHash, decision: value, aiReviewHash: row.aiReview.reviewHash ?? undefined, reason: "Synthetic human decision" });
 
 function aiAnswer(p: BusinessGuidePayload): GuideAIResult {

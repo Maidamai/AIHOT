@@ -12,19 +12,20 @@ function state(column:ColumnId,cursor:Record<string,unknown>|null):ColumnProgres
   const value=cursor?.[COLUMN_CURSOR_KEY];
   return value===undefined?initialColumnProgress(column):parseColumnProgress(column,value);
 }
-function binding(source:{id:string;kind:string;config:unknown;enabled:boolean},column:ColumnId) {
+function binding(source:{id:string;kind:string;config:unknown;enabled:boolean;participation_mode:string},column:ColumnId) {
   if(source.id!==sourceId(column)||source.kind!=='external'||source.enabled!==false) throw new Error('Column source binding changed');
+  if(source.participation_mode==='isolated') throw new Error('Column source is isolated; acquisition is disabled');
   return JSON.stringify({id:source.id,kind:source.kind,config:source.config});
 }
 export const columnDbProgress:ColumnProgressStore={
   async load(column) {
-    const [source]=await sql`SELECT id,kind,config,enabled,cursor FROM sources WHERE id=${sourceId(column)}`;
+    const [source]=await sql`SELECT id,kind,config,enabled,cursor,participation_mode FROM sources WHERE id=${sourceId(column)}`;
     if(!source) throw new Error(`Missing registered source ${sourceId(column)}`);
     binding(source as never,column);return state(column,source.cursor);
   },
   async intent(column,roundId,before) {
     await columnTransaction(column,async tx=>{
-      const [source]=await tx`SELECT id,kind,config,enabled,cursor FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
+      const [source]=await tx`SELECT id,kind,config,enabled,cursor,participation_mode FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
       if(!source) throw new Error('Missing registered column source');
       parseColumnProgress(column,before);
       const sourceBinding=binding(source as never,column);
@@ -42,7 +43,7 @@ export const columnDbProgress:ColumnProgressStore={
   },
   async finish(column,roundId,before,after,batches,found) {
     await columnTransaction(column,async tx=>{
-      const [source]=await tx`SELECT id,kind,config,enabled,cursor FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
+      const [source]=await tx`SELECT id,kind,config,enabled,cursor,participation_mode FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
       if(!source) throw new Error('Missing registered column source');
       parseColumnProgress(column,before);
       const sourceBinding=binding(source as never,column);

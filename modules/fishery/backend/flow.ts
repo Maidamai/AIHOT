@@ -25,10 +25,12 @@ const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const qualification=z.strictObject({decision:z.enum(["qualified","rejected"]),snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),note:z.string().trim().min(1).max(2000)});
 export type FisheryInvoke=<S extends z.ZodType>(options:ChatJsonOptions<S>)=>Promise<ChatJsonResult<z.infer<S>>>;
 async function snapshot(documentId:string) {
-  const [row]=await sql`SELECT d.id,d.source_id,d.article_id,d.withdrawn_reason,s.revision AS source_revision,s.profile,
+  const [row]=await sql`SELECT d.id,d.source_id,d.article_id,d.withdrawn_reason,s.revision AS source_revision,s.profile,core.participation_mode,
     o.revision,o.content_hash,o.payload FROM fishery_documents d JOIN fishery_sources s ON s.source_id=d.source_id
+    JOIN sources core ON core.id=d.source_id
     JOIN LATERAL (SELECT * FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1) o ON true WHERE d.id=${documentId}`;
   if(!row) throw new NotFound("Document with observed evidence required");
+  if(row.participation_mode==='isolated') throw new Conflict("Source is isolated; processing is disabled");
   if(row.withdrawn_reason) throw new Conflict("Document withdrawn");
   const c=row.payload.sourceCapture;
   if(!c||c.httpStatus!==200||c.parseStatus!=="parsed"||!c.bodySha256||c.conflicts.length) throw new Conflict("Verified archived source body required");

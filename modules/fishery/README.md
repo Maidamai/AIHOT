@@ -92,6 +92,10 @@ test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工
 正常鉴权与 CSRF 管理员决定接口可提交 `executorKind=human|authorized_agent|unspecified`；省略为 unspecified。后台弹窗可主动声明“真人手动审核”或“授权代理审核”，默认未知。此项为审核执行者声明，不是身份认证或专家资质证明，不授予新权限。读者仅接收白名单执行身份类别，不接收审核账号、原因或其他身份信息。来源、内容、版本与当前 AI 回执哈希绑定及全部可读门槛保持原有规则。
 ### 受控轮次接入原信源账本
 
+运营停用沿用原信源的 `participation_mode=isolated`，不删除来源、原件或费用历史。隔离源不能创建或继续模块加工、指南核查、归档导入和数据库采集轮次；普通阅读也排除该源。恢复必须由管理员明确操作，默认种子与归档同步不能覆盖隔离状态。
+
+按使用者决定，`fishery-column-iotc` 已停止运营采集，`collect-columns.ts --columns iotc` 在任何网络请求或归档创建前拒绝。保留 IOTC 适配器与既有回执供离线核验，不影响农业农村部、福建或其他机构的来源。源停用后应通过正常内容管理把仅依赖该源的条目下架，使原站发布投影与缓存同步；不启动全站付费 worker 来完成此事。
+
 `collect-columns.ts --incremental` 默认 `--storage file`，仅用于指定私有目录中的隔离归档验收。明确选择 `--storage db` 才读取既有 `fishery-column-moa/fujian/iotc` 的 `sources.cursor.fisheryColumnProgress`；缺失来源、数据库故障或游标/配置冲突立即停止，不回退文件游标，也不创建或启用来源。每轮仍有每源1–5文章、1–3列表页的上限，没有新增队列消费者或定时任务。
 
 数据库模式在GET前将来源绑定意图写入本轮journal，再使用原 `fetch_runs.detail` 登记相同轮次/来源的幂等意图。GET期间不持数据库事务；结束时锁定来源和运行记录，核对配置、游标及来源绑定，复用原 `recordFetch` 更新健康、失败次数和退避。只有完整成功才合并当前整份来源游标中的模块命名空间；失败/部分完成保留整份成功游标和 `last_ok_at`，待完成证据仅留在运行detail和归档journal，下一轮可保守重复请求。归档候选不是新入库素材，`new_count` 始终为0。进程在数据库提交后中断时，原 `--resume --acknowledge-stopped --reason ...` 可对账，已结束的运行不会再次计数或覆盖较新进度。

@@ -136,7 +136,8 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     await tx`INSERT INTO sources (id,name,kind,enabled,participation_mode,site_fulltext,next_fetch_at)
       VALUES (${sourceId},${column.name},'external',false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
     // Lock the source to serialize imports of the same URL and preserve operator rights settings.
-    await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
+    const [registered] = await tx`SELECT id,participation_mode FROM sources WHERE id=${sourceId} FOR UPDATE`;
+    if (registered?.participation_mode === "isolated") throw new Conflict("Source is isolated; captured imports are disabled");
     if (!(await tx`SELECT 1 FROM fishery_sources WHERE source_id=${sourceId}`).length) {
       const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: sourceAttribution, healthNote: column.id.startsWith("manual-") ? "人工核验公开官方归档；非自动采集器，HTTP回执不是网站签名，尚需普通人工审核，转载权未知" : "手动官方栏目试采；自动采集关闭，转载权未知" });
       await tx`INSERT INTO fishery_sources(source_id,revision,profile) VALUES (${sourceId},1,${tx.json(profile)})`;

@@ -22,7 +22,7 @@ export async function eligibleReaderItems(now=new Date()):Promise<FisheryReaderI
     FROM fishery_documents d JOIN sources s ON s.id=d.source_id JOIN fishery_sources f ON f.source_id=d.source_id
     JOIN LATERAL (SELECT * FROM fishery_flow_tasks WHERE document_id=d.id ORDER BY created_at DESC,id DESC LIMIT 1) t ON true
     JOIN fishery_observations o ON o.document_id=d.id AND o.revision=(t.snapshot->>'observationRevision')::integer
-    WHERE t.status='qualified' AND d.withdrawn_reason IS NULL`;
+    WHERE t.status='qualified' AND d.withdrawn_reason IS NULL AND s.participation_mode='editorial'`;
   const items:FisheryReaderItem[]=[];
   for(const row of rows) {
     if(/^(?:ISOLATED TEST|Synthetic fixture|SYNTHETIC TEST)/.test(row.profile.attribution??"")||/^ISOLATED TEST/.test(row.issuer)) continue;

@@ -5,6 +5,8 @@ import {collectColumnRound,listColumnProgress,listColumnRounds} from "../backend
 
 const { values } = parseArgs({ options: { id: { type: "string" }, "data-dir": { type: "string" }, columns: { type: "string", default: "moa,fujian" }, limit: { type: "string", default: "3" }, "iotc-select": { type: "string" },incremental:{type:"boolean"},pages:{type:"string",default:"2"},resume:{type:"boolean"},"acknowledge-stopped":{type:"boolean"},reason:{type:"string"},status:{type:"boolean"},storage:{type:"string",default:"file"} } });
 if(!["file","db"].includes(values.storage!)) throw new Error("--storage must be file or db");
+// Retain the adapter for historical evidence and offline tests, not new operational acquisition.
+if(!values.status && values.columns!.split(",").includes("iotc")) throw new Error("IOTC business source is retired; new acquisition is disabled by operator policy");
 if(values.storage==="db"&&!values.incremental&&!values.status) throw new Error("DB storage requires --incremental or --status");
 const db=values.storage==="db"?await import("../backend/column-db-progress.ts"):null;
 if(values.status) {

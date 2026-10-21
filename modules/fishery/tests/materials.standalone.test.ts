@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { prepareOfficial, sha256, type ArchiveReceipt } from "../backend/source-adapters.ts";
 import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
@@ -21,6 +23,16 @@ import { createHash } from "node:crypto";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 import {discoverColumnPagination} from "../backend/official-columns.ts";
 import {collectColumnRound,listColumnProgress,listColumnRounds} from "../backend/column-progress.ts";
+
+test("operator CLI refuses retired IOTC before making an archive or network request",async()=>{
+  const root=await mkdtemp(path.join(tmpdir(),"fishery-retired-cli-")),destination=path.join(root,"must-not-exist");
+  try {
+    await assert.rejects(promisify(execFile)(process.execPath,["modules/fishery/scripts/collect-columns.ts","--id","retired-iotc-cli","--data-dir",destination,"--columns","iotc","--limit","1"],{cwd:process.cwd(),timeout:10_000}),error=>{
+      assert.match(String((error as {stderr?:string}).stderr),/IOTC business source is retired/);return true;
+    });
+    await assert.rejects(access(destination),/ENOENT/);
+  } finally {await rm(root,{recursive:true,force:true});}
+});
 
 const roundUrl=(n:number)=>`https://yyj.moa.gov.cn/gzdt/202610/t20261020_${99000+n}.htm`;
 function roundListing(ids:number[],index=0,count=1) {
