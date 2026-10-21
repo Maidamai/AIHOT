@@ -9,6 +9,8 @@ import { z } from "zod";
 import { config } from "@aihot/backend/config";
 import { batchIdSchema, listBatches } from "./backend/column-batches.ts";
 import { importBatch } from "./backend/import-batch.ts";
+import { installManualSourceRoutes } from "./backend/manual-sources.ts";
+import { registerBusinessGuideRoutes } from "./backend/business-routes.ts";
 
 import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
 
@@ -26,6 +28,8 @@ const param = (req: { params: unknown }) => idSchema.parse((req.params as Record
 export default defineServerModule({
   name: "fishery", sourceHealth, queues:[flowQueue],
   http(app) {
+    installManualSourceRoutes(app);
+    registerBusinessGuideRoutes(app);
     app.get("/api/admin/fishery/reader", guarded(async req=>readerPage(z.strictObject({category:z.enum(Object.keys(READER_CATEGORIES) as [keyof typeof READER_CATEGORIES,...(keyof typeof READER_CATEGORIES)[]]).optional(),page:z.coerce.number().int().positive().max(100000).optional()}).parse(req.query))));
     app.get("/api/admin/fishery/reader/:id", guarded(async req=>readerItem(param(req))));
     app.get("/api/admin/fishery/documents/:id/flows", guarded(async req=>({rows:await listFlows(param(req))})));
