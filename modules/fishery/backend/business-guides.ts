@@ -4,6 +4,7 @@ import { sql, type Db } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
+import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { businessGuidePayloadSchema, createBusinessGuideSchema, updateBusinessGuideSchema, decideBusinessGuideSchema,
   type BusinessGuideContext, type BusinessGuidePayload, type BusinessGuideAdminRecord, type BusinessGuideReaderItem, type BusinessGuideReaderPage } from "../business-contracts.ts";
 import { buildEvidenceCatalog, type EvidenceCatalog } from "./evidence.ts";
@@ -177,7 +178,7 @@ export async function businessGuideHistory(id: string) {
   return sql`SELECT id,actor,action,reason,before,after,created_at FROM audit_log WHERE subject=${`business-guide:${id}`} ORDER BY id`;
 }
 
-async function readableItems(db: Db): Promise<BusinessGuideReaderItem[]> {
+async function readableItems(db: Db, now: Date): Promise<BusinessGuideReaderItem[]> {
   const rows = await db`SELECT * FROM fishery_business_guides WHERE status='approved' ORDER BY updated_at DESC,id FOR SHARE`, items: BusinessGuideReaderItem[] = [];
   for (const row of rows) {
     let context: BusinessGuideContext;
@@ -187,19 +188,19 @@ async function readableItems(db: Db): Promise<BusinessGuideReaderItem[]> {
     const attachmentUrl = observation?.payload.sourceCapture?.attachmentUrl;
     items.push({ id: row.id, documentId: row.document_id, revision: row.revision, payload: row.payload, source: context.source, snapshot: context.snapshot,
       evidence: Object.fromEntries(context.catalog.spans.filter(s => ids.has(s.id)).map(s => [s.id, { quote: s.quote, paragraph: s.paragraph, page: s.page, url: capture && s.page !== null && attachmentUrl ? attachmentUrl : context.source.url }])),
-      verifiedAt: iso(row.verified_at), verification: { origin: "human_editorial", label: "人工编审的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
+      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), verification: { origin: "human_editorial", label: "人工编审的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
       eligibility: { canApply: null, canFish: null }, internalOnly: true });
   }
   return items;
 }
-export async function businessGuideReaderPage(query: { topicId?: string; kind?: string; page?: number } = {}): Promise<BusinessGuideReaderPage> {
+export async function businessGuideReaderPage(query: { topicId?: string; kind?: string; page?: number } = {}, now = new Date()): Promise<BusinessGuideReaderPage> {
   return sql.begin(async tx => {
-    const all = await readableItems(tx), filtered = all.filter(i => (!query.topicId || i.payload.topicId === query.topicId) && (!query.kind || i.payload.kind === query.kind));
+    const all = await readableItems(tx, now), filtered = all.filter(i => (!query.topicId || i.payload.topicId === query.topicId) && (!query.kind || i.payload.kind === query.kind));
     const limit = 20, page = Math.min(Math.max(1, query.page ?? 1), Math.max(1, Math.ceil(filtered.length / limit)));
     return { rows: filtered.slice((page - 1) * limit, page * limit), total: filtered.length, page, limit, internalOnly: true,
       topics: BUSINESS_TOPICS.map(t => { const count = all.filter(i => i.payload.topicId === t.id && (!query.kind || i.payload.kind === query.kind)).length; return { id: t.id, label: t.label, firstRelease: t.firstRelease, count, emptyMessage: count ? null : "待补充经人工审核的正式依据与适用信息" }; }) };
   });
 }
-export async function businessGuideReaderItem(id: string) {
-  return sql.begin(async tx => { const item = (await readableItems(tx)).find(i => i.id === id); if (!item) throw new NotFound("No current approved business information"); return item; });
+export async function businessGuideReaderItem(id: string, now = new Date()) {
+  return sql.begin(async tx => { const item = (await readableItems(tx, now)).find(i => i.id === id); if (!item) throw new NotFound("No current approved business information"); return item; });
 }

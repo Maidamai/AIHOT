@@ -53,11 +53,22 @@ export interface BusinessGuideAdminRecord {
   createdAt: string; updatedAt: string; verifiedAt: string | null; readable: boolean; blockedReason: string | null;
   humanDecision: { decision: string; actor: string; at: string; reason: string } | null;
 }
+export interface BusinessDateBoundary {
+  state: "unknown" | "elapsed" | "date_not_elapsed";
+  lastDate: string | null;
+}
+export interface BusinessTimeliness {
+  checkedAt: string;
+  timeZone: "Asia/Shanghai";
+  deadline: BusinessDateBoundary;
+  expiry: BusinessDateBoundary;
+  label: string;
+}
 export interface BusinessGuideReaderItem {
   id: string; documentId: string; revision: number; payload: BusinessGuidePayload;
   source: BusinessGuideContext["source"]; snapshot: BusinessGuideSnapshot;
   evidence: Record<string, { quote: string; paragraph: number; page: number | null; url: string }>;
-  verifiedAt: string; verification: { origin: "human_editorial"; label: string; legalApplicability: "not_determined" };
+  verifiedAt: string; timeliness: BusinessTimeliness; verification: { origin: "human_editorial"; label: string; legalApplicability: "not_determined" };
   eligibility: { canApply: null; canFish: null }; internalOnly: true;
 }
 export interface BusinessGuideReaderPage {

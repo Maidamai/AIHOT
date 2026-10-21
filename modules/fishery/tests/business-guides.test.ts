@@ -88,6 +88,25 @@ test("human guides require current ordinary approval, preserve unknowns, and pri
   assert.equal(profile[0]!.site_fulltext, false); assert.equal(profile[0]!.profile.rightsStatus, "unknown");
 });
 
+test("reader recomputes current timeliness instead of verification time and keeps expired history readable", async () => {
+  const f = await fixture(), context = await businessGuideContext(f.id), input = payload(context);
+  input.kind = "business_guide"; input.dates.expiresAt = structuredClone(input.dates.deadline);
+  const row = await createBusinessGuide({ documentId: f.id, snapshotHash: context.snapshotHash, payload: input, reason: "Synthetic deadline and expiry" }, "editor");
+  const approved = await decideBusinessGuide(row.id, decision(row), "reviewer");
+  const before = await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`business-guide:${row.id}`}`;
+  const notElapsed = await businessGuideReaderItem(row.id, new Date("2026-11-01T23:59:59+08:00"));
+  const elapsed = await businessGuideReaderItem(row.id, new Date("2026-11-02T00:00:00+08:00"));
+  assert.equal(notElapsed.timeliness.deadline.state, "date_not_elapsed"); assert.equal(notElapsed.timeliness.label, "可申请状态未知/待核实");
+  assert.equal(elapsed.timeliness.deadline.state, "elapsed"); assert.equal(elapsed.timeliness.expiry.state, "elapsed");
+  assert.match(elapsed.timeliness.label, /^已过文载失效日期/); assert.match(elapsed.timeliness.label, /已截止（按原文日期）/);
+  assert.equal(elapsed.verifiedAt, approved.verifiedAt); assert.notEqual(elapsed.timeliness.checkedAt, elapsed.verifiedAt);
+  for (const item of [notElapsed, elapsed]) assert.deepEqual(item.eligibility, { canApply: null, canFish: null });
+  const page = await businessGuideReaderPage({}, new Date("2026-11-02T00:00:00+08:00"));
+  assert.ok(page.rows.some(i => i.id === row.id)); assert.ok(page.rows.every(i => i.timeliness.checkedAt === "2026-11-01T16:00:00.000Z"));
+  assert.equal((await businessGuideAdminDetail(row.id)).status, "approved");
+  assert.deepEqual(await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`business-guide:${row.id}`}`, before, "time passing is a read projection, not withdrawal or another review");
+});
+
 test("stale writes fail, edits require new approval, withdrawal is final and full audit history remains", async () => {
   const f = await fixture(), row = await draft(f.id), approved = await decideBusinessGuide(row.id, decision(row), "reviewer");
   await assert.rejects(decideBusinessGuide(row.id, decision(row), "reviewer"), /changed/);
