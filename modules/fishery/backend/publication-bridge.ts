@@ -1,3 +1,4 @@
+import { beijingAt } from "@aihot/contracts/time";
 import type postgres from "postgres";
 // A normal core material identity and editorial projection; qualification remains owned by the
 // existing reviewers and is re-read on every publication query. This grants no redistribution right.
@@ -87,7 +88,7 @@ export async function syncFisheryPublications(actor: string, now = new Date()) {
       const [before] = await tx`SELECT * FROM fishery_publication_bindings WHERE kind=${projection.kind} AND item_id=${projection.id} FOR UPDATE`;
       const material = await upsertMaterial({ sourceId: document.source_id, url: projection.url, title: projection.title,
         identityKey: `fishery-publication:${projection.kind}:${projection.id}`, language: "zh", publicationTime: projection.publicationTime,
-        publishedAt: projection.publicationTime ? new Date(`${projection.publicationTime}T00:00:00+08:00`) : null,
+        publishedAt: projection.publicationTime ? beijingAt(projection.publicationTime, "00:00") : null,
         bodyStatus: "none", via: "fishery-reviewed-publication", backfill: "reviewed-reference-archive",
         raw: { fisheryPublicationKind: projection.kind, fisheryPublicationId: projection.id, fisheryPublicationDocumentId: projection.documentId },
       }, tx);
