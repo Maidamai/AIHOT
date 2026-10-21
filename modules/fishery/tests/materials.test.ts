@@ -1041,11 +1041,27 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 const bridgeSource='fishery-column-moa';
+import { afterEach } from 'node:test';
+let bridgeSnapshot:Record<string,any>|null|undefined;
+afterEach(async()=>{
+  if(bridgeSnapshot===undefined) return;
+  // Preserve earlier import tests' source entity, profiles, documents and unrelated run evidence.
+  await sql`DELETE FROM fetch_runs WHERE detail->'fisheryColumnRound'->>'roundId' LIKE 'bridge-%'`;
+  if(bridgeSnapshot) {
+    const s=bridgeSnapshot;
+    await sql`UPDATE sources SET kind=${s.kind},config=${sql.json(s.config)},cursor=${s.cursor===null?null:sql.json(s.cursor)},
+      enabled=${s.enabled},health=${s.health},fail_count=${s.fail_count},last_ok_at=${s.last_ok_at},last_fetch_at=${s.last_fetch_at},
+      next_fetch_at=${s.next_fetch_at},last_error=${s.last_error},updated_at=${s.updated_at} WHERE id=${bridgeSource}`;
+  } else await sql`DELETE FROM sources WHERE id=${bridgeSource}`;
+  bridgeSnapshot=undefined;
+});
 async function bridgeFixture() {
-  await sql`DELETE FROM fetch_runs WHERE source_id=${bridgeSource}`;
-  await sql`DELETE FROM sources WHERE id=${bridgeSource}`;
+  if(bridgeSnapshot===undefined) bridgeSnapshot=(await sql`SELECT * FROM sources WHERE id=${bridgeSource}`)[0]??null;
+  await sql`DELETE FROM fetch_runs WHERE detail->'fisheryColumnRound'->>'roundId' LIKE 'bridge-%'`;
   const cursor={unrelated:{etag:'keep',nested:[1,2]},[COLUMN_CURSOR_KEY]:initialColumnProgress('moa')};
-  await sql`INSERT INTO sources (id,name,kind,enabled,cursor,last_ok_at) VALUES (${bridgeSource},'archive bridge synthetic','external',false,${sql.json(cursor)},'2026-10-01T00:00:00Z')`;
+  await sql`INSERT INTO sources (id,name,kind,enabled,cursor,last_ok_at) VALUES (${bridgeSource},'archive bridge synthetic','external',false,${sql.json(cursor)},'2026-10-01T00:00:00Z')
+    ON CONFLICT(id) DO UPDATE SET kind='external',config='{}',enabled=false,cursor=EXCLUDED.cursor,last_ok_at=EXCLUDED.last_ok_at,
+      fail_count=0,health='unknown',last_fetch_at=NULL,last_error=NULL,next_fetch_at=NULL`;
   return cursor;
 }
 function bridgeAfter(outcome:'success'|'failure'|'partial') {
@@ -1065,7 +1081,7 @@ test('source bridge failure and partial preserve complete successful cursor and 
     await columnDbProgress.finish('moa',id,before,after,[],2);
     const [replay]=await sql`SELECT cursor::text AS bytes,last_ok_at,fail_count,next_fetch_at FROM sources WHERE id=${bridgeSource}`;
     assert.equal(replay!.bytes,first!.bytes);assert.equal(replay!.fail_count,1);assert.equal(replay!.next_fetch_at.toISOString(),first!.next_fetch_at.toISOString());
-    const runs=await sql`SELECT status,found_count,new_count,detail FROM fetch_runs WHERE source_id=${bridgeSource}`;
+    const runs=await sql`SELECT status,found_count,new_count,detail FROM fetch_runs WHERE source_id=${bridgeSource} AND detail->'fisheryColumnRound'->>'roundId'=${id}`;
     assert.equal(runs.length,1);assert.equal(runs[0]!.status,'failed');assert.equal(runs[0]!.new_count,0);assert.equal(runs[0]!.found_count,2);assert.equal(runs[0]!.detail.outcome,outcome);assert.deepEqual(runs[0]!.detail.fisheryColumnRound.after.pendingUrls,after.pendingUrls);
   }
 });
