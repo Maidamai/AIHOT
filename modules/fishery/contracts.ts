@@ -59,8 +59,9 @@ export const pdfTextEvidenceSchema=z.strictObject({
 });
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
-  adapter: z.enum(["jinjiang", "iotc", "fuzhou", "moa", "fujian"]), sourceUrl: linkSchema, capturedAt: instant,
+  adapter: z.enum(["jinjiang", "iotc", "fuzhou", "moa", "fujian", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
   archiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
+  manualArchiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
   bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   pdfTextEvidence:pdfTextEvidenceSchema.optional(),
@@ -70,6 +71,9 @@ export const captureSchema = z.strictObject({
   attachmentCapturedAt: instant.nullable().default(null), attachmentPages: z.int().positive().nullable().default(null),
   publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
   conflicts: z.array(text.max(300)).max(20),
+}).superRefine((c, ctx) => {
+  if ((c.manualArchiveId && c.adapter !== "manual_official") || (c.adapter === "manual_official" && (!c.manualArchiveId || c.archiveId)))
+    ctx.addIssue({code:"custom",message:"Manual official captures require their own manual archive only"});
 });
 export const observationSchema = z.strictObject({
   expectedRevision: z.int().nonnegative(), originalTitle: text.max(500), title: text.max(500),

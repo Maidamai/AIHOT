@@ -10,7 +10,7 @@ import { chatJson, type ChatJsonOptions, type ChatJsonResult } from "@aihot/back
 import { completeReceipt } from "@aihot/backend/providers/receipts";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { hash, lockDocument, NotFound } from "./store.ts";
-import { readCapturedText } from "./column-batches.ts";
+import { readSourceBody } from "./source-body.ts";
 import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
 import { reviewFisheryDraft, buildFisheryReviewRequest, fisheryWireBytes, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
 import { sha256 } from "./source-adapters.ts";
@@ -44,7 +44,7 @@ async function inputFor(documentId:string,expectedHash:string):Promise<DraftInpu
   const current=await snapshot(documentId);
   if(current.hash!==expectedHash) throw new Conflict("Source, metadata or rights version changed; create a new task");
   const c=current.payload.sourceCapture;let body:string|null=null;
-  if(c.archiveId) body=await readCapturedText(config.dataDir,c.archiveId,c.bodySha256);
+  if(c.archiveId||c.manualArchiveId) body=await readSourceBody(c);
   else {
     const [stored]=await sql`SELECT body_text FROM articles WHERE source_id=${current.value.sourceId} AND (id=${current.articleId} OR raw->>'fisheryDocumentId'=${documentId}) ORDER BY created_at DESC LIMIT 1`;
     body=stored?.body_text??null;

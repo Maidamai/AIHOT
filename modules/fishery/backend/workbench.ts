@@ -1,8 +1,7 @@
 import { sql } from "@aihot/backend/db";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { createHash } from "node:crypto";
-import { config } from "@aihot/backend/config";
-import { readCapturedText } from "./column-batches.ts";
+import { readSourceBody } from "./source-body.ts";
 import { documentHistory, listDocuments, listSources, NotFound, sourceAttributionOf } from "./store.ts";
 import { exportBlockers } from "./export.ts";
 import type { MaterialDetail, MaterialObservation, MaterialReview, MaterialRow, MaterialSource, Workbench } from "../ui-contracts.ts";
@@ -58,10 +57,10 @@ export async function materialDetail(id: string): Promise<MaterialDetail> {
     WHERE source_id = ${d.source_id} AND ((id = ${d.article_id} AND ${d.article_id}::text IS NOT NULL) OR raw->>'fisheryDocumentId' = ${id}) LIMIT 1`;
   let body = stored?.body_text, mode = stored?.mode;
   const capture = latest?.payload.sourceCapture;
-  if (capture?.archiveId) {
+  if (capture?.archiveId || capture?.manualArchiveId) {
     body = null; mode = capture.acquisitionMode;
     // Never fall back to another version's text if the bound archive is missing or changed.
-    if (capture.bodySha256) try { body = await readCapturedText(config.dataDir,capture.archiveId,capture.bodySha256); } catch { body = null; }
+    if (capture.bodySha256) try { body = await readSourceBody(capture); } catch { body = null; }
   }
   return { ...rowOf(d, source, latest, review, linkedStatus), observations, reviews, text: body ? {
     body: body.slice(0, 65536), truncated: body.length > 65536, acquisitionMode: mode ?? null,
