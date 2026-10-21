@@ -6,6 +6,7 @@ import { businessGuideKindSchema, businessTopicIdSchema } from "../business-cont
 import { idSchema } from "../contracts.ts";
 import { businessGuideAdminDetail, businessGuideContext, businessGuideHistory, businessGuideReaderItem, businessGuideReaderPage,
   createBusinessGuide, decideBusinessGuide, listBusinessGuides, updateBusinessGuide } from "./business-guides.ts";
+import { createGuideAIReview } from "./business-ai-review.ts";
 import { NotFound } from "./store.ts";
 
 const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin) => {
@@ -26,6 +27,11 @@ export function registerBusinessGuideRoutes(app: FastifyInstance) {
   app.get("/api/admin/fishery/business-guides/:id", guarded(async req => businessGuideAdminDetail(id(req))));
   app.put("/api/admin/fishery/business-guides/:id", guarded(async (req, _reply, admin) => updateBusinessGuide(id(req), req.body, admin.name)));
   app.post("/api/admin/fishery/business-guides/:id/decision", guarded(async (req, _reply, admin) => decideBusinessGuide(id(req), req.body, admin.name)));
+  app.get("/api/admin/fishery/business-guides/:id/ai-review", guarded(async req => (await businessGuideAdminDetail(id(req))).aiReview));
+  app.post("/api/admin/fishery/business-guides/:id/ai-review", guarded(async (req, reply, admin) => {
+    const task = await createGuideAIReview(id(req), req.body, admin.name);
+    return reply.code(201).send({ id: task.id, status: task.status, modelCalls: 0, enqueued: false });
+  }));
   app.get("/api/admin/fishery/business-guides/:id/history", guarded(async req => ({ rows: await businessGuideHistory(id(req)) })));
   app.get("/api/admin/fishery/business-reader", guarded(async req => businessGuideReaderPage(z.strictObject({
     topicId: businessTopicIdSchema.optional(), kind: businessGuideKindSchema.optional(), page: z.coerce.number().int().min(1).max(10000).optional(),

@@ -35,7 +35,7 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const reason = z.string().trim().min(1).max(2000);
 export const createBusinessGuideSchema = z.strictObject({ documentId: idSchema, snapshotHash: digest, payload: businessGuidePayloadSchema, reason });
 export const updateBusinessGuideSchema = z.strictObject({ expectedRevision: z.int().positive(), snapshotHash: digest, payload: businessGuidePayloadSchema, reason });
-export const decideBusinessGuideSchema = z.strictObject({ expectedRevision: z.int().positive(), payloadHash: digest, snapshotHash: digest, decision: z.enum(["approved", "rejected", "withdrawn"]), reason });
+export const decideBusinessGuideSchema = z.strictObject({ expectedRevision: z.int().positive(), payloadHash: digest, snapshotHash: digest, decision: z.enum(["approved", "rejected", "withdrawn"]), approvalMode: z.literal("final").default("final"), aiReviewHash: digest.optional(), reason });
 export type BusinessGuidePayload = z.infer<typeof businessGuidePayloadSchema>;
 export type BusinessGuideKind = z.infer<typeof businessGuideKindSchema>;
 export interface BusinessGuideSnapshot {
@@ -51,7 +51,12 @@ export interface BusinessGuideAdminRecord {
   id: string; documentId: string; revision: number; status: "draft" | "approved" | "rejected" | "withdrawn";
   snapshot: BusinessGuideSnapshot; snapshotHash: string; payload: BusinessGuidePayload; payloadHash: string;
   createdAt: string; updatedAt: string; verifiedAt: string | null; readable: boolean; blockedReason: string | null;
-  humanDecision: { decision: string; actor: string; at: string; reason: string } | null;
+  aiReview: BusinessGuideAIReview;
+  humanDecision: { mode?: "final"; aiReviewHash?: string; aiEditorialRevision?: number; decision: string; actor: string; at: string; reason: string } | null;
+}
+export interface BusinessGuideAIReview {
+  current: boolean; pass: boolean; status: string; reviewHash: string | null;
+  receiptId: number | null; guideRevision: number | null; confirmedConflict: boolean;
 }
 export interface BusinessDateBoundary {
   state: "unknown" | "elapsed" | "date_not_elapsed";
@@ -68,7 +73,7 @@ export interface BusinessGuideReaderItem {
   id: string; documentId: string; revision: number; payload: BusinessGuidePayload;
   source: BusinessGuideContext["source"]; snapshot: BusinessGuideSnapshot;
   evidence: Record<string, { quote: string; paragraph: number; page: number | null; url: string }>;
-  verifiedAt: string; timeliness: BusinessTimeliness; verification: { origin: "human_editorial"; label: string; legalApplicability: "not_determined" };
+  verifiedAt: string; timeliness: BusinessTimeliness; qualification: { status: "qualified"; label: string }; verification: { origin: "human_editorial"; aiStatus: "passed"; label: string; legalApplicability: "not_determined" };
   eligibility: { canApply: null; canFish: null }; internalOnly: true;
 }
 export interface BusinessGuideReaderPage {

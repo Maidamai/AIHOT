@@ -1,4 +1,4 @@
-// Human editorial records; independent of model tasks, receipts and publication permissions.
+// Human editorial authorship with independent AI comparison and explicit final human approval.
 import { randomUUID } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
@@ -6,11 +6,13 @@ import { itemAvailability } from "@aihot/backend/publication/availability";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
 import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { businessGuidePayloadSchema, createBusinessGuideSchema, updateBusinessGuideSchema, decideBusinessGuideSchema,
-  type BusinessGuideContext, type BusinessGuidePayload, type BusinessGuideAdminRecord, type BusinessGuideReaderItem, type BusinessGuideReaderPage } from "../business-contracts.ts";
+  type BusinessGuideAIReview, type BusinessGuideContext, type BusinessGuidePayload, type BusinessGuideAdminRecord, type BusinessGuideReaderItem, type BusinessGuideReaderPage } from "../business-contracts.ts";
 import { buildEvidenceCatalog, type EvidenceCatalog } from "./evidence.ts";
 import { readSourceBody } from "./source-body.ts";
 import { hash, NotFound } from "./store.ts";
 import { sha256 } from "./source-adapters.ts";
+
+import { getCurrentGuideAIReview } from "./business-ai-review.ts";
 
 const iso = (value: string | Date) => new Date(value).toISOString();
 
@@ -77,6 +79,20 @@ export function validateBusinessGuidePayload(input: unknown, context: Pick<Busin
     if (!field.evidence.some(id => { const quote = spans.get(id)!.quote; return new RegExp(`(?<!\\d)${value}(?!\\d)`).test(quote) || new RegExp(`(?<!\\d)${chinese}`).test(quote); }))
       throw new Conflict("Date must have its complete original literal in one selected source span; do not borrow or combine dates");
   }
+  const timeliness = projectBusinessTimeliness(payload.dates, new Date());
+  if (timeliness.deadline.state === "elapsed" || timeliness.expiry.state === "elapsed") {
+    const fields = [payload.title.value, ...payload.summary.map(s => s.value), ...[payload.audience, payload.opportunity, payload.restrictions, payload.materials, ...Object.values(payload.applicability)].flatMap(f => f.state === "documented" ? [f.value] : [])];
+    for (const text of fields) for (const clause of text.split(/[。！？；，\n]/)) {
+      const historical = /^\s*(?:原公告|原通知|原文)(?:当时|发布时)/.test(clause);
+      const claims = clause.matchAll(/正在申报|当前开放申报|申报窗口已开放|目前正在受理|现行有效(?!性)/g);
+      for (const claim of claims) {
+        const prefix = clause.slice(0, claim.index);
+        if (historical && !/但|然而|如今|现今|现在|今日|目前|当前/.test(prefix)) continue;
+        if (!/(?:并非|不是|不再|不能认定为?|尚未核实为?|是否)\s*$/.test(prefix))
+          throw new Conflict("Elapsed source deadline or expiry cannot support an unqualified current application window or validity claim");
+      }
+    }
+  }
   if (payload.serviceEntry.state === "documented") {
     const expected = payload.serviceEntry.url;
     const explicit = payload.serviceEntry.evidence.some(id => [...spans.get(id)!.quote.matchAll(/https:\/\/[^\s<>）。，、；"']+/g)].some(m => {
@@ -99,21 +115,36 @@ export function validateBusinessGuidePayload(input: unknown, context: Pick<Busin
 function assertStored(row: Record<string, any>) {
   if (hash(row.snapshot) !== row.snapshot_hash || hash(row.payload) !== row.payload_hash) throw new Conflict("Stored business guide hash mismatch");
 }
-async function currentReadable(row: Record<string, any>, db: Db): Promise<BusinessGuideContext> {
+function editorialRevision(row: Record<string, any>): number {
+  const human = row.human_decision;
+  return row.status === "approved" && human?.mode === "final" && human.revision === row.revision && Number.isInteger(human.aiEditorialRevision)
+    ? human.aiEditorialRevision : row.revision;
+}
+async function currentAIReview(row: Record<string, any>): Promise<BusinessGuideAIReview> {
+  try {
+    const ai = await getCurrentGuideAIReview(row.id, { payloadHash: row.payload_hash, snapshotHash: row.snapshot_hash, editorialRevision: editorialRevision(row) });
+    return { current: ai.current, pass: ai.pass, status: ai.status, reviewHash: ai.reviewHash, receiptId: ai.receiptId ?? null, guideRevision: ai.guideRevision ?? null, confirmedConflict: ai.confirmedConflict };
+  } catch { return { current: false, pass: false, status: "unavailable", reviewHash: null, receiptId: null, guideRevision: null, confirmedConflict: false }; }
+}
+async function currentReadable(row: Record<string, any>, db: Db, aiReview?: BusinessGuideAIReview): Promise<BusinessGuideContext> {
   assertStored(row);
   if (row.status !== "approved" || !row.verified_at || row.human_decision?.decision !== "approved" || row.human_decision.payloadHash !== row.payload_hash || row.human_decision.snapshotHash !== row.snapshot_hash || row.human_decision.revision !== row.revision)
     throw new Conflict("Business guide is not currently approved");
   const context = await contextFor(row.document_id, db);
   if (context.snapshotHash !== row.snapshot_hash) throw new Conflict("Source evidence or ordinary material review changed; business approval is stale");
   validateBusinessGuidePayload(row.payload, context);
+  const ai = aiReview ?? await currentAIReview(row), human = row.human_decision;
+  if (!ai.current || !ai.pass || !ai.reviewHash || human.mode !== "final" || human.aiReviewHash !== ai.reviewHash || human.aiEditorialRevision !== ai.guideRevision)
+    throw new Conflict("Current AI comparison and matching final human approval required");
   return context;
 }
 async function adminRecord(row: Record<string, any>, db: Db): Promise<BusinessGuideAdminRecord> {
   let blockedReason: string | null = null;
-  try { await currentReadable(row, db); } catch (error) { blockedReason = (error as Error).message; }
+  const aiReview = await currentAIReview(row);
+  try { await currentReadable(row, db, aiReview); } catch (error) { blockedReason = (error as Error).message; }
   return { id: row.id, documentId: row.document_id, revision: row.revision, status: row.status, snapshot: row.snapshot, snapshotHash: row.snapshot_hash,
     payload: row.payload, payloadHash: row.payload_hash, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), verifiedAt: row.verified_at ? iso(row.verified_at) : null,
-    humanDecision: row.human_decision, readable: blockedReason === null, blockedReason };
+    aiReview, humanDecision: row.human_decision, readable: blockedReason === null, blockedReason };
 }
 async function lockGuide(id: string, db: Db) {
   const [row] = await db`SELECT * FROM fishery_business_guides WHERE id=${id} FOR UPDATE`;
@@ -155,12 +186,17 @@ export async function decideBusinessGuide(id: string, input: unknown, actor: str
     if (before.status === "withdrawn") throw new Conflict("Withdrawn guide cannot be restored");
     if (before.revision !== data.expectedRevision || before.payload_hash !== data.payloadHash || before.snapshot_hash !== data.snapshotHash)
       throw new Conflict("Guide revision, payload or snapshot changed; reload before decision");
+    let ai: BusinessGuideAIReview | null = null;
     if (data.decision === "approved") {
       const context = await contextFor(before.document_id, tx);
       if (context.snapshotHash !== before.snapshot_hash) throw new Conflict("Source or material review changed; save a new draft first");
       validateBusinessGuidePayload(before.payload, context);
+      if (!data.aiReviewHash) throw new Conflict("Final approval requires the current AI review hash");
+      ai = await currentAIReview(before);
+      if (!ai.current || !ai.pass || !ai.reviewHash || ai.reviewHash !== data.aiReviewHash || ai.guideRevision !== editorialRevision(before))
+        throw new Conflict("Current passing AI comparison required before final human approval");
     }
-    const at = new Date().toISOString(), decision = { decision: data.decision, actor, at, reason: data.reason, revision: before.revision + 1, payloadHash: before.payload_hash, snapshotHash: before.snapshot_hash };
+    const at = new Date().toISOString(), decision = { decision: data.decision, actor, at, reason: data.reason, revision: before.revision + 1, payloadHash: before.payload_hash, snapshotHash: before.snapshot_hash, ...(ai ? { mode: data.approvalMode, aiReviewHash: ai.reviewHash!, aiEditorialRevision: ai.guideRevision! } : {}) };
     const [row] = await tx`UPDATE fishery_business_guides SET revision=revision+1,status=${data.decision},human_decision=${tx.json(decision)},
       verified_at=${data.decision === "approved" ? at : null},actor=${actor},updated_at=now() WHERE id=${id} RETURNING *`;
     await audit(actor, "fishery.business.decision", `business-guide:${id}`, data.reason, before, row!, { db: tx });
@@ -188,7 +224,7 @@ async function readableItems(db: Db, now: Date): Promise<BusinessGuideReaderItem
     const attachmentUrl = observation?.payload.sourceCapture?.attachmentUrl;
     items.push({ id: row.id, documentId: row.document_id, revision: row.revision, payload: row.payload, source: context.source, snapshot: context.snapshot,
       evidence: Object.fromEntries(context.catalog.spans.filter(s => ids.has(s.id)).map(s => [s.id, { quote: s.quote, paragraph: s.paragraph, page: s.page, url: capture && s.page !== null && attachmentUrl ? attachmentUrl : context.source.url }])),
-      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), verification: { origin: "human_editorial", label: "人工编审的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
+      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), qualification: { status: "qualified", label: "AI对照核查及最终人工审定通过" }, verification: { origin: "human_editorial", aiStatus: "passed", label: "人工编写，经AI对照核查及最终人工审定的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
       eligibility: { canApply: null, canFish: null }, internalOnly: true });
   }
   return items;
