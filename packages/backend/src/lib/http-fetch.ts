@@ -64,6 +64,7 @@ function dispatcherFor(viaProxy: boolean, privateHost: boolean): Dispatcher | un
 }
 
 export interface GuardedFetchOptions {
+  signal?: AbortSignal;
   method?: string;
   headers?: Record<string, string>;
   body?: string;
@@ -118,7 +119,8 @@ export const languageHeaders = (language: string | undefined): Record<string, st
 export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}): Promise<GuardedResponse> {
   // One budget includes DNS, every redirect and the body. Restarting it at each hop allowed a
   // nominal 20 s image request to occupy the API for minutes.
-  const signal = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
+  const deadline = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
+  const signal = opts.signal ? AbortSignal.any([deadline, opts.signal]) : deadline;
   const route = opts.route ?? "egress";
   const configuredHost = hostOf(new URL(input));
   const privateHosts = opts.privateFeedHost && config.privateFeedHosts.includes(configuredHost) ? [configuredHost] : [];

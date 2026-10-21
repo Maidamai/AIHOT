@@ -1,10 +1,16 @@
+import { withColumnLease } from "./column-lease.ts";
 import { config } from "@aihot/backend/config";
 import { COLUMNS } from "./official-columns.ts";
 import { readBatch, verifyBatchItem } from "./column-batches.ts";
 import { importCapturedMaterial,recordCapturedAcquisition } from "./store.ts";
 import { sha256 } from "./source-adapters.ts";
 
-export async function importBatch(id: string, actor: string) {
+export async function importBatch(id:string,actor:string):Promise<Awaited<ReturnType<typeof importBatchContents>>> {
+  const batch=await readBatch(config.dataDir,id),columns=[...new Set(batch.items.map(item=>item.column))];
+  if(columns.length===1)return withColumnLease(columns[0],()=>importBatchContents(id,actor));
+  return importBatchContents(id,actor);
+}
+async function importBatchContents(id: string, actor: string) {
   const batch = await readBatch(config.dataDir,id);
   if (batch.status !== "complete") throw new Error("Batch is still running");
   // Reconstruct non-ready captures too: their valid new body can supersede an already registered URL.

@@ -111,3 +111,26 @@ test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工
 正常文章最终合格和指南最终批准会在同一数据库事务中写入 `fishery.publication` 非付费任务；任务单例键包含具体最终决定哈希，新版本不会被仍活动的旧任务吞掉。既有 `consume-flows.ts` 同消费者、同处理租约执行它，每个任务只处理目标材料，并在原审批写锁下重核当前投影和决定；重复执行复用原文章身份，过期决定不覆盖新关联。暂时无法读取的当前批准会失败并留下可追踪任务，不把成功审批后的一次关联失败静默丢掉。
 
 新队列仅有两次重试、五秒延迟、五分钟执行期限；既有消费者只对这个明确的非付费队列调用 pg-boss 维护以恢复过期任务，停止和租约丢失时清理维护定时器并停止取任务。不启用全局调度或监督，不恢复付费 `fishery.flow`，不启动采集或模型。重试耗尽保留失败状态；正常重新审核批准产生新的版本任务。原站 `editorial_overrides.visibility` 是独立控制列，关联任务不写它，后台正常撤下必须由正常可见性操作显式恢复。
+
+### 单 Moa 无付费归档 worker
+
+原 worker 默认 `WORKER_PROFILE=full` 不变。明确选择模块声明的 `WORKER_PROFILE=fishery-archive` 时，入口在任何核心内容、翻译、事件、报告、通知、恢复和模块付费消费者之前分流；要求 `MODEL_CALLS_ENABLED=false`、`COLLECT_ENABLED=false`。该模式只注册 `fishery.archive.moa.tick` 与 `fishery.archive.moa`，使用原 pg-boss；启动前读取全部既有 schedules，遇其他名称保留原表并拒绝启动，不调用会清理其他 cron 的原 `registerSchedules`。全局 supervise 关闭，仅监督这两个非付费队列以释放过期 active tick，均 retryLimit=0。
+
+操作员在原私有数据库/目录下显式设置（脚本不加载额外凭据）：
+
+```bash
+node modules/fishery/scripts/moa-archive.ts --enable --mode validation --run-id <unique-run-id> --interval-seconds 60
+WORKER_PROFILE=fishery-archive MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node apps/worker/src/main.ts
+node modules/fishery/scripts/moa-archive.ts --status
+# 两轮完成后切正常间隔；旧短周期任务绑定旧 revision，不能继续GET。
+node modules/fishery/scripts/moa-archive.ts --enable --mode hourly --run-id <new-unique-run-id>
+node modules/fishery/scripts/moa-archive.ts --disable --mode hourly --run-id <current-run-id>
+```
+
+只有既有、`external/enabled=false` 的 `fishery-column-moa` 可运行；独立授权存原 settings 的 `fishery.archive.moa`，不启用核心信源采集。每分钟仅做一次 pg-boss 轻量 due tick，正常实际请求从上一轮完成后至少间隔3600秒，不会因小时 cron 边界秒差跳成两小时。每轮固定1个列表页、最多5篇正文（另有robots检查），pending 与分页/cycle游标复用原实现；未知分页不宣称全站遍历。失败尊重核心退避，连续3次失败暂停。状态直接复用原来源健康、job_runs 和既有管理员批次接口 `archiveStatus`，不新增运维页面。
+
+短周期验证在 GET 前持久化同 runId 的最多2次 claim；重复相同配置返回同 revision/claim，历史 validation runId 不可重新授予预算。进程重启、重复投递与切回 hourly 都不能绕过上限。状态切换由正在运行的专用 worker 在下一次心跳更新它自己的 schedule data；旧 revision 作业一律无请求跳过。hourly 切换的 nextAt 不早于最近获取后1小时，不立即产生第三轮请求。
+
+所有 DB `collectColumnRound`（包括原 CLI）与官方批次导入共用每源 PostgreSQL advisory 租约，使用专属 retained session；事务在该 session 内显式 BEGIN/COMMIT 并在写前/提交前核对 PID 与锁，权威游标、fetch_runs、素材观察提交不借共享池。连接丢失永久取消旧 owner、abort 在途HTTP；等待后、GET前后、归档和journal rename前均检查租约。新 owner 遇未决原轮次停止，不能自动偷锁或恢复未知请求；无关的付费流程租约/回执从不触碰。
+
+正常完成的每个归档批次在同来源租约内调用既有 `importBatch`，只登记素材文书/观察和获取证据，默认待审；不建 core 待分析文章，不排 analyze/translate/report/paid flow，不审核、不发布。导入中断保留 current=importing，可显式对账复用相同原件与版本身份。停用保留 current/claim/证据且使旧作业失效；需继续原未决身份时先用相同 runId 重启原预算，再 `--resume --acknowledge-stopped --reason '<已证实原执行者停止的依据>'`。原 journal 存在就只按原身份 resume；不存在时仅在无 fetch_run 意图、无 child 归档且目录无证据的情况下，记录审计后从同一已授权 roundId 开始。未知意图/归档不能换新ID掩盖。running child 原件保持不变并明确保留，父轮以失败结束、不导入 running batch；对账同时准确结束该 roundId 的未结 job_runs。

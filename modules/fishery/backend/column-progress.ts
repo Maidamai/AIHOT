@@ -1,4 +1,5 @@
 // Explicit bounded rounds only. No timer, model, approval or publication.
+import { currentColumnLease, assertColumnLeases, withColumnLeases } from "./column-lease.ts";
 import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -32,9 +33,10 @@ const serial=(value:unknown)=>JSON.stringify(value,null,2)+"\n";
 const profile=(column:ColumnId)=>sha256(JSON.stringify({column:COLUMNS[column],selection:"official-dwf-title-and-body/v1",pagination:"inspected-pagination/v1"}));
 export const initialColumnProgress=(column:ColumnId):ColumnProgress=>({version:"fishery-column-progress/1",column,profileHash:profile(column),revision:0,cycle:0,cursorUrl:COLUMNS[column].url,completedUrls:[],pendingUrls:[],health:null});
 async function exists(file:string) {try {await stat(file);return true;} catch(error) {if((error as NodeJS.ErrnoException).code==="ENOENT") return false;throw error;}}
-async function atomic(file:string,value:unknown) {
+async function atomic(file:string,value:unknown,guard?:()=>Promise<void>,beforeRename?:()=>Promise<void>) {
+  await guard?.();
   const temporary=path.join(path.dirname(file),`.checkpoint-${randomUUID()}.tmp`),handle=await open(temporary,"wx",0o600);
-  try {await handle.writeFile(serial(value));await handle.close();await rename(temporary,file);} finally {await handle.close().catch(()=>{});await rm(temporary,{force:true});}
+  try {await handle.writeFile(serial(value));await handle.close();await beforeRename?.();await guard?.();await rename(temporary,file);} finally {await handle.close().catch(()=>{});await rm(temporary,{force:true});}
 }
 async function loadState(dataDir:string,column:ColumnId) {
   const file=stateFile(dataDir,column);if(!await exists(file)) return initialColumnProgress(column);
@@ -94,7 +96,9 @@ async function readRound(file:string,id:string):Promise<ColumnRound> {
   return r;
 }
 
-export async function collectColumnRound(options:{id:string;dataDir:string;columns:ColumnId[];limit:number;maxPages:number;storage?:"file"|"db";store?:ColumnProgressStore;resume?:{acknowledgeStopped:true;reason:string};fetch?:ColumnFetcher;wait?:(ms:number)=>Promise<unknown>;checkpoint?:(stage:"child-persisted"|"before-source-commit"|"after-source-commit")=>Promise<void>}) {
+export async function collectColumnRound(options:{id:string;dataDir:string;columns:ColumnId[];limit:number;maxPages:number;storage?:"file"|"db";store?:ColumnProgressStore;resume?:{acknowledgeStopped:true;reason:string};fetch?:ColumnFetcher;wait?:(ms:number)=>Promise<unknown>;checkpoint?:(stage:"child-persisted"|"before-source-commit"|"after-source-commit"|"before-journal-rename")=>Promise<void>}):Promise<ColumnRound> {
+  if(options.storage==="db"&&options.columns.some(column=>!currentColumnLease(column)))return withColumnLeases(options.columns,()=>collectColumnRound(options));
+  const guard=options.storage==="db"?assertColumnLeases:async()=>{};
   const id=z.string().regex(/^[a-zA-Z0-9-]{1,40}$/).parse(options.id),columns=[...new Set(options.columns.map(c=>columnIdSchema.parse(c)))];
   const limit=z.int().min(1).max(5).parse(options.limit),maxPages=z.int().min(1).max(3).parse(options.maxPages);
   if(!columns.length) throw new Error("At least one column is required");
@@ -118,7 +122,7 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
     }
   }
   try {await mkdir(lock,{mode:0o700});} catch(error) {if((error as NodeJS.ErrnoException).code==="EEXIST") throw new Error("Collection lock held; no automatic stale-lock recovery");throw error;}
-  const owner={roundId:id,instanceId:randomUUID()};await atomic(path.join(lock,"owner.json"),owner);
+  const owner={roundId:id,instanceId:randomUUID()};await atomic(path.join(lock,"owner.json"),owner,guard);
   try {
     if(await exists(activeFile)) {
       const active=z.strictObject({roundId:batchIdSchema}).parse(JSON.parse(await readFile(activeFile,"utf8")));
@@ -127,11 +131,11 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
         if(prior.status!=="finished") throw new Error(`Unfinished round ${active.roundId}; reconcile it before starting another identity`);
       }
     }
-    await atomic(activeFile,{roundId:id});
+    await atomic(activeFile,{roundId:id},guard);
     const round:ColumnRound=previous??{storage:options.storage??"file",version:"fishery-column-round/1",id,columns,limit,maxPages,startedAt:new Date().toISOString(),finishedAt:null,status:"running",outcome:null,sources:[],recoveries:[]};
     if(!previous) await mkdir(roundDir,{mode:0o700});
     if(options.resume) round.recoveries.push({at:new Date().toISOString(),reason:options.resume.reason});
-    const save=()=>atomic(file,round);await save();
+    const save=async()=>{await guard();return atomic(file,round,guard,options.storage==="db"?()=>options.checkpoint?.("before-journal-rename")??Promise.resolve():undefined);};await save();
     for(const column of columns) {
       let entry=round.sources.find(s=>s.column===column);
       if(entry?.status==="finished") continue;
@@ -165,7 +169,7 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
                 reason:`Interrupted child ${batchId} retained unchanged; no HTTP during reconciliation; start a new bounded round for unfinished work`,pending:working.pendingUrls.length,nextPageUrl:working.cursorUrl,coverage:"blocked"};
               anyFailure=true;break;
             }
-          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:working.cursorUrl,completedUrls:working.completedUrls},fetch:options.fetch,wait:options.wait});
+          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:working.cursorUrl,completedUrls:working.completedUrls},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
           if(batch.items.some(i=>i.column!==column)||(batch.sources[0]?.pagination&&batch.sources[0].pagination.pageUrl!==working.cursorUrl)) throw new Error("Saved page batch/cursor binding differs");
           await options.checkpoint?.("child-persisted");
           const beforeCursor=working.cursorUrl,beforeCycle=working.cycle;working=advance(working,batch);attempted+=batch.items.length;
@@ -182,6 +186,7 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
       if(!entry.after) throw new Error("Missing committed progress candidate");
       const current=options.store?entry.before:await load(column);
       if(!equal(current,entry.before)&&!equal(current,entry.after)) throw new Error("Column state changed outside this preserved round; reconciliation required");
+      await guard();
       await options.checkpoint?.("before-source-commit");
       if(options.store) await options.store.finish(column,id,entry.before,entry.after,entry.batches,(await Promise.all(entry.batches.map(async id=>(await readBatch(options.dataDir,id)).items.length))).reduce((a,b)=>a+b,0));
       else if(!equal(current,entry.after)) await atomic(stateFile(options.dataDir,column),entry.after);
@@ -190,9 +195,9 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
     }
     const outcomes=round.sources.map(s=>s.health!.outcome);
     round.outcome=outcomes.every(s=>s==="success")?"success":outcomes.every(s=>s==="failure")?"failure":"partial";
-    round.finishedAt=new Date().toISOString();round.status="finished";await save();await rm(activeFile);return round;
+    round.finishedAt=new Date().toISOString();round.status="finished";await save();await guard();await rm(activeFile);return round;
   } finally {
     const current=JSON.parse(await readFile(path.join(lock,"owner.json"),"utf8"));
-    if(current.instanceId===owner.instanceId) await rm(lock,{recursive:true});
+    if(current.instanceId===owner.instanceId) {try{await guard();}catch(error){throw error;}await rm(lock,{recursive:true});}
   }
 }

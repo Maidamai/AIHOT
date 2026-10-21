@@ -1,3 +1,4 @@
+import { capturedTransaction } from "./column-lease.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
@@ -126,7 +127,7 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
   const sourceId = `fishery-column-${column.id}`;
   // A configured column owner is attribution only; do not infer a page publisher or policy issuer.
   const sourceAttribution = column.issuer;
-  return sql.begin(async tx => {
+  return capturedTransaction(column.id,async tx => {
     // Take the same source -> document lock order as normal imports. An unrelated URL must never be registered here.
     if(options.existingOnly) {
       await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
@@ -164,7 +165,7 @@ export async function documentHistory(id: string) {
 }
 
 export async function recordCapturedAcquisition(columnId:string,canonicalUrl:string,record:{batchId:string;archiveId:string;outcome:"ready"|"irrelevant"|"unavailable";capture:unknown;relevance:unknown;reason:string},actor:string) {
-  return sql.begin(async tx=>{
+  return capturedTransaction(columnId,async tx=>{
     const [document]=await tx`SELECT id FROM fishery_documents WHERE source_id=${`fishery-column-${columnId}`} AND canonical_url=${canonicalUrl} FOR UPDATE`;
     if(!document) return null;
     const subject=`fishery:${document.id}`;

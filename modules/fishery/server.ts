@@ -1,5 +1,6 @@
 import { publicationQueue } from "./backend/publication-queue.ts";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails } from "./backend/publication-bridge.ts";
+import {archiveStatus,startArchiveProfile} from "./backend/archive-worker.ts";
 import { defineServerModule } from "@aihot/backend/modules";
 import { adminHandler, type AdminHandler } from "@aihot/api/routes/admin-auth";
 import { sendProblem } from "@aihot/api/http/respond";
@@ -30,7 +31,7 @@ const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin
 const param = (req: { params: unknown }) => idSchema.parse((req.params as Record<string, string>).id);
 
 export default defineServerModule({
-  name: "fishery", sourceHealth, queues:[flowQueue,publicationQueue],
+  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, queues:[flowQueue,publicationQueue],
   publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
   http(app) {
     installManualSourceRoutes(app);
@@ -49,7 +50,7 @@ export default defineServerModule({
     app.get("/api/admin/fishery/workbench", guarded(async req => workbench(z.object({ page:z.coerce.number().int().positive().max(100000).optional(),q:z.string().max(200).optional(),scope:z.enum(["real","test","all"]).optional(),state:z.enum(["pending","failed","unverified","stale","rejected","approved","withdrawn"]).optional().or(z.literal("")) }).parse(req.query))));
     app.get("/api/admin/fishery/batches", guarded(async req => {
       const {storage}=z.strictObject({storage:z.enum(["file","db"]).default("db")}).parse(req.query);
-      return {storage,sourceState:storage==="db"?await columnDbStatus():null,rows:await listBatches(config.dataDir),progress:await listColumnProgress(config.dataDir,storage==="db"?columnDbProgress:undefined),rounds:await listColumnRounds(config.dataDir)};
+      return {storage,archiveStatus:await archiveStatus(),sourceState:storage==="db"?await columnDbStatus():null,rows:await listBatches(config.dataDir),progress:await listColumnProgress(config.dataDir,storage==="db"?columnDbProgress:undefined),rounds:await listColumnRounds(config.dataDir)};
     }));
     app.post("/api/admin/fishery/batches/:id/flows", guarded(async(req,_reply,admin)=>{
       const {identity}=z.strictObject({identity:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)}).parse(req.body);

@@ -1164,3 +1164,144 @@ test('source bridge DB progress API reads core state rather than offline cursor'
     const offline=await app.inject({method:'GET',url:'/api/admin/fishery/batches?storage=file'});assert.equal(offline.json().storage,'file');assert.equal(offline.json().progress.find((row:{column:string})=>row.column==='moa').state.revision,99);
   } finally {config.devAdmin=null;await rm(file,{force:true});}
 });
+
+import {PgBoss} from 'pg-boss';
+import {ARCHIVE_KEY,ARCHIVE_TICK,ARCHIVE_QUEUE,archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker,assertArchiveSchedules} from '../backend/archive-worker.ts';
+import {acquireColumnLease,withColumnLease} from '../backend/column-lease.ts';
+const archiveUrl=(n:number)=>`https://yyj.moa.gov.cn/gzdt/202610/t20261021_${97000+n}.htm`;
+const archiveListing=(ids:number[])=>Buffer.from(`<ul class="sj_e_tonzhi_list">${ids.map(n=>`<li><a href="${archiveUrl(n)}">远洋渔业隔离归档${n}</a></li>`).join('')}</ul>`);
+const archiveBody=(n:number)=>Buffer.from(`<meta name="ArticleTitle" content="远洋渔业隔离归档${n}"><meta name="PubDate" content="2026-10-21"><div class="sj_arc_body"><div class="TRS_Editor"><p>ISOLATED TEST FIXTURE ${n} ${'远洋渔业公海履约完整合成上下文。'.repeat(12)}</p></div></div>`);
+let archivePreviousDataDir:string|undefined;
+afterEach(()=>{if(archivePreviousDataDir){config.dataDir=archivePreviousDataDir;archivePreviousDataDir=undefined;}});
+async function archiveFixture(){
+  archivePreviousDataDir??=config.dataDir;config.dataDir=await mkdtemp(path.join(tmpdir(),"archive-worker-"));
+  // All fixtures are in this test file's isolated database; reuse rather than remove referenced sources.
+  await sql`DELETE FROM settings WHERE key=${ARCHIVE_KEY}`;
+  await sql`DELETE FROM fetch_runs WHERE source_id=${bridgeSource} AND detail ? 'fisheryColumnRound'`;
+  await sql`INSERT INTO sources(id,name,kind,enabled,cursor) VALUES (${bridgeSource},'archive fixture','external',false,'{}')
+    ON CONFLICT(id) DO UPDATE SET kind='external',config='{}',enabled=false,cursor='{}',fail_count=0,last_error=NULL,last_fetch_at=NULL,last_ok_at=NULL,next_fetch_at=NULL`;
+}
+async function dueArchive(){await sql`UPDATE settings SET value=jsonb_set(value,'{nextAt}',${sql.json('2020-01-01T00:00:00.000Z')}) WHERE key=${ARCHIVE_KEY}`;await sql`UPDATE sources SET next_fetch_at='2020-01-01' WHERE id=${bridgeSource}`;}
+async function testArchiveBoss(){const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'archive_test_boss',schedule:false,supervise:false});b.on('error',()=>{});await b.start();await b.createQueue(ARCHIVE_QUEUE,{policy:'short',retryLimit:0});return b;}
+async function claimArchive(b:PgBoss,revision:string){const claimed=await archiveTick(b,revision);assert.ok('roundId' in claimed);await b.fetch(ARCHIVE_QUEUE);await b.complete(ARCHIVE_QUEUE,(claimed as {jobId:string}).jobId);return {revision,roundId:(claimed as {roundId:string}).roundId};}
+test('continuous archive imports five then sixth as pending without core content, model, publication or paid queue side effects',async()=>{
+  await archiveFixture();const b=await testArchiveBoss();let gets=0;
+  const mock:import('../backend/column-batches.ts').ColumnFetcher=async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([1,2,3,4,5,6]):archiveBody(Number(/_(\d+)\.htm/.exec(url)![1])-97000)};};
+  const [before]=await sql`SELECT (SELECT count(*) FROM articles) AS articles,(SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_reviews) AS reviews,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_flow_tasks) AS flows`;
+  try{
+    const c=await configureArchive({enabled:true,mode:'validation',runId:'local-two-rounds',intervalSeconds:10});
+    const j1=await claimArchive(b,c.revision);await runArchiveJob(j1,{fetch:mock,wait:async()=>{}});const n=gets;await runArchiveJob(j1,{fetch:mock});assert.equal(gets,n);
+    let s=await archiveStatus();assert.equal(s.pendingCandidates,1);assert.equal(s.coreSourceEnabled,false);
+    // Simulate a worker restart: another producer instance reads the same persisted state/claim bound.
+    await dueArchive();const j2=await claimArchive(b,c.revision);await runArchiveJob(j2,{fetch:mock,wait:async()=>{}});
+    s=await archiveStatus();assert.equal(s.validationClaimed,2);assert.match(s.pausedReason!,/two-round/);assert.equal(s.pendingCandidates,0);
+    await dueArchive();assert.ok('skipped' in await archiveTick(b,c.revision));assert.equal(gets,n+3);
+    const docs=await sql`SELECT d.id,o.revision,r.id AS review FROM fishery_documents d JOIN fishery_observations o ON o.document_id=d.id LEFT JOIN fishery_reviews r ON r.document_id=d.id WHERE d.canonical_url=${archiveUrl(6)}`;assert.equal(docs.length,1);assert.equal(docs[0].revision,1);assert.equal(docs[0].review,null);
+    const [after]=await sql`SELECT (SELECT count(*) FROM articles) AS articles,(SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_reviews) AS reviews,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_flow_tasks) AS flows`;assert.deepEqual(after,before);
+    const bad=await sql`SELECT name FROM archive_test_boss.job WHERE name ~ 'analyze|translate|report|flow|publication'`;assert.equal(bad.length,0);
+    const hourly=await configureArchive({enabled:true,mode:'hourly',runId:'hourly-followup'});assert.ok(Date.parse(hourly.nextAt!)>Date.now()+3500_000);
+    await runArchiveJob(j2,{fetch:mock});assert.equal(gets,n+3);assert.ok('skipped' in await archiveTick(b,c.revision));
+  }finally{await b.stop({graceful:false});}
+});
+test('continuous archive preserves partial successful cursor, pauses at three core failures and never retries the same job',async()=>{
+  await archiveFixture();const b=await testArchiveBoss();let gets=0;
+  try{
+    const c=await configureArchive({enabled:true,mode:'hourly',runId:'three-failures'});
+    for(let i=0;i<3;i++){
+      await dueArchive();const job=await claimArchive(b,c.revision);const [before]=await sql`SELECT cursor::text AS bytes,last_ok_at FROM sources WHERE id=${bridgeSource}`;
+      await runArchiveJob(job,{wait:async()=>{},fetch:async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([10,11]):url===archiveUrl(10)?archiveBody(10):Buffer.from('<html>missing article body</html>'),headers:{get:()=> 'text/html'}};}});
+      const [after]=await sql`SELECT cursor::text AS bytes,last_ok_at,fail_count FROM sources WHERE id=${bridgeSource}`;assert.equal(after.bytes,before.bytes);assert.equal(after.last_ok_at,before.last_ok_at);assert.equal(after.fail_count,i+1);
+      const count=gets;await runArchiveJob(job,{fetch:async()=>{throw new Error('duplicate job must not fetch');}});assert.equal(gets,count);
+    }
+    const status=await archiveStatus();assert.equal(status.enabled,false);assert.equal(status.consecutiveFailures,3);assert.match(status.pausedReason!,/Three consecutive/);
+    assert.ok('skipped' in await archiveTick(b,c.revision));
+  }finally{await b.stop({graceful:false});}
+});
+test('all DB archive entry points share source lease and lost owner cannot archive response or commit source/import',async()=>{
+  await archiveFixture();const lease=await acquireColumnLease('moa');
+  try{await assert.rejects(acquireColumnLease('moa'),/lease unavailable/);await assert.rejects(collectColumnRound({id:'conflicting-cli',dataDir:config.dataDir,columns:['moa'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,fetch:async()=>{throw new Error('never GET');}}),/lease unavailable/);}finally{await lease.release();}
+  let releaseResponse:()=>void=()=>{},entered:()=>void=()=>{};const waiting=new Promise<void>(r=>entered=r),response=new Promise<void>(r=>releaseResponse=r);let oldPid=0;
+  const task=withColumnLease('moa',async owner=>{oldPid=owner.backendPid;return collectColumnRound({id:'lease-response-loss',dataDir:config.dataDir,columns:['moa'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,wait:async()=>{},fetch:async(url,options)=>{entered();await Promise.race([response,new Promise((_,reject)=>options?.signal?.addEventListener('abort',()=>reject(options.signal!.reason),{once:true}))]);return {url,status:404,body:Buffer.from('must never persist after lease loss'),headers:{get:()=> 'text/html'}};}});});
+  await waiting;await sql`SELECT pg_terminate_backend(${oldPid})`;releaseResponse();await assert.rejects(task,/lease|connection/i);
+  const [s]=await sql`SELECT cursor,fail_count FROM sources WHERE id=${bridgeSource}`;assert.deepEqual(s.cursor,{});assert.equal(s.fail_count,0);
+  const newOwner=await acquireColumnLease('moa');try{await newOwner.assertHeld();}finally{await newOwner.release();}
+  await assert.rejects(collectColumnRound({id:'new-owner-round',dataDir:config.dataDir,columns:['moa'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,fetch:async()=>{throw new Error('no HTTP until reconciliation');}}),/Unfinished round|Collection lock held/);
+});
+test('archive profile refuses unknown schedules without deleting them',async()=>{
+  const b=await testArchiveBoss();try{await b.createQueue('foreign.schedule');await b.schedule('foreign.schedule','0 * * * *');await assert.rejects(assertArchiveSchedules(b),/foreign.schedule/);assert.ok((await b.getSchedules()).some(s=>s.name==='foreign.schedule'));await b.unschedule('foreign.schedule');}finally{await b.stop({graceful:false});}
+});
+async function untilArchive(check:()=>Promise<boolean>,timeout=15000){const end=Date.now()+timeout;while(Date.now()<end){if(await check())return;await new Promise(r=>setTimeout(r,100));}throw new Error('Archive condition timed out');}
+test('real pg-boss scheduled tick dispatches a single archive source consumer and persists a pending material',async()=>{
+  await archiveFixture();await configureArchive({enabled:true,mode:'validation',runId:'actual-scheduler',intervalSeconds:10});
+  const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'archive_real_tick',schedule:true,supervise:false,cronMonitorIntervalSeconds:1});b.on('error',()=>{});let calls=0;
+  try{await b.start();await registerArchiveWorker(b,{cron:'* * * * * *',pollingIntervalSeconds:0.5,wait:async()=>{},fetch:async url=>{calls++;return {url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([20]):archiveBody(20)};}});
+    await untilArchive(async()=>!!(await archiveStatus()).lastRound);
+    const schedules=await b.getSchedules();assert.equal(schedules.length,1);assert.equal(schedules[0].name,ARCHIVE_TICK);assert.equal(calls,3);
+    const [material]=await sql`SELECT d.id,r.id AS review FROM fishery_documents d LEFT JOIN fishery_reviews r ON r.document_id=d.id WHERE d.canonical_url=${archiveUrl(20)}`;assert.ok(material.id);assert.equal(material.review,null);
+    const jobs=await sql`SELECT name,state,retry_limit FROM archive_real_tick.job WHERE name IN (${ARCHIVE_TICK},${ARCHIVE_QUEUE})`;assert.ok(jobs.some(j=>j.name===ARCHIVE_TICK));assert.ok(jobs.some(j=>j.name===ARCHIVE_QUEUE));assert.ok(jobs.every(j=>j.retry_limit===0));
+  }finally{await b.stop({graceful:false});}
+});
+test('explicit recovery handles queued and pre-manifest stopped rounds; disable preserves unresolved evidence and validation budget',async()=>{
+  const b=await testArchiveBoss();
+  try{for(const stage of ['queued','collecting']){
+    await archiveFixture();const c=await configureArchive({enabled:true,mode:'validation',runId:`recover-${stage}`,intervalSeconds:10}),job=await claimArchive(b,c.revision);
+    if(stage==='collecting')await sql`UPDATE settings SET value=jsonb_set(value,'{current,stage}','"collecting"') WHERE key=${ARCHIVE_KEY}`;
+    const same=await configureArchive({enabled:true,mode:'validation',runId:`recover-${stage}`,intervalSeconds:10});assert.equal(same.revision,c.revision);assert.equal(same.claimed,1);
+    const disabled=await configureArchive({enabled:false,mode:'validation',runId:`recover-${stage}`});assert.equal(disabled.current!.id,job.roundId);assert.equal(disabled.claimed,1);assert.equal((await archiveStatus()).enabled,false);
+    await configureArchive({enabled:true,mode:'validation',runId:`recover-${stage}`,intervalSeconds:10});
+    const result=await reconcileArchive('Synthetic stopped runner before its first journal/GET',{wait:async()=>{},fetch:async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([stage==='queued'?30:31]):archiveBody(30)})});
+    assert.equal(result.round.id,job.roundId);assert.equal(result.round.outcome,'success');assert.equal((await archiveStatus()).currentRound,null);assert.equal((await archiveStatus()).validationClaimed,1);
+  }}finally{await b.stop({graceful:false});}
+});
+test('interrupted child remains unchanged while explicit reconciliation closes failed round without importing running batch',async()=>{
+  await archiveFixture();const b=await testArchiveBoss();let roundId='';
+  try{const c=await configureArchive({enabled:true,mode:'validation',runId:'interrupted-child',intervalSeconds:10}),job=await claimArchive(b,c.revision);roundId=job.roundId;
+    // The source transaction has not settled; a real running child is retained as recovery evidence.
+    await assert.rejects(withColumnLease('moa',async lease=>{return runArchiveJob(job,{wait:async()=>{},fetch:async()=>{await sql`SELECT pg_terminate_backend(${lease.backendPid})`;throw new Error('synthetic killed lease during GET');}});}),/lease|connection/i);
+    assert.match((await archiveStatus()).pausedReason!,/reconciliation/);
+    const child=path.join(config.dataDir,'fishery-batches',`${roundId}-moa-p0`,'manifest.json'),before=await readFile(child,'utf8');
+    const result=await reconcileArchive('Synthetic previous runner terminated and its child GET remains unknown',{fetch:async()=>{throw new Error('recovery may not GET');}});
+    assert.equal(result.round.outcome,'failure');assert.deepEqual(result.retainedInterrupted,[`${roundId}-moa-p0`]);assert.equal(await readFile(child,'utf8'),before);assert.equal((await archiveStatus()).currentRound,null);
+    assert.equal((await sql`SELECT id FROM job_runs WHERE job=${ARCHIVE_QUEUE} AND status='running' AND detail->>'roundId'=${roundId}`).length,0);
+  }finally{await b.stop({graceful:false});}
+});
+import {spawn} from 'node:child_process';
+test('actual worker main archive profile starts and restarts without full consumers or foreign cron cleanup',async()=>{
+  await archiveFixture();const c=await configureArchive({enabled:true,mode:'hourly',runId:'entry-profile-test'});
+  await sql`UPDATE settings SET value=jsonb_set(value,'{nextAt}',${sql.json('2099-01-01T00:00:00.000Z')}) WHERE key=${ARCHIVE_KEY}`;
+  const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'pgboss',schedule:false,supervise:false});b.on('error',()=>{});await b.start();
+  const names=['content.analyze','content.translate','reports.compose','cron.ops.recover'];const ids:string[]=[];
+  for(const name of names){await b.createQueue(name,{retryLimit:0});ids.push((await b.send(name,{articleId:'must-stay-unconsumed'}))!);}
+  const entry=path.resolve('apps/worker/src/main.ts'),children=new Set<ReturnType<typeof spawn>>();
+  const launch=async()=>{let output='';const child=spawn(process.execPath,[entry],{cwd:path.resolve('.'),env:{...process.env,WORKER_PROFILE:'fishery-archive',MODEL_CALLS_ENABLED:'false',COLLECT_ENABLED:'false',AIHOT_DATA_DIR:config.dataDir,AIHOT_CREDENTIALS_DIR:'/nonexistent-test-credentials'},stdio:['ignore','pipe','pipe']});children.add(child);child.once('exit',()=>children.delete(child));child.stdout.on('data',x=>output+=x);child.stderr.on('data',x=>output+=x);await untilArchive(async()=>{if(child.exitCode!==null)throw new Error(output);return output.includes('worker started');});return child;};
+  try{for(let i=0;i<2;i++){const child=await launch();await new Promise(r=>setTimeout(r,600));const jobs=await sql`SELECT name,state FROM pgboss.job WHERE id IN ${sql(ids)}`;assert.equal(jobs.length,4);assert.ok(jobs.every(j=>j.state==='created'));assert.deepEqual((await b.getSchedules()).map(s=>s.name),[ARCHIVE_TICK]);assert.ok((await sql`SELECT key FROM settings WHERE key='heartbeat.worker.fishery-archive'`).length);if(i===0){
+      const abandoned=await b.send(ARCHIVE_TICK,{revision:c.revision},{retryLimit:0});const held=await b.fetch(ARCHIVE_TICK);assert.equal(held[0].id,abandoned);
+      child.kill('SIGKILL');await new Promise<void>(resolve=>child.once('exit',()=>resolve()));
+      await sql`UPDATE pgboss.job SET started_on='2020-01-01',expire_seconds=1 WHERE id=${abandoned!}`;await sql`UPDATE pgboss.queue SET monitor_claim_on='2020-01-01' WHERE name=${ARCHIVE_TICK}`;
+    }else{const expired=await sql`SELECT state FROM pgboss.job WHERE name=${ARCHIVE_TICK} AND started_on='2020-01-01'`;assert.ok(expired.every(j=>j.state==='failed'));
+      await sql`UPDATE sources SET last_fetch_at=now() WHERE id=${bridgeSource}`;
+      const switched=await configureArchive({enabled:true,mode:'hourly',runId:'entry-profile-switched'});
+      await untilArchive(async()=>(await b.getSchedules()).some(s=>(s.data as {revision?:string}).revision===switched.revision),20000);
+      child.kill('SIGTERM');await new Promise<void>((resolve,reject)=>{child.once('exit',code=>code===0?resolve():reject(new Error('archive child exit '+code)));});}}
+    assert.equal((await archiveStatus()).validationClaimed,null);assert.equal((await archiveStatus()).runId,'entry-profile-switched');
+  }finally{for(const child of children)child.kill('SIGKILL');await b.stop({graceful:false});}
+});
+test('queued archive rechecks core source changes and failure pause before GET; disable remains available',async()=>{
+  await archiveFixture();const b=await testArchiveBoss();try{const c=await configureArchive({enabled:true,mode:'validation',runId:'handler-source-guard',intervalSeconds:10}),job=await claimArchive(b,c.revision);
+    await sql`UPDATE sources SET enabled=true WHERE id=${bridgeSource}`;let gets=0;const result=await runArchiveJob(job,{fetch:async()=>{gets++;throw new Error('no GET');}});assert.ok('skipped' in result);assert.equal(gets,0);assert.match((await archiveStatus()).pausedReason!,/disabled/);
+    const stopped=await configureArchive({enabled:false,mode:'validation',runId:c.runId});assert.equal(stopped.enabled,false);assert.equal(stopped.current!.id,job.roundId);assert.equal(stopped.claimed,1);
+    for(const condition of ['three-failures','backoff']){
+      await archiveFixture();const next=await configureArchive({enabled:true,mode:'validation',runId:`handler-${condition}`,intervalSeconds:10}),queued=await claimArchive(b,next.revision);
+      await sql`UPDATE sources SET fail_count=${condition==='three-failures'?3:1},last_error='synthetic between tick and consumer',next_fetch_at=now()+interval '1 hour' WHERE id=${bridgeSource}`;
+      const blocked=await runArchiveJob(queued,{fetch:async()=>{gets++;throw new Error('no GET');}});assert.ok('skipped' in blocked);assert.equal(gets,0);
+      if(condition==='three-failures')assert.match((await archiveStatus()).pausedReason!,/Three consecutive/);else assert.equal((await archiveStatus()).currentRound,null);
+    }
+  }finally{await sql`UPDATE sources SET enabled=false WHERE id=${bridgeSource}`;await b.stop({graceful:false});}
+});
+test('lease loss after journal temporary write blocks rename and preserves explicit recovery evidence',async()=>{
+  await archiveFixture();const id='journal-rename-loss';let gets=0;
+  await assert.rejects(withColumnLease('moa',async lease=>collectColumnRound({id,dataDir:config.dataDir,columns:['moa'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,checkpoint:async stage=>{if(stage==='before-journal-rename')await sql`SELECT pg_terminate_backend(${lease.backendPid})`;},fetch:async()=>{gets++;throw new Error('no GET');}})),/lease|connection/i);
+  assert.equal(gets,0);await assert.rejects(readFile(path.join(config.dataDir,'fishery-column-progress','rounds',id,'manifest.json'),'utf8'),{code:'ENOENT'});
+  const [s]=await sql`SELECT cursor,fail_count FROM sources WHERE id=${bridgeSource}`;assert.deepEqual(s.cursor,{});assert.equal(s.fail_count,0);
+  assert.ok(JSON.parse(await readFile(path.join(config.dataDir,'fishery-column-progress/lock/owner.json'),'utf8')).roundId===id);
+});

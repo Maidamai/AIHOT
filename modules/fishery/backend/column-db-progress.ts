@@ -1,4 +1,5 @@
 // Controlled archive rounds share the core source cursor, fetch ledger and failure backoff.
+import { columnTransaction } from './column-lease.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { sql } from '../../../packages/backend/src/db.ts';
 import { recordFetch } from '../../../packages/backend/src/sources/collect.ts';
@@ -11,19 +12,19 @@ function state(column:ColumnId,cursor:Record<string,unknown>|null):ColumnProgres
   const value=cursor?.[COLUMN_CURSOR_KEY];
   return value===undefined?initialColumnProgress(column):parseColumnProgress(column,value);
 }
-function binding(source:{id:string;kind:string;config:unknown},column:ColumnId) {
-  if(source.id!==sourceId(column)||source.kind!=='external') throw new Error('Column source binding changed');
+function binding(source:{id:string;kind:string;config:unknown;enabled:boolean},column:ColumnId) {
+  if(source.id!==sourceId(column)||source.kind!=='external'||source.enabled!==false) throw new Error('Column source binding changed');
   return JSON.stringify({id:source.id,kind:source.kind,config:source.config});
 }
 export const columnDbProgress:ColumnProgressStore={
   async load(column) {
-    const [source]=await sql`SELECT id,kind,config,cursor FROM sources WHERE id=${sourceId(column)}`;
+    const [source]=await sql`SELECT id,kind,config,enabled,cursor FROM sources WHERE id=${sourceId(column)}`;
     if(!source) throw new Error(`Missing registered source ${sourceId(column)}`);
     binding(source as never,column);return state(column,source.cursor);
   },
   async intent(column,roundId,before) {
-    await sql.begin(async tx=>{
-      const [source]=await tx`SELECT id,kind,config,cursor FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
+    await columnTransaction(column,async tx=>{
+      const [source]=await tx`SELECT id,kind,config,enabled,cursor FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
       if(!source) throw new Error('Missing registered column source');
       parseColumnProgress(column,before);
       const sourceBinding=binding(source as never,column);
@@ -34,13 +35,14 @@ export const columnDbProgress:ColumnProgressStore={
         if(runs[0].source_id!==source.id||intent.sourceBinding!==sourceBinding||!same(intent.before,before)) throw new Error('Fetch run source/profile binding mismatch');
         return;
       }
+      if((await tx`SELECT id FROM fetch_runs WHERE source_id=${source.id} AND finished_at IS NULL AND detail ? 'fisheryColumnRound' LIMIT 1`).length)throw new Error('Unfinished source round; explicit reconciliation required');
       if(!same(state(column,source.cursor),before)) throw new Error('Column cursor changed before intent');
       await tx`INSERT INTO fetch_runs (source_id,detail) VALUES (${source.id},${tx.json({fisheryColumnRound:{roundId,column,sourceBinding,before}})})`;
     });
   },
   async finish(column,roundId,before,after,batches,found) {
-    await sql.begin(async tx=>{
-      const [source]=await tx`SELECT id,kind,config,cursor FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
+    await columnTransaction(column,async tx=>{
+      const [source]=await tx`SELECT id,kind,config,enabled,cursor FROM sources WHERE id=${sourceId(column)} FOR UPDATE`;
       if(!source) throw new Error('Missing registered column source');
       parseColumnProgress(column,before);
       const sourceBinding=binding(source as never,column);

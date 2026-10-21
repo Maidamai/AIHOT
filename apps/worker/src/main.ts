@@ -3,7 +3,7 @@
 import { assertProductionSecrets } from "@aihot/backend/config";
 import { closeDb } from "@aihot/backend/db";
 import { getBoss, stopBoss, workModuleQueues } from "@aihot/backend/jobs/queue";
-import { installModules } from "@aihot/backend/modules";
+import { startModuleWorkerProfile,installModules } from "@aihot/backend/modules";
 import { SERVER_MODULES } from "@aihot/site/modules/server";
 import { registerContentJobs } from "@aihot/backend/jobs/content";
 import { registerSourceJobs } from "@aihot/backend/jobs/sources";
@@ -15,18 +15,23 @@ import { ensureContentTargets } from "@aihot/backend/notify/deliver";
 import { startHeartbeat } from "@aihot/backend/operations/heartbeat";
 
 installModules(SERVER_MODULES);
-assertProductionSecrets([["auth", "IMG_PROXY_SIGN_SECRET"]]);
-
-await ensureContentTargets();
-const boss = await getBoss();
-await registerContentJobs(boss);
-if (process.env.COLLECT_ENABLED === "true") await registerSourceJobs(boss);
-await registerEventJobs(boss);
-await registerNotifyJobs(boss);
-await registerPublicationJobs(boss);
-await workModuleQueues(boss);
-await registerSchedules(boss);
-const heartbeat = startHeartbeat("worker");
+const profile=process.env.WORKER_PROFILE??"full";
+let stopProfile:(()=>Promise<void>)|undefined;
+if(profile!=="full") {
+  stopProfile=await startModuleWorkerProfile(profile);
+} else {
+  assertProductionSecrets([["auth", "IMG_PROXY_SIGN_SECRET"]]);
+  await ensureContentTargets();
+  const boss = await getBoss();
+  await registerContentJobs(boss);
+  if (process.env.COLLECT_ENABLED === "true") await registerSourceJobs(boss);
+  await registerEventJobs(boss);
+  await registerNotifyJobs(boss);
+  await registerPublicationJobs(boss);
+  await workModuleQueues(boss);
+  await registerSchedules(boss);
+}
+const heartbeat = startHeartbeat(profile==="full"?"worker":`worker.${profile}`);
 console.log(JSON.stringify({ level: "info", msg: "worker started", pid: process.pid }));
 
 let stopping = false;
@@ -36,7 +41,7 @@ const shutdown = async () => {
   const started = performance.now();
   console.log(JSON.stringify({ level: "info", msg: "worker stopping" }));
   clearInterval(heartbeat);
-  await stopBoss();
+  if(stopProfile)await stopProfile();else await stopBoss();
   const closing = performance.now();
   await closeDb();
   console.log(JSON.stringify({ level: "info", msg: "worker stopped", elapsedMs: Math.round(performance.now() - started),

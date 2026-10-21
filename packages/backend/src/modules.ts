@@ -181,6 +181,8 @@ export interface RequestNotices {
 }
 
 export interface ServerModule {
+  /** Exclusive worker process mode, selected before any core consumers or schedules start. */
+  workerProfiles?: Record<string,()=>Promise<()=>Promise<void>>>;
   /** Its folder under modules/. */
   name: string;
   /** Sources whose selected articles keep independent cards/seats without changing admission or event identity (publication/rules.ts, scope.ts). */
@@ -302,4 +304,10 @@ export async function emit<K extends Exclude<keyof EngineHooks, "requestAnswered
 /** Live approval cannot be represented by a timed content cache. */
 export function hasPublicationReadGuard(): boolean {
   return installed.some(m => !!m.publication);
+}
+
+export async function startModuleWorkerProfile(name:string):Promise<()=>Promise<void>> {
+  const matches=serverModules().flatMap(module=>module.workerProfiles?.[name]?[module.workerProfiles[name]]:[]);
+  if(matches.length!==1)throw new Error(`Unknown or ambiguous module worker profile: ${name}`);
+  return matches[0]();
 }

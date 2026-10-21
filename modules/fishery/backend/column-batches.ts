@@ -31,13 +31,14 @@ const manifestSchema=z.object({version:z.literal("fishery-column-batch/0.1"),id:
 export const batchRoot = (dataDir: string) => path.resolve(dataDir, "fishery-batches");
 const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 async function save(file: string, value: unknown) { await writeFile(file, json(value), { mode: 0o600 }); }
-async function saveManifest(file: string, value: ColumnBatch) {
+async function saveManifest(file: string, value: ColumnBatch,guard?:()=>Promise<void>) {
+  await guard?.();
   const bytes=json(value), temporary=path.join(path.dirname(file),`.manifest.${randomUUID()}.tmp`);
   let handle:Awaited<ReturnType<typeof open>>|null=await open(temporary,"wx",0o600);
   try {
     await handle.writeFile(bytes);
     await handle.close();handle=null;
-    await rename(temporary,file);
+    await guard?.();await rename(temporary,file);
   } finally {
     try {await handle?.close();} finally {await rm(temporary,{force:true});}
   }
@@ -211,10 +212,10 @@ export async function reparseArchivedIotc(options:{dataDir:string;sourceBatchId:
 }
 
 type Response = { url: string; status: number; body: Buffer; headers: { get(name: string): string | null } };
-export type ColumnFetcher = (url: string) => Promise<Response>;
+export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal}) => Promise<Response>;
 type Fetcher=ColumnFetcher;
-const defaultFetch: Fetcher = url => guardedFetch(url, { route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8" } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]} }) {
+const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8" } });
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]};guard?:()=>Promise<void>;signal?:AbortSignal }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
@@ -227,16 +228,20 @@ export async function collectColumns(options: { id: string; dataDir: string; col
   await mkdir(path.join(root, "raw"), { mode: 0o700 });
   await mkdir(path.join(root, "body"), { mode: 0o700 });
   const batch: ColumnBatch = { version: "fishery-column-batch/0.1", id, startedAt: new Date().toISOString(), finishedAt: null, status: "running", sources: [], items: [] };
-  const persist = () => saveManifest(path.join(root, "manifest.json"), batch);
+  const persist = async () => {await options.guard?.();return saveManifest(path.join(root,"manifest.json"),batch,options.guard);};
   await persist();
-  const fetch = options.fetch ?? defaultFetch, wait = options.wait ?? sleep, deadline = Date.now() + 180_000;
+  const fetch = options.fetch ?? defaultFetch, wait = async(ms:number)=>{await options.guard?.();if(options.wait)await options.wait(ms);else await sleep(ms,undefined,{signal:options.signal});await options.guard?.();}, deadline = Date.now() + 180_000;
   async function get(url: string, name: string) {
     if (Date.now() > deadline) throw new Error("Manual batch time budget exhausted");
-    const startedAt = new Date().toISOString(), response = await fetch(url);
+    await options.guard?.();options.signal?.throwIfAborted();
+    const startedAt = new Date().toISOString(), response = await fetch(url,{signal:options.signal});
+    await options.guard?.();options.signal?.throwIfAborted();
     const maxBytes = name.endsWith("-robots") ? 256 * 1024 : name.endsWith("-pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024;
     if (response.body.length > maxBytes) throw new Error("Captured response too large; full bytes required");
     const receipt = { requestedUrl: url, finalUrl: response.url, status: response.status, startedAt, finishedAt: new Date().toISOString(), contentType: response.headers.get("content-type"), bytes: response.body.length, sha256: sha256(response.body) };
+    await options.guard?.();
     await writeFile(path.join(root, "raw", `${name}.bin`), response.body, { mode: 0o600, flag: "wx" });
+    await options.guard?.();
     await save(path.join(root, "raw", `${name}.receipt.json`), receipt);
     return { receipt, body: response.body };
   }
@@ -293,7 +298,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           prepared.sourceCapture.archiveId = archiveId;
           const { body, ...metadata } = prepared;
           item.prepared = metadata;
-          if (body) await writeFile(path.join(root, "body", `${archiveId}.txt`), body, { mode: 0o600, flag: "wx" });
+          if (body) {await options.guard?.();await writeFile(path.join(root,"body",`${archiveId}.txt`),body,{mode:0o600,flag:"wx"});}
           item.state = prepared.readyForReview ? "ready" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
           if (item.state === "ready") ready++;
           if (item.state === "failed") item.error = [...prepared.sourceCapture.conflicts, ...prepared.warnings].join("; ") || "Article parse failed";
