@@ -1000,12 +1000,12 @@ test("synthetic old lease owner cannot claim after waiting for a document lock",
 
 
 test("explicit amount-only upgrade retains cumulative history and audits the original ledger",async()=>{
-  const entries=Array.from({length:18},(_,i)=>({id:i+1,state:"received",wireBytes:100,reservedMicroCny:400_000,usage:{promptTokens:100,completionTokens:10,estimatedMicroCny:280}}));
+  const entries=Array.from({length:18},(_,i)=>({id:i+1,state:"received",wireBytes:100,reservedMicroCny:400_000,usage:{promptTokens:i===17?9847:7000,completionTokens:0,estimatedMicroCny:i===17?19694:14000}}));
   const old={id:TRIAL.id,maxRequests:20,maxReservedMicroCny:10_000_000,entries};
   await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json(old)}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
   await assert.rejects(assertFisheryCapacity(),/explicit amount-only/);
   const result=await upgradeExistingTrialToAmountOnly("tester","User explicitly cancelled count cap; retain cumulative ten yuan");
-  assert.equal(result.entryCount,18);assert.equal(result.spentMicroCny,5040);assert.equal(result.modelCalls,0);
+  assert.equal(result.entryCount,18);assert.equal(result.spentMicroCny,257694);assert.equal(result.modelCalls,0);
   const [stored]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
   assert.deepEqual(stored!.value.entries,entries);assert.equal(stored!.value.maxRequests,null);
   await assertFisheryCapacity(2);

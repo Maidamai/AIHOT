@@ -63,18 +63,20 @@ test("saved partial event dates cannot become ISO dates or borrow the source pub
   }
 });
 
-test("trial counts actual sends, refuses overrides and redirects, and stops after twenty cumulative reservations",async()=>{
-  const entries:{state:string;reservedMicroCny:number}[]=[],wire={model:TRIAL.model,messages:[{role:"system",content:"JSON only"},{role:"user",content:"Synthetic public article"}],max_tokens:2048,thinking:{type:"disabled"},response_format:{type:"json_object"},temperature:0};
+test("trial counts actual sends, refuses overrides and redirects, and uses cumulative amount with trusted usage and preserves unresolved reservations",async()=>{
+  const entries:{state:string;reservedMicroCny:number;usage?:ReturnType<typeof trialUsage>|null}[]=[],wire={model:TRIAL.model,messages:[{role:"system",content:"JSON only"},{role:"user",content:"Synthetic public article"}],max_tokens:2048,thinking:{type:"disabled"},response_format:{type:"json_object"},temperature:0};
   const options={method:"POST",body:JSON.stringify(wire)};let sends=0;
-  const restore=installTrialTransport({reserve:async()=>{trialCapacity(entries);entries.push({state:"pending",reservedMicroCny:TRIAL.reserveMicroCny});return entries.length;},settle:async(id,state)=>{entries[id-1]!.state=state;}},async(_url,opts)=>{
+  const restore=installTrialTransport({reserve:async()=>{trialCapacity(entries);entries.push({state:"pending",reservedMicroCny:TRIAL.reserveMicroCny});return entries.length;},settle:async(id,state,usage)=>{entries[id-1]!.state=state;entries[id-1]!.usage=usage;}},async(_url,opts)=>{
     sends++;assert.equal(opts?.redirect,"error");return new Response(JSON.stringify({usage:{prompt_tokens:1000,completion_tokens:100}}),{status:200});
   });
   try {
     await assert.rejects(fetch("https://example.org/chat/completions",options),/destination/);
     for(const override of [{max_tokens:9000},{tools:[]},{model:"different"},{n:2},{thinking:{type:"enabled"}},{messages:[{role:"user",content:"x"}]}]) await assert.rejects(fetch(TRIAL.endpoint,{method:"POST",body:JSON.stringify({...wire,...override})}));
     assert.equal(sends,0);
-    for(let i=0;i<TRIAL.maxRequests;i++) await fetch(TRIAL.endpoint,options);
-    await assert.rejects(fetch(TRIAL.endpoint,options),/hard request/);assert.equal(sends,20);assert.equal(entries.length*TRIAL.reserveMicroCny,8_000_000);
+    for(let i=0;i<30;i++) await fetch(TRIAL.endpoint,options);
+    assert.equal(sends,30);assert.equal(entries.length*TRIAL.reserveMicroCny,12_000_000);
+    for(const entry of entries) entry.usage=null;
+    await assert.rejects(fetch(TRIAL.endpoint,options),/hard amount/);assert.equal(sends,30);
     assert.throws(()=>trialCapacity([{state:"unknown",reservedMicroCny:400000}]),/manual reconciliation/);
     assert.throws(()=>trialUsage(null),/usage missing/);assert.throws(()=>trialUsage({prompt_tokens:100001,completion_tokens:1}));
     assert.equal(trialUsage({prompt_tokens:100000,completion_tokens:2048}).estimatedMicroCny,216384);
@@ -565,7 +567,7 @@ test("independent review uses isolated context, distinct receipt purpose and req
   const missing=await reviewFisheryDraft(input,draft,"mock",async o=>{const a=await invoke(o);a.data.findings[0].verdict="not_found";return a;});assert.equal(missing.status,"needs_evidence");assert.deepEqual(missing.missingFields,["summaryZh.0"]);
   assert.throws(()=>validateFisheryDraft(input,{...draft,summaryZh:[{sentence:"远洋渔船共10吨。",evidence}]}),/Numeric value\/unit/);
   assert.throws(()=>validateFisheryDraft(input,{...draft,organizations:[{role:"page_publisher",value:"远洋渔船",evidence}]}),/publisher role/);
-  assert.throws(()=>trialCapacity([{state:"received",reservedMicroCny:9_800_000}]),/hard request/);
+  assert.throws(()=>trialCapacity([{state:"received",reservedMicroCny:9_800_000}]),/hard amount/);
   assert.doesNotThrow(()=>trialCapacity([{state:"received",reservedMicroCny:9_500_000}]));
 });
 

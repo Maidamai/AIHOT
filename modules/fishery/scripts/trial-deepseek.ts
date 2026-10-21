@@ -1,6 +1,6 @@
 // Explicit CLI only. No worker/recovery, public reads, production content writes or fallback.
 import {parseArgs} from "node:util";
-import {TRIAL,installTrialTransport,trialCapacity,trialUsage} from "../backend/trial-transport.ts";
+import {TRIAL,installTrialTransport,trialCapacity,trialUsage,trialBudget,validateTrialLedger,amountOnlyPolicy} from "../backend/trial-transport.ts";
 import {buildFisheryDraftRequest,validateFisheryDraft} from "../backend/ai-draft.ts";
 import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {readBatch,verifyBatchItem} from "../backend/column-batches.ts";
@@ -17,31 +17,23 @@ if(process.env.LLM_MODEL!==TRIAL.model||process.env.LLM_BASE_URL!=="https://api.
 const {sql,closeDb}=await import("@aihot/backend/db");
 const key=`fishery.trial.${TRIAL.id}`;
 type Entry={id:number;state:"pending"|"received"|"refused"|"unknown";wireBytes:number;reservedMicroCny:number;responseModel?:string|null;usage?:ReturnType<typeof trialUsage>|null};
-type Ledger={id:string;entries:Entry[];maxRequests:number;maxReservedMicroCny:number;verifiedVersion:string;verifiedAt:string};
+type Ledger={id:string;entries:Entry[];maxRequests:number|null;policy?:string;maxReservedMicroCny:number;verifiedVersion:string;verifiedAt:string};
 try {
   if(values.report) {
     const records=await sql`SELECT key,value FROM settings WHERE key LIKE ${key+"%"} ORDER BY key`;
     const receipts=await sql`SELECT id,status,model,purpose,usage,cost,currency FROM receipts ORDER BY id`;
     console.log(JSON.stringify({authorization:TRIAL.id,records,receipts,approved:false,published:false}));
   } else if(values["upgrade-authorization"]) {
-    await sql.begin(async tx=>{
-      const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key} FOR UPDATE`;
-      if(!row||row.value.id!==TRIAL.id) throw new Error("Existing authorization ledger required; never initialize a replacement");
-      // Preserve entries, states and every historical reservation verbatim.
-      trialCapacity(row.value.entries);
-      row.value.maxRequests=TRIAL.maxRequests;row.value.maxReservedMicroCny=TRIAL.maxReservedMicroCny;
-      await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${key}`;
-      await tx`INSERT INTO budgets(service,per_minute,per_hour,per_day,note) VALUES ('llm',20,20,20,'Same cumulative fishery authorization, <=20 calls, CNY10 ceiling') ON CONFLICT(service) DO UPDATE SET per_minute=20,per_hour=20,per_day=20,note=EXCLUDED.note`;
-    });
-    console.log(JSON.stringify({authorization:TRIAL.id,upgraded:true,maxRequests:TRIAL.maxRequests,ceilingCny:10,apiCalls:0}));
+    const {upgradeExistingTrialToAmountOnly}=await import("../backend/authorization.ts");
+    console.log(JSON.stringify(await upgradeExistingTrialToAmountOnly("trial-cli","Explicit --upgrade-authorization: user cancelled request count cap, cumulative CNY10 unchanged")));
   } else if(values.initialize) {
     await sql.begin(async tx=>{
       await tx`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
       if((await tx`SELECT 1 FROM settings WHERE key=${key}`).length) throw new Error("Trial already initialized; never reset its allowance");
       if((await tx`SELECT 1 FROM receipt_attempts LIMIT 1`).length) throw new Error("Missing ledger in non-empty receipt database; stop");
-      const ledger:Ledger={id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny,verifiedVersion:TRIAL.verifiedVersion,verifiedAt:TRIAL.verifiedAt};
+      const ledger:Ledger={id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny,verifiedVersion:TRIAL.verifiedVersion,verifiedAt:TRIAL.verifiedAt};
       await tx`INSERT INTO settings(key,value) VALUES (${key},${tx.json(ledger)})`;
-      await tx`INSERT INTO budgets(service,per_minute,per_hour,per_day,note) VALUES ('llm',20,20,20,'Cumulative twenty-request fishery trial') ON CONFLICT(service) DO UPDATE SET per_minute=20,per_hour=20,per_day=20,note=EXCLUDED.note`;
+      await tx`INSERT INTO budgets(service,per_minute,per_hour,per_day,note) VALUES ('llm',20,20,20,'Cumulative amount-only fishery trial; CNY10 ceiling') ON CONFLICT(service) DO UPDATE SET per_minute=20,per_hour=20,per_day=20,note=EXCLUDED.note`;
     });
     console.log(JSON.stringify({initialized:true,authorization:TRIAL.id,maxRequests:TRIAL.maxRequests,reservedCeilingCny:10,apiCalls:0}));
   } else {
@@ -54,7 +46,7 @@ try {
     const restore=installTrialTransport({
       reserve:async wireBytes=>sql.begin(async tx=>{
         const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key} FOR UPDATE`;
-        if(!row||row.value.id!==TRIAL.id||row.value.maxRequests!==TRIAL.maxRequests||row.value.maxReservedMicroCny!==TRIAL.maxReservedMicroCny) throw new Error("Trial ledger missing/changed");
+        validateTrialLedger(row?.value);
         trialCapacity(row.value.entries);
         const id=row.value.entries.length+1;
         row.value.entries.push({id,state:"pending",wireBytes,reservedMicroCny:TRIAL.reserveMicroCny});
@@ -65,6 +57,7 @@ try {
         const [row]=await tx<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key} FOR UPDATE`;
         const entry=row?.value.entries.find(e=>e.id===id);
         if(!row||!entry||entry.state!=="pending") throw new Error("Trial reservation mismatch");
+        if(usage) trialBudget([{...entry,state:"received",usage}]);
         entry.state=state;entry.usage=usage;entry.responseModel=responseModel??null;
         await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${key}`;
       }),
@@ -89,7 +82,7 @@ try {
         if(!draft&&values.stage==="both") {
           assertFisheryPairFits(input,request);
           const [ledger]=await sql<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${key}`;
-          if(!ledger||ledger.value.id!==TRIAL.id) throw new Error("Existing authorization required");
+          validateTrialLedger(ledger?.value);
           trialCapacity(ledger.value.entries,previous?1:2);
         }
         if(!draft&&values.stage!=="review") {

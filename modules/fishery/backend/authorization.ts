@@ -13,6 +13,11 @@ export async function assertFisheryCapacity(requiredCalls=1) {
   validateTrialLedger(row?.value);
   if(requiredCalls!==0) trialCapacity(row.value.entries,requiredCalls);
 }
+export async function fisheryAuthorizationReport() {
+  const [row]=await sql<{value:Ledger}[]>`SELECT value FROM settings WHERE key=${authorizationKey}`;
+  validateTrialLedger(row?.value);
+  return {authorization:TRIAL.id,policy:amountOnlyPolicy,maxRequests:null,maxReservedMicroCny:TRIAL.maxReservedMicroCny,entryCount:row.value.entries.length,...trialBudget(row.value.entries),historicalReservedMicroCny:row.value.entries.reduce((sum,e)=>sum+e.reservedMicroCny,0),states:row.value.entries.map(e=>e.state)};
+}
 let active=false;
 export async function withFisheryAuthorization<T>(run:()=>Promise<T>):Promise<T> {
   await assertProcessingLease();
