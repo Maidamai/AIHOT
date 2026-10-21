@@ -8,6 +8,7 @@ import { materialDetail, workbench } from "./backend/workbench.ts";
 import { z } from "zod";
 import { config } from "@aihot/backend/config";
 import { batchIdSchema, listBatches } from "./backend/column-batches.ts";
+import {listColumnProgress,listColumnRounds} from "./backend/column-progress.ts";
 import { importBatch } from "./backend/import-batch.ts";
 import { installManualSourceRoutes } from "./backend/manual-sources.ts";
 import { registerBusinessGuideRoutes } from "./backend/business-routes.ts";
@@ -42,7 +43,7 @@ export default defineServerModule({
     app.post("/api/admin/fishery/flows/:id/retry", guarded(async(req,_reply,admin)=>retryFlow(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/decision", guarded(async(req,_reply,admin)=>decideFlow(param(req),req.body,admin.name)));
     app.get("/api/admin/fishery/workbench", guarded(async req => workbench(z.object({ page:z.coerce.number().int().positive().max(100000).optional(),q:z.string().max(200).optional(),scope:z.enum(["real","test","all"]).optional(),state:z.enum(["pending","failed","unverified","stale","rejected","approved","withdrawn"]).optional().or(z.literal("")) }).parse(req.query))));
-    app.get("/api/admin/fishery/batches", guarded(async () => ({rows:await listBatches(config.dataDir)})));
+    app.get("/api/admin/fishery/batches", guarded(async () => ({rows:await listBatches(config.dataDir),progress:await listColumnProgress(config.dataDir),rounds:await listColumnRounds(config.dataDir)})));
     app.post("/api/admin/fishery/batches/:id/flows", guarded(async(req,_reply,admin)=>{
       const {identity}=z.strictObject({identity:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)}).parse(req.body);
       const imported=await importBatch(batchIdSchema.parse((req.params as {id:string}).id),admin.name);

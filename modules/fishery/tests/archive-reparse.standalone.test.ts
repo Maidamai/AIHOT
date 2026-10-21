@@ -10,7 +10,7 @@ import { COLUMNS } from "../backend/official-columns.ts";
 import { observationSchema } from "../contracts.ts";
 import { observationFixture } from "./fixtures.ts";
 
-async function originalBatch(dataDir:string) {
+async function originalBatch(dataDir:string,listingUrl=COLUMNS.iotc.url as string) {
   const id="original-iotc",url="https://iotc.org/cmm/resolution-2603-synthetic",pdfUrl="https://iotc.org/sites/default/files/synthetic.pdf";
   const archiveId=`${id}_${sha256("iotc"+url).slice(0,16)}`,root=path.join(batchRoot(dataDir),id);
   await mkdir(path.join(root,"raw"),{recursive:true});await mkdir(path.join(root,"body"));
@@ -22,16 +22,28 @@ async function originalBatch(dataDir:string) {
   const oldText="--- Page 1 ---\nRESOLUTION 26/03. Minimum weight 200 g3.\n3 Synthetic footnote explanation.";
   const oldParsed:PdfText={status:"parsed",rawSha256:sha256(pdf),parser:"synthetic legacy layout/v1",text:oldText,pages:1};
   const prepared=prepareIotc(discoverIotc(listing.toString()).candidates[0]!,receipt(url,landing),landing,{receipt:receipt(pdfUrl,pdf),bytes:pdf,parsed:oldParsed});prepared.sourceCapture.archiveId=archiveId;
-  prepared.evidence.push({url:COLUMNS.iotc.url,sha256:sha256(listing),page:null,section:"Archived current CMM listing; discovery identity"});
+  prepared.evidence.push({url:listingUrl,sha256:sha256(listing),page:null,section:"Archived current CMM listing; discovery identity"});
   const {body,...metadata}=prepared;assert.ok(body);
   const batch:ColumnBatch={version:"fishery-column-batch/0.1",id,startedAt:"2026-04-01T01:01:00Z",finishedAt:acquiredAt,status:"complete",sources:[{id:"iotc",listed:1,titleFiltered:0,attempted:1,error:null}],items:[{column:"iotc",url,discoveryTitle:"Resolution 26/03 Synthetic measure",listDate:null,state:"ready",archiveId,prepared:metadata,error:null}]};
-  for(const [name,requestedUrl,bytes] of [["iotc-robots","https://iotc.org/robots.txt",robots],["iotc-list",COLUMNS.iotc.url,listing],[archiveId,url,landing],[`${archiveId}-pdf`,pdfUrl,pdf]] as const) {
+  if(listingUrl!==COLUMNS.iotc.url) batch.items[0]!.listingUrl=listingUrl;
+  for(const [name,requestedUrl,bytes] of [["iotc-robots","https://iotc.org/robots.txt",robots],["iotc-list",listingUrl,listing],[archiveId,url,landing],[`${archiveId}-pdf`,pdfUrl,pdf]] as const) {
     await writeFile(path.join(root,"raw",`${name}.bin`),bytes);await writeFile(path.join(root,"raw",`${name}.receipt.json`),JSON.stringify(receipt(requestedUrl,bytes),null,3)+"\n");
   }
   await writeFile(path.join(root,"body",`${archiveId}.txt`),body);await writeFile(path.join(root,"manifest.json"),JSON.stringify(batch,null,4)+"\n");
   const parsed:PdfText={...oldParsed,parser:"synthetic structured footnotes/v2",text:oldText.replace("g3","g[footnote 3]")};
   return {batch,pdf,parsed,root,acquiredAt};
 }
+test("paginated IOTC evidence and static reparse bind the actual archived listing page",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-iotc-page-binding-")),listingUrl=COLUMNS.iotc.url+"?page=1";
+  try {
+    const original=await originalBatch(dataDir,listingUrl);
+    const reparsed=await reparseArchivedIotc({dataDir,sourceBatchId:original.batch.id,id:"page-two-reparse",parsePdf:async()=>original.parsed});
+    const item=reparsed.items[0]!,verified=await verifyBatchItem(dataDir,reparsed,item,{parsePdf:async()=>original.parsed});
+    assert.equal(item.listingUrl,listingUrl);assert.ok("evidence" in verified);if(!("evidence" in verified)) throw new Error("Missing IOTC evidence");assert.ok(verified.evidence.some(e=>e.url===listingUrl));
+    const changed=structuredClone(reparsed);changed.items[0]!.listingUrl=COLUMNS.iotc.url;
+    await assert.rejects(verifyBatchItem(dataDir,changed,changed.items[0]!,{parsePdf:async()=>original.parsed}),/Invalid IOTC listing receipt/);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
 async function treeSnapshot(root:string) {
   const files:Record<string,string>={};
   for(const directory of ["raw","body"]) for(const name of await readdir(path.join(root,directory))) files[`${directory}/${name}`]=sha256(await readFile(path.join(root,directory,name)));

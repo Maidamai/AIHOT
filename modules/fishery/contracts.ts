@@ -12,7 +12,8 @@ const verifiedMetadataQueries = new Set([
 export const linkSchema = z.url().max(2000).refine((value) => {
   const u = new URL(value);
   const host = u.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
-  const verifiedQuery = verifiedMetadataQueries.has(u.href) && value === u.href && !u.hash && !u.port;
+  const paginationQuery=/^https:\/\/iotc\.org\/cmms\/basic\?page=[1-9]\d{0,2}$/.test(value);
+  const verifiedQuery = (verifiedMetadataQueries.has(u.href)||paginationQuery) && value === u.href && !u.hash && !u.port;
   return u.protocol === "https:" && !u.username && !u.password && (!u.search || verifiedQuery) &&
     (isIP(host) ? !isBlockedAddress(host) : host.includes(".") && !/(^|\.)(localhost|local|internal)$/.test(host));
 }, "Use a public HTTPS metadata link without credentials or unverified query parameters").transform((value) => new URL(value).href);

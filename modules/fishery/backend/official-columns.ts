@@ -23,6 +23,42 @@ export const COLUMNS = {
 } as const;
 export const columnIdSchema = z.enum(["moa", "fujian", "iotc"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
+export interface ColumnPagination { pageUrl:string; pageIndex:number; nextUrl:string|null; totalPages:number|null; scope:"verified_pagination"|"current_page_only"|"pagination_unverified"; }
+export function columnPageIndex(id:ColumnId,input:string) {
+  const url=new URL(input),base=new URL(COLUMNS[id].url);
+  if(url.origin!==base.origin||url.hash||url.username||url.password) throw new Error("Unexpected official listing URL");
+  if(id==="iotc") {
+    if(url.pathname!==base.pathname||[...url.searchParams.keys()].some(k=>k!=="page")||url.searchParams.getAll("page").length>1) throw new Error("Unexpected IOTC listing page");
+    const n=url.searchParams.get("page");if(n!==null&&!/^[1-9]\d{0,2}$/.test(n)) throw new Error("Invalid IOTC page index");return n===null?0:Number(n);
+  }
+  if(url.search) throw new Error("Unexpected official listing query");
+  if(input===base.href) return 0;
+  const relative=url.pathname.slice(base.pathname.length);
+  if(!url.pathname.startsWith(base.pathname)||id!=="moa"||!/^index(?:_[1-9]\d{0,2})?\.htm$/.test(relative)) throw new Error("Unverified official listing pagination path");
+  return Number(/_(\d+)\.htm$/.exec(relative)?.[1]??0);
+}
+export function discoverColumnPagination(id:ColumnId,html:string,pageUrl=COLUMNS[id].url as string):ColumnPagination {
+  const pageIndex=columnPageIndex(id,pageUrl),base:ColumnPagination={pageUrl,pageIndex,nextUrl:null,totalPages:null,scope:"pagination_unverified"};
+  if(id==="moa") {
+    // Inspected archive: TRS numeric declarations plus this exact index_N.htm generator.
+    const current=/\bvar\s+currentPage\s*=\s*(\d+)\s*;/.exec(html),count=/\bvar\s+countPage\s*=\s*(\d+)\s*(?:;|\/\/)/.exec(html);
+    const generator=/\bvar\s+nextPage\s*=\s*currentPage\s*\+\s*1/.test(html)&&/href=\\"index"\s*\+\s*"_"\s*\+\s*nextPage\s*\+\s*"\."\s*\+\s*"htm\\">下一页/.test(html);
+    if(!current||!count||!generator) return base;
+    if(Number(current[1])!==pageIndex||Number(count[1])<1||Number(count[1])>1000||pageIndex>=Number(count[1])) throw new Error("Official listing page metadata disagrees with URL");
+    return {...base,scope:"verified_pagination",totalPages:Number(count[1]),nextUrl:pageIndex+1<Number(count[1])?new URL(`index_${pageIndex+1}.htm`,COLUMNS.moa.url).href:null};
+  }
+  if(id==="fujian") return base; // The observed JS pagebar does not disclose a verified URL mechanism.
+  const $=cheerio.load(html),links=$("ul.pager li.pager-next a[href]").toArray().map(a=>new URL($(a).attr("href")!,pageUrl).href);
+  if(new Set(links).size>1) throw new Error("Conflicting IOTC next-page links");
+  const nextUrl=links[0]??null;
+  if(nextUrl&&columnPageIndex(id,nextUrl)!==pageIndex+1) throw new Error("Unexpected IOTC next-page sequence");
+  const last=$("ul.pager li.pager-last a[href]").first().attr("href");
+  const totalPages=last?columnPageIndex(id,new URL(last,pageUrl).href)+1:null;
+  const current=collapse($("ul.pager li.pager-current").first().text());
+  if(current&&(!/^\d+$/.test(current)||Number(current)!==pageIndex+1)) throw new Error("IOTC current-page marker disagrees with URL");
+  if(totalPages!==null&&(totalPages<pageIndex+1||totalPages>pageIndex+1&&!nextUrl||nextUrl&&totalPages<pageIndex+2)) throw new Error("IOTC pager omits or contradicts remaining pages");
+  return {...base,nextUrl,totalPages,scope:current?"verified_pagination":$("ul.pager").length?"pagination_unverified":"current_page_only"};
+}
 export const unknownDate = () => ({ precision: "unknown" as const, value: null });
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 const direct = /远洋|公海|境外入渔|南极磷虾|国际渔业|IOTC|NPFC|SPRFMO|WCPFC|CCAMLR/i;

@@ -5,7 +5,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { guardedFetch } from "@aihot/backend/lib/http-fetch";
-import { COLUMNS, columnIdSchema, discoverColumn, prepareColumnArticle, type ColumnId } from "./official-columns.ts";
+import { COLUMNS, columnIdSchema, columnPageIndex, discoverColumn, discoverColumnPagination, prepareColumnArticle, type ColumnId, type ColumnPagination } from "./official-columns.ts";
 import { archiveReceiptSchema, sha256, type PdfText } from "./source-adapters.ts";
 import { assertIotcRobots, discoverIotc, iotcAttachment, prepareIotc } from "./iotc-columns.ts";
 import { extractPdf } from "./pdf-text.ts";
@@ -14,18 +14,20 @@ import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
 export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc>;
-export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "failed"; archiveId: string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
+export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
-const replaySchema=z.strictObject({version:z.literal("fishery-pdf-reparse/1"),operation:z.literal("static-archived-pdf-reparse"),sourceBatchId:batchIdSchema,sourceManifestSha256:hashSchema,reparsedAt:z.iso.datetime({offset:true}),networkRequests:z.literal(0),reparsedItems:z.int().min(1).max(36),sourceSummary:z.array(z.strictObject({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable()})).max(6),
+const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
+const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),remaining:z.array(linkSchema).max(4096).optional()});
+const replaySchema=z.strictObject({version:z.literal("fishery-pdf-reparse/1"),operation:z.literal("static-archived-pdf-reparse"),sourceBatchId:batchIdSchema,sourceManifestSha256:hashSchema,reparsedAt:z.iso.datetime({offset:true}),networkRequests:z.literal(0),reparsedItems:z.int().min(1).max(36),sourceSummary:z.array(sourceSummarySchema).max(6),
   artifacts:z.array(z.strictObject({sourceName:z.string(),targetName:z.string(),sha256:hashSchema})).max(148),
   items:z.array(z.strictObject({sourceArchiveId:archiveIdSchema,archiveId:archiveIdSchema,oldBodySha256:hashSchema,oldParser:z.string().min(1).max(200),newBodySha256:hashSchema,newParser:z.string().min(1).max(200)})).max(36)});
 type Replay=z.infer<typeof replaySchema>;
 type ParsePdf=(bytes:Buffer)=>Promise<PdfText>;
-export interface ColumnBatch { version: "fishery-column-batch/0.1"; id: string; startedAt: string; finishedAt: string | null; status: "running" | "complete"; reparse?:Replay; networkRequests?:0;reparsedItems?:number;sources: { id: ColumnId; listed: number; titleFiltered: number; attempted: number; error: string | null }[]; items: BatchItem[]; }
+export interface ColumnBatch { version: "fishery-column-batch/0.1"; id: string; startedAt: string; finishedAt: string | null; status: "running" | "complete"; reparse?:Replay; networkRequests?:0;reparsedItems?:number;sources:z.infer<typeof sourceSummarySchema>[]; items: BatchItem[]; }
 export type BatchListEntry = ColumnBatch | { id: string; status: "unreadable"; error: string };
 const manifestSchema=z.object({version:z.literal("fishery-column-batch/0.1"),id:batchIdSchema,startedAt:z.iso.datetime({offset:true}),finishedAt:z.iso.datetime({offset:true}).nullable(),status:z.enum(["running","complete"]),reparse:replaySchema.optional(),networkRequests:z.literal(0).optional(),reparsedItems:z.int().nonnegative().optional(),
-  sources:z.array(z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable()})).max(6),
-  items:z.array(z.object({column:columnIdSchema,url:linkSchema,discoveryTitle:z.string(),listDate:z.string().nullable(),state:z.enum(["ready","irrelevant","failed"]),archiveId:archiveIdSchema,prepared:z.object({dates:z.object({published:dateSchema}),sourceCapture:captureSchema}).nullable(),error:z.string().nullable()})).max(36)});
+  sources:z.array(sourceSummarySchema).max(6),
+  items:z.array(z.object({column:columnIdSchema,url:linkSchema,discoveryTitle:z.string(),listDate:z.string().nullable(),state:z.enum(["ready","irrelevant","failed"]),archiveId:archiveIdSchema,listingUrl:linkSchema.optional(),prepared:z.object({dates:z.object({published:dateSchema}),sourceCapture:captureSchema}).nullable(),error:z.string().nullable()})).max(36)});
 export const batchRoot = (dataDir: string) => path.resolve(dataDir, "fishery-batches");
 const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 async function save(file: string, value: unknown) { await writeFile(file, json(value), { mode: 0o600 }); }
@@ -47,7 +49,7 @@ export async function readBatch(dataDir: string, id: string): Promise<ColumnBatc
   if ((await stat(file)).size > 2 * 1024 * 1024) throw new Error("Batch manifest too large");
   const value = JSON.parse(await readFile(file, "utf8")) as ColumnBatch;
   if (!manifestSchema.safeParse(value).success || value.id !== id || (value.status === "complete" && !value.finishedAt)) throw new Error("Invalid batch manifest");
-  for (const item of value.items) { columnIdSchema.parse(item.column); archiveIdSchema.parse(item.archiveId); if (!item.archiveId.startsWith(id + "_")) throw new Error("Archive/batch mismatch"); }
+  for (const item of value.items) { columnIdSchema.parse(item.column); archiveIdSchema.parse(item.archiveId); if(item.listingUrl) columnPageIndex(item.column,item.listingUrl);if (!item.archiveId.startsWith(id + "_")) throw new Error("Archive/batch mismatch"); }
   return value;
 }
 export async function listBatches(dataDir: string):Promise<BatchListEntry[]> {
@@ -84,12 +86,13 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     const robots = await readArchive(root, "iotc-robots", 256 * 1024);
     assertIotcRobots(robots.receipt, robots.body);
     const listing = await readArchive(root, "iotc-list", 6 * 1024 * 1024);
-    if (listing.receipt.requestedUrl !== COLUMNS.iotc.url || listing.receipt.finalUrl !== COLUMNS.iotc.url || listing.receipt.status !== 200) throw new Error("Invalid IOTC listing receipt");
+    const listingUrl=item.listingUrl??COLUMNS.iotc.url;columnPageIndex("iotc",listingUrl);
+    if (listing.receipt.requestedUrl !== listingUrl || listing.receipt.finalUrl !== listingUrl || listing.receipt.status !== 200) throw new Error("Invalid IOTC listing receipt");
     const candidate = discoverIotc(new TextDecoder("utf8", { fatal: true }).decode(listing.body)).candidates.find(c => c.url === item.url);
     if (!candidate) throw new Error("IOTC measure identity absent from archived current listing");
     const attachment = await readArchive(root, `${item.archiveId}-pdf`, 10 * 1024 * 1024);
     result = prepareIotc(candidate, receipt, raw, { receipt: attachment.receipt, bytes: attachment.body, parsed: await (options.parsePdf??extractPdf)(attachment.body) },replay?"archive_replay":"live_capture");
-    result.evidence.push({ url: COLUMNS.iotc.url, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
+    result.evidence.push({ url: listingUrl, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
   } else result = prepareColumnArticle(item.column, receipt, raw);
   result.sourceCapture.archiveId = item.archiveId;
   if(replay) {
@@ -177,14 +180,15 @@ export async function reparseArchivedIotc(options:{dataDir:string;sourceBatchId:
   const batch:ColumnBatch={version:"fishery-column-batch/0.1",id,startedAt:reparsedAt,finishedAt:null,status:"running",networkRequests:0,reparsedItems:original.source.items.length,sources:[{id:"iotc",listed:0,titleFiltered:0,attempted:0,error:null}],items:[],reparse:replay};
   const robots=await readArchive(path.join(sourceRoot,"raw"),"iotc-robots",256*1024);assertIotcRobots(robots.receipt,robots.body);
   const listing=await readArchive(path.join(sourceRoot,"raw"),"iotc-list",6*1024*1024);
-  if(listing.receipt.requestedUrl!==COLUMNS.iotc.url||listing.receipt.finalUrl!==COLUMNS.iotc.url||listing.receipt.status!==200) throw new Error("Invalid original IOTC listing receipt");
+  const listingUrl=original.source.items[0]!.listingUrl??COLUMNS.iotc.url;columnPageIndex("iotc",listingUrl);
+  if(original.source.items.some(i=>(i.listingUrl??COLUMNS.iotc.url)!==listingUrl)||listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl||listing.receipt.status!==200) throw new Error("Invalid original IOTC listing receipt");
   const candidates=discoverIotc(new TextDecoder("utf8",{fatal:true}).decode(listing.body)).candidates;
   const bodies:{archiveId:string;body:string}[]=[];
   for(const old of original.source.items) {
     const candidate=candidates.find(c=>c.url===old.url);if(!candidate) throw new Error("Original item absent from archived IOTC listing");
     const landing=await readArchive(path.join(sourceRoot,"raw"),old.archiveId,6*1024*1024),pdf=await readArchive(path.join(sourceRoot,"raw"),`${old.archiveId}-pdf`,10*1024*1024);
     const prepared=prepareIotc(candidate,landing.receipt,landing.body,{receipt:pdf.receipt,bytes:pdf.body,parsed:await(options.parsePdf??extractPdf)(pdf.body)},"archive_replay");
-    prepared.evidence.push({url:COLUMNS.iotc.url,sha256:sha256(listing.body),page:null,section:"Archived current CMM listing; discovery identity"});
+    prepared.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:"Archived current CMM listing; discovery identity"});
     if(!prepared.readyForReview||!prepared.body) throw new Error(`Static PDF reparse failed: ${prepared.sourceCapture.conflicts.join("; ")||prepared.warnings.join("; ")}`);
     const archiveId=`${id}_${sha256("iotc"+old.url).slice(0,16)}`;prepared.sourceCapture.archiveId=archiveId;
     const {body,...metadata}=prepared;
@@ -207,12 +211,15 @@ export async function reparseArchivedIotc(options:{dataDir:string;sourceBatchId:
 }
 
 type Response = { url: string; status: number; body: Buffer; headers: { get(name: string): string | null } };
-type Fetcher = (url: string) => Promise<Response>;
+export type ColumnFetcher = (url: string) => Promise<Response>;
+type Fetcher=ColumnFetcher;
 const defaultFetch: Fetcher = url => guardedFetch(url, { route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8" } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown> }) {
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]} }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
+  if(options.page&&(columns.length!==1||options.iotcSelect?.length)) throw new Error("Incremental page requires exactly one column without direct selection");
+  if(options.page) columnPageIndex(columns[0]!,options.page.url);
   if (options.iotcSelect?.length && (!columns.includes("iotc") || options.iotcSelect.length > limit)) throw new Error("IOTC selection needs the IOTC column and must fit the batch limit");
   const root = path.join(batchRoot(options.dataDir), id);
   await mkdir(batchRoot(options.dataDir), { recursive: true, mode: 0o700 });
@@ -234,7 +241,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
     return { receipt, body: response.body };
   }
   for (const column of columns) {
-    const source = { id: column, listed: 0, titleFiltered: 0, attempted: 0, error: null as string | null };
+    const source:ColumnBatch["sources"][number] = { id: column, listed: 0, titleFiltered: 0, attempted: 0, error: null };
     batch.sources.push(source); await persist();
     try {
       const config = COLUMNS[column];
@@ -244,23 +251,29 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       else if (robots.receipt.status !== 404) throw new Error(`Robots status ${robots.receipt.status}; stop for policy inspection`);
       const delay = column === "iotc" ? 10_000 : 1200;
       await wait(delay);
-      const listing = await get(config.url, `${column}-list`);
-      if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || (column === "iotc" && listing.receipt.finalUrl !== config.url)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
-      const discovered = discoverColumn(column, new TextDecoder("utf8", { fatal: true }).decode(listing.body));
+      const listingUrl=options.page?.url??config.url,listing = await get(listingUrl, `${column}-list`);
+      if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || (column === "iotc" && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
+      if(options.page&&listing.receipt.finalUrl!==listingUrl) throw new Error("Incremental listing redirected to a different page");
+      const html=new TextDecoder("utf8", { fatal: true }).decode(listing.body),discovered = discoverColumn(column, html);
+      if(options.page) source.pagination=discoverColumnPagination(column,html,listingUrl);
       source.listed = discovered.listed; source.titleFiltered = discovered.rejected;
       if (!discovered.listed) throw new Error("Official listing selector returned no article identities");
       let ready = 0;
-      let candidates = [...discovered.candidates].sort((a, b) => Number(a.priority === "context") - Number(b.priority === "context")).slice(0, 12);
+      let candidates = [...discovered.candidates].sort((a, b) => Number(a.priority === "context") - Number(b.priority === "context"));
+      if(options.page) candidates=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));else candidates=candidates.slice(0,12);
       const iotcCandidates = column === "iotc" ? discoverIotc(new TextDecoder("utf8", { fatal: true }).decode(listing.body)).candidates : [];
       if (column === "iotc") {
         const selection = options.iotcSelect ?? [];
         if (selection.some(value => !iotcCandidates.some(c => c.url === value || c.number === value))) throw new Error("Requested IOTC selection absent from current listing; no direct URL bypass");
-        candidates = iotcCandidates.filter(c => !selection.length || selection.includes(c.url) || selection.includes(c.number)).slice(0, limit);
+        candidates = iotcCandidates.filter(c => !selection.length || selection.includes(c.url) || selection.includes(c.number));
+        candidates=options.page?candidates.filter(c=>!options.page!.completedUrls.includes(c.url)):candidates.slice(0,limit);
       }
       for (const candidate of candidates) {
         if (ready >= limit) break;
+        if(options.page&&source.attempted>=limit) break;
         const archiveId = `${id}_${sha256(column + candidate.url).slice(0, 16)}`;
         const item: BatchItem = { column, url: candidate.url, discoveryTitle: candidate.title, listDate: candidate.listDate, state: "failed", archiveId, prepared: null, error: null };
+        if(options.page) item.listingUrl=listingUrl;
         source.attempted++; batch.items.push(item);
         try {
           await wait(delay);
@@ -275,7 +288,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
               pdf = { receipt: attachment.receipt, bytes: attachment.body, parsed: await extractPdf(attachment.body) };
             }
             prepared = prepareIotc(iotcCandidates.find(c => c.url === candidate.url)!, article.receipt, article.body, pdf);
-            prepared.evidence.push({ url: COLUMNS.iotc.url, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
+            prepared.evidence.push({ url: listingUrl, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
           } else prepared = prepareColumnArticle(column, article.receipt, article.body);
           prepared.sourceCapture.archiveId = archiveId;
           const { body, ...metadata } = prepared;
@@ -287,7 +300,10 @@ export async function collectColumns(options: { id: string; dataDir: string; col
         } catch (error) { item.error = String((error as Error).message).slice(0, 500); }
         await persist();
       }
+      if(options.page) source.remaining=candidates.filter(c=>!batch.items.some(i=>i.column===column&&i.url===c.url&&i.state!=="failed")).map(c=>c.url);
     } catch (error) { source.error = String((error as Error).message).slice(0, 500); }
+    const items=batch.items.filter(i=>i.column===column),failed=items.filter(i=>i.state==="failed").length;
+    source.outcome=source.error||failed===items.length&&failed>0?"failure":failed>0?"partial":"success";
     await persist();
   }
   batch.status = "complete"; batch.finishedAt = new Date().toISOString(); await persist();

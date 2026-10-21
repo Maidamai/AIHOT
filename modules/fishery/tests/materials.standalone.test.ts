@@ -19,6 +19,117 @@ import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from
 import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
 import { createHash } from "node:crypto";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
+import {discoverColumnPagination} from "../backend/official-columns.ts";
+import {collectColumnRound,listColumnProgress,listColumnRounds} from "../backend/column-progress.ts";
+
+const roundUrl=(n:number)=>`https://yyj.moa.gov.cn/gzdt/202610/t20261020_${99000+n}.htm`;
+function roundListing(ids:number[],index=0,count=1) {
+  // Inspected TRS template, represented as data. Never evaluate source JavaScript.
+  return `<ul class="sj_e_tonzhi_list">${ids.map(n=>`<li><a href="${roundUrl(n)}">远洋渔业合成材料${n}</a></li>`).join("")}</ul><script>var currentPage = ${index};var nextPage = currentPage+1;var countPage = ${count}// pages\ndocument.write("<a href=\\"index"+"_" + nextPage + "."+"htm\\">下一页</a>");</script>`;
+}
+function roundArticle(n:number,changed=false) {return Buffer.from(`<meta name="ArticleTitle" content="远洋渔业合成材料${n}"><meta name="PubDate" content="2026-10-20"><div class="sj_arc_body"><div class="TRS_Editor"><p>${changed?"远洋渔业正文已作合成修订。":"远洋渔业公海履约合成原文。"}${"完整上下文用于测试，不能作为真实信息。".repeat(4)}</p></div></div>`);}
+
+test("inspected pagination is bounded to official identities and unverified Fujian history stays explicit",()=>{
+  assert.equal(discoverColumnPagination("moa",roundListing([1],0,2)).nextUrl,COLUMNS.moa.url+"index_1.htm");
+  assert.throws(()=>discoverColumnPagination("moa",roundListing([1],0,2),COLUMNS.moa.url+"index_1.htm"),/metadata disagrees/);
+  assert.equal(discoverColumnPagination("moa",'<a href="https://evil.example/page">下一页</a>').scope,"pagination_unverified");
+  assert.equal(discoverColumnPagination("fujian",'<a href="javascript:;">下一页</a>').scope,"pagination_unverified");
+  const html='<ul class="pager"><li class="pager-current">1</li><li class="pager-next"><a href="/cmms/basic?page=1">next</a></li><li class="pager-last"><a href="/cmms/basic?page=10">last</a></li></ul>';
+  assert.deepEqual(discoverColumnPagination("iotc",html),{pageUrl:COLUMNS.iotc.url,pageIndex:0,nextUrl:COLUMNS.iotc.url+"?page=1",totalPages:11,scope:"verified_pagination"});
+  for(const href of ["https://evil.example/cmms/basic?page=1","/cmms/basic?page=2","/cmms/basic?page=1&other=1"]) assert.throws(()=>discoverColumnPagination("iotc",html.replace('/cmms/basic?page=1',href)));
+  assert.equal(linkSchema.safeParse(COLUMNS.iotc.url+"?page=1").success,true);
+  for(const url of [COLUMNS.iotc.url+"?page=1&token=secret",COLUMNS.iotc.url+"?page=0",COLUMNS.iotc.url+"?page=01",COLUMNS.iotc.url+"?page=1#secret","https://iotc.org/other?page=1"]) assert.equal(linkSchema.safeParse(url).success,false);
+  assert.throws(()=>discoverColumnPagination("iotc",'<ul class="pager"><li class="pager-last"><a href="/cmms/basic?page=10">last</a></li></ul>'),/omits or contradicts/);
+});
+
+test("bounded rounds reach the sixth ready article and a second-page addition then revisit seen bodies",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-")),called:string[]=[];let changed=false;
+  const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url||url===COLUMNS.moa.url+"index_1.htm";
+    return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(url===COLUMNS.moa.url?roundListing([1,2,3,4,5,6],0,2):roundListing([7],1,2)):roundArticle(Number(/_(\d+)\.htm$/.exec(url)![1])-99000,changed),headers:{get:()=>"text/html"}};};
+  const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:5,maxPages:2,fetch,wait:async()=>{}});
+  try {
+    const first=await run("sixth-first");assert.equal(first.sources[0]!.after!.pendingUrls.length,1);assert.equal(first.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);
+    const before=called.length,second=await run("sixth-second"),fresh=called.slice(before);
+    assert.ok(fresh.includes(roundUrl(6))&&fresh.includes(roundUrl(7)));assert.ok(!fresh.includes(roundUrl(1)),"Saved successful identities do not monopolize the next bounded round");
+    assert.equal(second.sources[0]!.after!.cycle,1);assert.equal(second.sources[0]!.health!.coverage,"cycle_complete");
+    changed=true;await run("sixth-revisit");
+    const a=await readBatch(dataDir,"sixth-first-moa-p0"),b=await readBatch(dataDir,"sixth-revisit-moa-p0");
+    assert.notEqual(a.items[0]!.prepared!.sourceCapture.bodySha256,b.items[0]!.prepared!.sourceCapture.bodySha256,"New cycle recaptures changed seen URLs for the normal invalidation path");
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("failed articles keep the cursor and pending identity while successful captures are not repeated",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-failure-"));let fail=true;const articles:string[]=[];
+  const fetch=async(url:string)=>{const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url;if(!robots&&!listing)articles.push(url);
+    return {url,status:robots||url===roundUrl(1)&&fail?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing([1,2],0,2)):roundArticle(1),headers:{get:()=>"text/html"}};};
+  try {
+    const a=await collectColumnRound({id:"failure-a",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
+    assert.equal(a.outcome,"partial");assert.equal(a.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.deepEqual(a.sources[0]!.after!.pendingUrls,[roundUrl(1)]);assert.equal(a.sources[0]!.health!.lastSuccessAt,null);
+    fail=false;articles.length=0;const b=await collectColumnRound({id:"failure-b",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
+    assert.deepEqual(articles,[roundUrl(1)]);assert.equal(b.sources[0]!.after!.cursorUrl,COLUMNS.moa.url+"index_1.htm");
+    assert.equal((await readBatch(dataDir,"failure-a-moa-p0")).items[0]!.state,"failed","Failed evidence remains unchanged");
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("all-source denial is a failed completed round without advancing any source",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-denied-"));
+  try {
+    const r=await collectColumnRound({id:"all-denied",dataDir,columns:["moa","fujian","iotc"],limit:2,maxPages:2,wait:async()=>{},fetch:async url=>({url,status:403,body:Buffer.from("denied"),headers:{get:()=>null}})});
+    assert.equal(r.status,"finished");assert.equal(r.outcome,"failure");assert.ok(r.sources.every(s=>s.health!.outcome==="failure"&&s.after!.cursorUrl===COLUMNS[s.column].url&&s.health!.lastSuccessAt===null));
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("crash checkpoints resume persisted captures and commits idempotently with zero new requests",async()=>{
+  for(const stage of ["child-persisted","before-source-commit","after-source-commit"] as const) {
+    const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-crash-"));let calls=0,crash=true;
+    const fetch=async(url:string)=>{calls++;return {url,status:url.endsWith("robots.txt")?404:200,body:Buffer.from(url.endsWith("robots.txt")?"missing":url===COLUMNS.moa.url?roundListing([1]):roundArticle(1)),headers:{get:()=>"text/html"}};};
+    const options={id:"resume-real-checkpoint",dataDir,columns:["moa"] as const,limit:1,maxPages:1,fetch,wait:async()=>{},checkpoint:async(s:string)=>{if(s===stage&&crash){crash=false;throw new Error("Synthetic stopped process boundary");}}};
+    try {
+      await assert.rejects(collectColumnRound({...options,columns:[...options.columns]}),/Synthetic stopped/);const before=calls;
+      const recovered=await collectColumnRound({...options,columns:[...options.columns],resume:{acknowledgeStopped:true,reason:"Synthetic runner stopped after fault injection"}});
+      assert.equal(calls,before);assert.equal(recovered.status,"finished");assert.equal(recovered.sources[0]!.after!.revision,1);assert.equal(recovered.sources[0]!.after!.cycle,1);
+      await collectColumnRound({...options,columns:[...options.columns],resume:{acknowledgeStopped:true,reason:"Synthetic completed replay is read only"}});assert.equal(calls,before);
+    } finally {await rm(dataDir,{recursive:true,force:true});}
+  }
+});
+
+test("a damaged or changed-profile source checkpoint is preserved and does not hide healthy sources",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-damaged-"));
+  try {
+    const dir=path.join(dataDir,"fishery-column-progress");await mkdir(dir);await writeFile(path.join(dir,"moa.json"),'{"truncated":');
+    const r=await collectColumnRound({id:"isolated-health",dataDir,columns:["moa","fujian"],limit:1,maxPages:1,wait:async()=>{},fetch:async url=>({url,status:url.endsWith("robots.txt")?404:200,body:url.endsWith("robots.txt")?Buffer.from("missing"):url===COLUMNS.fujian.url?Buffer.from(`<ul class="xw-list-1 gl_list"><li><a href="${columnUrl}">远洋渔业</a></li></ul>`):columnHtml(),headers:{get:()=>"text/html"}})});
+    assert.equal(r.outcome,"partial");assert.equal(r.sources[0]!.health!.outcome,"failure");assert.equal(r.sources[1]!.health!.outcome,"success");assert.equal(r.sources[1]!.health!.coverage,"pagination_unverified");
+    assert.equal(await readFile(path.join(dir,"moa.json"),"utf8"),'{"truncated":');assert.equal((await listColumnProgress(dataDir))[0]!.status,"unreadable");assert.equal((await listColumnRounds(dataDir)).length,1);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("unfinished rounds cannot be bypassed by a new id and stale resumes fail before HTTP",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-stale-"));let calls=0;
+  const fetch=async(url:string)=>{calls++;return {url,status:url.endsWith("robots.txt")?404:200,body:Buffer.from(url.endsWith("robots.txt")?"missing":url===COLUMNS.moa.url?roundListing([1],0,2):roundArticle(1)),headers:{get:()=>"text/html"}};};
+  const options={id:"unfinished-a",dataDir,columns:["moa"] as const,limit:2,maxPages:2,fetch,wait:async()=>{}};
+  try {
+    await assert.rejects(collectColumnRound({...options,columns:[...options.columns],checkpoint:async()=>{throw new Error("Synthetic interruption");}}),/Synthetic interruption/);
+    const before=calls;
+    await assert.rejects(collectColumnRound({...options,columns:[...options.columns],id:"bypass-b"}),/Unfinished round/);assert.equal(calls,before);
+    const file=path.join(dataDir,"fishery-column-progress","rounds","unfinished-a","manifest.json"),round=JSON.parse(await readFile(file,"utf8")),state={...round.sources[0].before,revision:99};
+    await writeFile(path.join(dataDir,"fishery-column-progress","moa.json"),JSON.stringify(state));
+    await assert.rejects(collectColumnRound({...options,columns:[...options.columns],resume:{acknowledgeStopped:true,reason:"Synthetic stopped runner but source externally changed"}}),/before any request/);assert.equal(calls,before);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("explicit recovery closes an interrupted GET child without rewriting or repeating it",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-unknown-get-"));let calls=0;
+  const fetch=async(url:string)=>{calls++;return {url,status:url.endsWith("robots.txt")?404:200,body:Buffer.from(url.endsWith("robots.txt")?"missing":url===COLUMNS.moa.url?roundListing([1]):roundArticle(1)),headers:{get:()=>"text/html"}};};
+  const options={id:"mid-get",dataDir,columns:["moa"] as const,limit:1,maxPages:1,fetch,wait:async()=>{}};
+  try {
+    await assert.rejects(collectColumnRound({...options,columns:[...options.columns],checkpoint:async()=>{throw new Error("Synthetic checkpoint stop");}}));
+    const file=path.join(batchRoot(dataDir),"mid-get-moa-p0","manifest.json"),batch=JSON.parse(await readFile(file,"utf8"));
+    batch.status="running";batch.finishedAt=null;await writeFile(file,JSON.stringify(batch));const bytes=await readFile(file),before=calls;
+    const recovered=await collectColumnRound({...options,columns:[...options.columns],resume:{acknowledgeStopped:true,reason:"Synthetic old GET process confirmed stopped"}});
+    assert.equal(calls,before);assert.equal(recovered.outcome,"failure");assert.equal(recovered.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.deepEqual(await readFile(file),bytes);
+    const next=await collectColumnRound({...options,columns:[...options.columns],id:"after-mid-get"});assert.equal(next.outcome,"success");assert.equal((await readBatch(dataDir,"mid-get-moa-p0")).status,"running");
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
 
 test("saved DeepSeek responses preserve strict evidence arrays and the accepted draft's source anchors",async()=>{
   const {fixtures}=JSON.parse(await readFile(new URL("./fixtures/ai-trial-responses-20261020.json",import.meta.url),"utf8"));
