@@ -5,12 +5,15 @@ import { tag } from "./setup.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
-import { closeDb, sql } from "@aihot/backend/db";
-import { upsertMaterial } from "@aihot/backend/content/materials";
-import { stopBoss } from "@aihot/backend/jobs/queue";
-import { publishArticle } from "@aihot/backend/publication/publish";
-import { textToHtml } from "@aihot/backend/content/sanitize";
-import { buildApp } from "../apps/api/src/app.ts";
+
+import { installFixtureIndustry } from "./fixtures/install-industry.ts";
+installFixtureIndustry();
+const { closeDb, sql } = await import("@aihot/backend/db");
+const { upsertMaterial } = await import("@aihot/backend/content/materials");
+const { stopBoss } = await import("@aihot/backend/jobs/queue");
+const { publishArticle } = await import("@aihot/backend/publication/publish");
+const { textToHtml } = await import("@aihot/backend/content/sanitize");
+const { buildApp } = await import("../apps/api/src/app.ts");
 
 const T = tag();
 const OFFICIAL = `test-reading-official-${T}`;
@@ -39,7 +42,7 @@ async function report(source: string, opts: { selected: boolean; hoursAgo: numbe
   });
   await sql`UPDATE articles SET discovered_at = ${at}, timeline_at = ${at} WHERE id = ${articleId}`;
   await sql`INSERT INTO analyses (article_id, input_revision, origin, relevance, category, title_zh, summary_zh, score, selected, subjects, tags)
-            VALUES (${articleId}, 1, 'rule', 'pass', 'ai-models', ${opts.title ?? `标题${n}-${T}`}, ${`摘要${n}-${T}`}, 80, ${opts.selected}, ${opts.subjects ?? []}, ${[`t-${T}`]})`;
+            VALUES (${articleId}, 1, 'rule', 'pass', 'research', ${opts.title ?? `标题${n}-${T}`}, ${`摘要${n}-${T}`}, 80, ${opts.selected}, ${opts.subjects ?? []}, ${[`t-${T}`]})`;
   return articleId;
 }
 
@@ -66,22 +69,22 @@ test("a folded card's other sources are those of the fact its representative rep
 });
 
 test("a query that names a company also finds the articles about it", async () => {
-  const about = await report(MEDIA, { selected: false, hoursAgo: 3, subjects: ["anthropic"], title: `Sonnet 上线 Conductor ${T}` });
-  const mention = await report(MEDIA, { selected: false, hoursAgo: 4, title: `claude 被一篇盘点顺带提到 ${T}` });
+  const about = await report(MEDIA, { selected: false, hoursAgo: 3, subjects: ["fixture-port"], title: `PortTool 上线 Conductor ${T}` });
+  const mention = await report(MEDIA, { selected: false, hoursAgo: 4, title: `PortTool 被一篇盘点顺带提到 ${T}` });
   const other = await report(MEDIA, { selected: false, hoursAgo: 5, title: `无关的新闻 ${T}` });
   for (const id of [about, mention, other]) await publishArticle(id);
   const search = async (q: string, tab = "") => {
     const res = await app.inject({ method: "GET", url: `/api/site/pool?q=${encodeURIComponent(q)}${tab}` });
     return (JSON.parse(res.body).items as Array<{ id: string }>).map((i) => i.id);
   };
-  const latest = await search("Claude");
-  assert.ok(latest.includes(about), "the Anthropic subject without the word");
+  const latest = await search("PortTool");
+  assert.ok(latest.includes(about), "the FixturePort subject without the word");
   assert.ok(latest.includes(mention), "text matches stay");
   assert.ok(!latest.includes(other));
-  const relevance = await search("claude", "&tab=relevance");
+  const relevance = await search("PortTool", "&tab=relevance");
   assert.ok(relevance.indexOf(about) >= 0 && relevance.indexOf(about) < relevance.indexOf(mention), "the subject ranks first");
   // Only the whole query names the company: a narrower search stays a text search.
-  assert.ok(!(await search(`claude ${T}-nothing`)).includes(about));
+  assert.ok(!(await search(`PortTool ${T}-nothing`)).includes(about));
 });
 
 test("bare addresses in post text become safe links", () => {

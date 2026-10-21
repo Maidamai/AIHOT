@@ -4,8 +4,11 @@
 import { tag } from "./setup.ts";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { closeDb, sql } from "@aihot/backend/db";
-import { loadPool, publicMatchCondition, searchTerms } from "@aihot/backend/publication/pool";
+
+import { installFixtureIndustry } from "./fixtures/install-industry.ts";
+installFixtureIndustry();
+const { closeDb, sql } = await import("@aihot/backend/db");
+const { loadPool, publicMatchCondition, searchTerms } = await import("@aihot/backend/publication/pool");
 
 const T = `relevance-${tag()}`;
 const now = new Date("2026-01-01T12:00:00Z");
@@ -50,15 +53,15 @@ test("short and multi-term relevance keep cross-field AND and deterministic scor
 });
 
 test("company relevance retains tag-only candidates, boosts and unique totals", async () => {
-  await add("company-both", "openai", "openai", { title: "OpenAI", tags: ["entity:openai"], age: 100 });
-  await add("company-tag", "", "", { tags: ["entity:openai"], noSearchRow: true, age: 1 });
-  await add("company-text", "openai qy", "openai", { title: "OpenAI", age: 60 });
-  await add("company-low", "openai", "", { age: 1 });
-  await add("company-withdrawn", "openai", "openai", { tags: ["entity:openai"], visibility: "withdrawn" });
-  const company = await loadPool(query("OpenAI"));
+  await add("company-both", "fixturelab", "fixturelab", { title: "FixtureLab", tags: ["entity:fixture-lab"], age: 100 });
+  await add("company-tag", "", "", { tags: ["entity:fixture-lab"], noSearchRow: true, age: 1 });
+  await add("company-text", "fixturelab qy", "fixturelab", { title: "FixtureLab", age: 60 });
+  await add("company-low", "fixturelab", "", { age: 1 });
+  await add("company-withdrawn", "fixturelab", "fixturelab", { tags: ["entity:fixture-lab"], visibility: "withdrawn" });
+  const company = await loadPool(query("FixtureLab"));
   assert.deepEqual(company.items.map(item => item.id), ["company-both", "company-tag", "company-text", "company-low"].map(id));
   assert.equal(company.total, 4, "the text-and-tag candidate counts once");
-  const multi = await loadPool(query("openai qy"));
+  const multi = await loadPool(query("fixturelab qy"));
   assert.deepEqual(multi.items.map(item => item.id), [id("company-text")], "only the whole company alias expands the candidates");
 });
 
@@ -76,7 +79,7 @@ test("relevance retains combined filters and literal LIKE characters", async () 
 
 test("search terms split where Han meets a Latin word, not before digits", () => {
   assert.deepEqual(searchTerms("多模态RAG"), ["多模态", "rag"]);
-  assert.deepEqual(searchTerms("claude code更新 gpt-5 deepseek v4"), ["claude", "code", "更新", "gpt-5", "deepseek", "v4"]);
+  assert.deepEqual(searchTerms("PortTool code更新 gpt-5 deepseek v4"), ["porttool", "code", "更新", "gpt-5", "deepseek", "v4"]);
   assert.deepEqual(searchTerms("v4版本"), ["v4", "版本"]);
   assert.deepEqual(searchTerms("10月"), ["10月"]);
 });
