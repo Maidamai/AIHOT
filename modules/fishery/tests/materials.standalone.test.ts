@@ -859,7 +859,8 @@ test("manual official archives require exact original bytes, complete determinis
     await mkdir(dir,{recursive:true});await writeFile(path.join(dir,"manifest.json"),JSON.stringify({...manifest,bodySha256:sha256(parsed.body)}));
     await writeFile(path.join(dir,"receipt.json"),JSON.stringify(receipt));await writeFile(path.join(dir,"raw.bin"),raw);await writeFile(path.join(dir,"body.txt"),parsed.body);
     assert.equal((await verifyManualSource(dataDir,id)).body,parsed.body);
-    assert.equal((await listManualSources(dataDir))[0]!.importable,true);
+    const listed=(await listManualSources(dataDir))[0]!;
+    assert.equal(listed.importable,true);assert.equal(listed.publishedAt,null);assert.equal(listed.publicationLiteral,null);assert.equal(listed.capturedAt,receipt.finishedAt);assert.deepEqual(listed.dates?.published,{precision:"unknown",value:null});
     await writeFile(path.join(dir,"body.txt"),parsed.body.slice(0,-10));
     await assert.rejects(verifyManualSource(dataDir,id),/complete deterministic/);
     assert.equal((await listManualSources(dataDir))[0]!.importable,false);

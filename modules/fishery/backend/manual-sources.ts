@@ -92,7 +92,7 @@ export async function listManualSources(dataDir:string) {
   const root=path.join(dataDir,"fishery-manual-archives");let names:string[];
   try{if(!(await lstat(root)).isDirectory()) throw new Error("Invalid archive root");names=await readdir(root);}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return [];throw error;}
   return Promise.all(names.filter(id=>manualArchiveIdSchema.safeParse(id).success).sort().slice(0,100).map(async id=>{
-    try{const r=await verifyManualSource(dataDir,id);return {id,title:r.manifest.title,url:r.manifest.url,name:r.manifest.name,attribution:r.manifest.attribution,parser:r.sourceCapture.parser,pages:r.sourceCapture.attachmentPages,bodySha256:r.sourceCapture.bodySha256,importable:true,error:null};}
+    try{const r=await verifyManualSource(dataDir,id);return {id,title:r.manifest.title,url:r.manifest.url,name:r.manifest.name,attribution:r.manifest.attribution,publishedAt:r.sourceCapture.publishedAt,publicationLiteral:r.sourceCapture.publicationLiteral,capturedAt:r.sourceCapture.capturedAt,dates:r.dates,parser:r.sourceCapture.parser,pages:r.sourceCapture.attachmentPages,bodySha256:r.sourceCapture.bodySha256,importable:true,error:null};}
     catch(error){return {id,importable:false,error:(error as Error).message.slice(0,500)};}
   }));
 }
