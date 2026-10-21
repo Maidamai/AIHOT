@@ -72,7 +72,7 @@ export function validateBusinessGuidePayload(input: unknown, context: Pick<Busin
   for (const field of Object.values(payload.dates)) {
     if (field.value.precision === "unknown") continue;
     const value = field.value.value, parts = value.split("-").map(Number);
-    const chinese = `${parts[0]}年` + (parts.length > 1 ? `${parts[1]}月` : "") + (parts.length > 2 ? `${parts[2]}日` : "");
+    const chinese = `${parts[0]}\\s*年` + (parts.length > 1 ? `\\s*${parts[1]}\\s*月` : "") + (parts.length > 2 ? `\\s*${parts[2]}\\s*日` : "");
     if (!field.evidence.some(id => { const quote = spans.get(id)!.quote; return new RegExp(`(?<!\\d)${value}(?!\\d)`).test(quote) || new RegExp(`(?<!\\d)${chinese}`).test(quote); }))
       throw new Conflict("Date must have its complete original literal in one selected source span; do not borrow or combine dates");
   }

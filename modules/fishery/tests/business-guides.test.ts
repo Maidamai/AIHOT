@@ -8,6 +8,7 @@ import { sql, closeDb } from "@aihot/backend/db";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { createDocument, observe, registerSource, review, withdraw } from "../backend/store.ts";
 import { sha256 } from "../backend/source-adapters.ts";
+import { buildEvidenceCatalog } from "../backend/evidence.ts";
 import { observationFixture } from "./fixtures.ts";
 import { registerBusinessGuideRoutes } from "../backend/business-routes.ts";
 import { businessGuideContext, businessGuideAdminDetail, businessGuideReaderPage, businessGuideReaderItem, createBusinessGuide,
@@ -36,7 +37,7 @@ async function fixture(options: { manual?: boolean; pdf?: boolean } = {}) {
   await review(doc.id, { revision: 1, sourceRevision: 1, decision: "approved", applicabilityReviewed: false, note: "Synthetic ordinary source review, not rights permission" }, "synthetic-reviewer");
   return { id: String(doc.id), sourceId, observation, filename };
 }
-function payload(c: BusinessGuideContext): BusinessGuidePayload {
+function payload(c: Pick<BusinessGuideContext, "catalog">): BusinessGuidePayload {
   const ids = c.catalog.spans.map(s => s.id), date = () => ({ value: { precision: "unknown" as const, value: null }, evidence: [] });
   return {
     topicId: "funding", kind: "policy_reference", title: { value: "合成通知信息", evidence: [ids[0]!] }, summary: [{ value: "本合成测试仅适用远洋渔业企业，申请材料包括申请表。", evidence: [ids[1]!] }],
@@ -50,6 +51,25 @@ function payload(c: BusinessGuideContext): BusinessGuidePayload {
 }
 async function draft(id: string) { const c = await businessGuideContext(id); return createBusinessGuide({ documentId: id, snapshotHash: c.snapshotHash, payload: payload(c), reason: "Synthetic editorial draft" }, "synthetic-editor"); }
 const decision = (row: BusinessGuideAdminRecord, value: "approved" | "rejected" | "withdrawn" = "approved") => ({ expectedRevision: row.revision, snapshotHash: row.snapshotHash, payloadHash: row.payloadHash, decision: value, reason: "Synthetic human decision" });
+
+test("business dates preserve spaced PDF literals without borrowing years or joining spans", () => {
+  for (const [literal, accepted] of [
+    ["实施日期：2026 年 1 月 1 日", true],
+    ["实施日期：2026-01-01", true],
+    ["实施日期：1 月 1 日", false],
+    ["年份：2026 年。\n实施日期：1 月 1 日", false],
+  ] as const) {
+    const source = `${body}\n${literal}`;
+    const catalog = buildEvidenceCatalog({ body: source, bodySha256: sha256(source), observationRevision: 1 });
+    const input = payload({ catalog });
+    input.dates.effectiveFrom = { value: { precision: "day", value: "2026-01-01" }, evidence: catalog.spans.slice(5).map(s => s.id) };
+    const before = structuredClone(catalog);
+    if (accepted) assert.doesNotThrow(() => validateBusinessGuidePayload(input, { catalog }), literal);
+    else assert.throws(() => validateBusinessGuidePayload(input, { catalog }), /complete original literal/, literal);
+    assert.deepEqual(catalog, before, "Matching must not normalize or rewrite original quotes");
+    assert.equal(source.slice(catalog.spans.at(-1)!.start, catalog.spans.at(-1)!.end), catalog.spans.at(-1)!.quote);
+  }
+});
 
 test("human guides require current ordinary approval, preserve unknowns, and private list/count/detail share current gate", async () => {
   const f = await fixture(), before = await sql`SELECT count(*)::int AS n FROM receipts`, row = await draft(f.id);
