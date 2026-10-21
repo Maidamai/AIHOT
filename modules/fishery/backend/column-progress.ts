@@ -1,5 +1,6 @@
-// Explicit bounded rounds only. No timer, model, database write, approval or publication.
+// Explicit bounded rounds only. No timer, model, approval or publication.
 import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
@@ -12,28 +13,39 @@ const hash=z.string().regex(/^[a-f0-9]{64}$/),stamp=z.iso.datetime({offset:true}
 const healthSchema=z.strictObject({outcome,lastAttemptAt:stamp,lastSuccessAt:stamp.nullable(),lastCaptureAt:stamp.nullable(),reason:z.string().nullable(),pending:z.int().nonnegative(),nextPageUrl:linkSchema,coverage:z.enum(["more_pages","cycle_complete","pagination_unverified","current_page_only","blocked"])});
 const stateSchema=z.strictObject({version:z.literal("fishery-column-progress/1"),column:columnIdSchema,profileHash:hash,revision:z.int().nonnegative(),cycle:z.int().nonnegative(),cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096),health:healthSchema.nullable()});
 export type ColumnProgress=z.infer<typeof stateSchema>;
-interface RoundSource { column:ColumnId; status:"running"|"ready_to_commit"|"finished"; before:ColumnProgress; after:ColumnProgress|null; batches:string[]; health:z.infer<typeof healthSchema>|null; }
-export interface ColumnRound { version:"fishery-column-round/1"; id:string; columns:ColumnId[]; limit:number; maxPages:number; startedAt:string; finishedAt:string|null; status:"running"|"finished"; outcome:"success"|"partial"|"failure"|null; sources:RoundSource[]; recoveries:{at:string;reason:string}[]; }
+export function parseColumnProgress(column:ColumnId,input:unknown):ColumnProgress {
+  const value=stateSchema.parse(input);columnPageIndex(column,value.cursorUrl);
+  if(value.column!==column||value.profileHash!==profile(column)) throw new Error("Column profile/source binding changed; inspect cursor");
+  return value;
+}
+export interface ColumnProgressStore {
+  load(column:ColumnId):Promise<ColumnProgress>;
+  intent(column:ColumnId,roundId:string,before:ColumnProgress):Promise<void>;
+  finish(column:ColumnId,roundId:string,before:ColumnProgress,after:ColumnProgress,batches:string[],found:number):Promise<void>;
+}
+interface RoundSource { sourceId?:string; column:ColumnId; status:"running"|"ready_to_commit"|"finished"; before:ColumnProgress; after:ColumnProgress|null; batches:string[]; health:z.infer<typeof healthSchema>|null; }
+export interface ColumnRound { storage?:"file"|"db"; version:"fishery-column-round/1"; id:string; columns:ColumnId[]; limit:number; maxPages:number; startedAt:string; finishedAt:string|null; status:"running"|"finished"; outcome:"success"|"partial"|"failure"|null; sources:RoundSource[]; recoveries:{at:string;reason:string}[]; }
 const root=(dataDir:string)=>path.resolve(dataDir,"fishery-column-progress");
 const stateFile=(dataDir:string,column:ColumnId)=>path.join(root(dataDir),`${column}.json`);
+const equal=isDeepStrictEqual;
 const serial=(value:unknown)=>JSON.stringify(value,null,2)+"\n";
 const profile=(column:ColumnId)=>sha256(JSON.stringify({column:COLUMNS[column],selection:"official-dwf-title-and-body/v1",pagination:"inspected-pagination/v1"}));
-const initial=(column:ColumnId):ColumnProgress=>({version:"fishery-column-progress/1",column,profileHash:profile(column),revision:0,cycle:0,cursorUrl:COLUMNS[column].url,completedUrls:[],pendingUrls:[],health:null});
+export const initialColumnProgress=(column:ColumnId):ColumnProgress=>({version:"fishery-column-progress/1",column,profileHash:profile(column),revision:0,cycle:0,cursorUrl:COLUMNS[column].url,completedUrls:[],pendingUrls:[],health:null});
 async function exists(file:string) {try {await stat(file);return true;} catch(error) {if((error as NodeJS.ErrnoException).code==="ENOENT") return false;throw error;}}
 async function atomic(file:string,value:unknown) {
   const temporary=path.join(path.dirname(file),`.checkpoint-${randomUUID()}.tmp`),handle=await open(temporary,"wx",0o600);
   try {await handle.writeFile(serial(value));await handle.close();await rename(temporary,file);} finally {await handle.close().catch(()=>{});await rm(temporary,{force:true});}
 }
 async function loadState(dataDir:string,column:ColumnId) {
-  const file=stateFile(dataDir,column);if(!await exists(file)) return initial(column);
+  const file=stateFile(dataDir,column);if(!await exists(file)) return initialColumnProgress(column);
   if((await stat(file)).size>2*1024*1024) throw new Error("Column progress exceeds bound; do not reset evidence");
   const value=stateSchema.parse(JSON.parse(await readFile(file,"utf8")));columnPageIndex(column,value.cursorUrl);
   if(value.column!==column||value.profileHash!==profile(column)) throw new Error("Column profile changed; inspect existing cursor before a new run");
   return value;
 }
-export async function listColumnProgress(dataDir:string) {
+export async function listColumnProgress(dataDir:string,store?:ColumnProgressStore) {
   return await Promise.all(columnIdSchema.options.map(async column=>{
-    try {return {column,status:"readable" as const,state:await loadState(dataDir,column)};}
+    try {return {column,status:"readable" as const,state:await (store?store.load(column):loadState(dataDir,column))};}
     catch(error) {return {column,status:"unreadable" as const,error:String((error as Error).message).slice(0,500)};}
   }));
 }
@@ -68,12 +80,13 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
     reason:error??(failed.length?`${failed.length} article acquisition/parse failure(s); cursor not advanced`:null),pending:next.pendingUrls.length,nextPageUrl:next.cursorUrl,coverage};
   return next;
 }
-const roundSchema=z.object({version:z.literal("fishery-column-round/1"),id:batchIdSchema,columns:z.array(columnIdSchema).min(1).max(3),limit:z.int().min(1).max(5),maxPages:z.int().min(1).max(3),startedAt:stamp,finishedAt:stamp.nullable(),status:z.enum(["running","finished"]),outcome:outcome.nullable(),recoveries:z.array(z.strictObject({at:stamp,reason:z.string().min(1).max(1000)})).max(20),sources:z.array(z.object({column:columnIdSchema,status:z.enum(["running","ready_to_commit","finished"]),before:stateSchema,after:stateSchema.nullable(),batches:z.array(batchIdSchema).max(3),health:healthSchema.nullable()})).max(3)});
+const roundSchema=z.object({storage:z.enum(["file","db"]).optional(),version:z.literal("fishery-column-round/1"),id:batchIdSchema,columns:z.array(columnIdSchema).min(1).max(3),limit:z.int().min(1).max(5),maxPages:z.int().min(1).max(3),startedAt:stamp,finishedAt:stamp.nullable(),status:z.enum(["running","finished"]),outcome:outcome.nullable(),recoveries:z.array(z.strictObject({at:stamp,reason:z.string().min(1).max(1000)})).max(20),sources:z.array(z.object({sourceId:z.string().optional(),column:columnIdSchema,status:z.enum(["running","ready_to_commit","finished"]),before:stateSchema,after:stateSchema.nullable(),batches:z.array(batchIdSchema).max(3),health:healthSchema.nullable()})).max(3)});
 async function readRound(file:string,id:string):Promise<ColumnRound> {
   if((await stat(file)).size>4*1024*1024) throw new Error("Round checkpoint too large");
   const r=roundSchema.parse(JSON.parse(await readFile(file,"utf8")));
   if(r.id!==id||new Set(r.columns).size!==r.columns.length||new Set(r.sources.map(s=>s.column)).size!==r.sources.length) throw new Error("Round identity mismatch");
   for(const s of r.sources) {
+    if(r.storage==="db"&&s.sourceId!==`fishery-column-${s.column}`) throw new Error("Round source intent mismatch");
     if(!r.columns.includes(s.column)||s.before.column!==s.column||s.after&&s.after.column!==s.column) throw new Error("Round source binding mismatch");
     columnPageIndex(s.column,s.before.cursorUrl);if(s.after) columnPageIndex(s.column,s.after.cursorUrl);
     if(s.batches.some((b,i)=>b!==`${id}-${s.column}-p${i}`)) throw new Error("Round page identity mismatch");
@@ -81,13 +94,16 @@ async function readRound(file:string,id:string):Promise<ColumnRound> {
   return r;
 }
 
-export async function collectColumnRound(options:{id:string;dataDir:string;columns:ColumnId[];limit:number;maxPages:number;resume?:{acknowledgeStopped:true;reason:string};fetch?:ColumnFetcher;wait?:(ms:number)=>Promise<unknown>;checkpoint?:(stage:"child-persisted"|"before-source-commit"|"after-source-commit")=>Promise<void>}) {
+export async function collectColumnRound(options:{id:string;dataDir:string;columns:ColumnId[];limit:number;maxPages:number;storage?:"file"|"db";store?:ColumnProgressStore;resume?:{acknowledgeStopped:true;reason:string};fetch?:ColumnFetcher;wait?:(ms:number)=>Promise<unknown>;checkpoint?:(stage:"child-persisted"|"before-source-commit"|"after-source-commit")=>Promise<void>}) {
   const id=z.string().regex(/^[a-zA-Z0-9-]{1,40}$/).parse(options.id),columns=[...new Set(options.columns.map(c=>columnIdSchema.parse(c)))];
   const limit=z.int().min(1).max(5).parse(options.limit),maxPages=z.int().min(1).max(3).parse(options.maxPages);
   if(!columns.length) throw new Error("At least one column is required");
+  const load=(column:ColumnId)=>options.store?options.store.load(column):loadState(options.dataDir,column);
   const directory=root(options.dataDir),roundDir=path.join(directory,"rounds",id),file=path.join(roundDir,"manifest.json"),lock=path.join(directory,"lock"),activeFile=path.join(directory,"active-round.json");
   await mkdir(path.join(directory,"rounds"),{recursive:true,mode:0o700});
   const previous=await exists(file)?await readRound(file,id):null;
+  if((options.storage==="db")!==!!options.store) throw new Error("DB storage requires explicit DB store; no fallback");
+  if(previous&&(previous.storage??"file")!==(options.storage??"file")) throw new Error("Round storage backend mismatch");
   if(previous&&!options.resume) throw new Error("Round exists; use explicit stopped-runner reconciliation, never overwrite it");
   if(!previous&&options.resume) throw new Error("No original round to resume");
   if(previous&&(serial(previous.columns)!==serial(columns)||previous.limit!==limit||previous.maxPages!==maxPages)) throw new Error("Resume options must match the preserved round");
@@ -112,7 +128,7 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
       }
     }
     await atomic(activeFile,{roundId:id});
-    const round:ColumnRound=previous??{version:"fishery-column-round/1",id,columns,limit,maxPages,startedAt:new Date().toISOString(),finishedAt:null,status:"running",outcome:null,sources:[],recoveries:[]};
+    const round:ColumnRound=previous??{storage:options.storage??"file",version:"fishery-column-round/1",id,columns,limit,maxPages,startedAt:new Date().toISOString(),finishedAt:null,status:"running",outcome:null,sources:[],recoveries:[]};
     if(!previous) await mkdir(roundDir,{mode:0o700});
     if(options.resume) round.recoveries.push({at:new Date().toISOString(),reason:options.resume.reason});
     const save=()=>atomic(file,round);await save();
@@ -121,14 +137,17 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
       if(entry?.status==="finished") continue;
       if(!entry) {
         let before:ColumnProgress;
-        try {before=await loadState(options.dataDir,column);} catch(error) {
+        try {before=await load(column);} catch(error) {
+          if(options.store) throw error;
           const health:z.infer<typeof healthSchema>={outcome:"failure",lastAttemptAt:new Date().toISOString(),lastSuccessAt:null,lastCaptureAt:null,reason:String((error as Error).message).slice(0,500),pending:0,nextPageUrl:COLUMNS[column].url,coverage:"blocked"};
-          round.sources.push({column,status:"finished",before:initial(column),after:null,batches:[],health});await save();continue;
+          round.sources.push({column,status:"finished",before:initialColumnProgress(column),after:null,batches:[],health});await save();continue;
         }
-        entry={column,status:"running",before,after:null,batches:[],health:null};round.sources.push(entry);await save();
+        entry={...(options.store?{sourceId:`fishery-column-${column}`} : {}),column,status:"running",before,after:null,batches:[],health:null};round.sources.push(entry);await save();
       }
-      const actual=await loadState(options.dataDir,column);
-      if(entry.before.profileHash!==profile(column)||serial(actual)!==serial(entry.before)&&(!entry.after||serial(actual)!==serial(entry.after))) throw new Error("Column state/profile changed; reject stale resume before any request");
+      // Journal intent is durable before the database intent and before any GET.
+      await options.store?.intent(column,id,entry.before);
+      const actual=entry.status==="ready_to_commit"&&options.store?entry.before:await load(column);
+      if(entry.before.profileHash!==profile(column)||!equal(actual,entry.before)&&(!entry.after||!equal(actual,entry.after))) throw new Error("Column state/profile changed; reject stale resume before any request");
       if(entry.status==="running") {
         let working=structuredClone(entry.before),attempted=0,anyFailure=false,lastCapture=working.health?.lastCaptureAt??null,lastSuccessful=working.health?.lastSuccessAt??null;
         for(let index=0;index<maxPages;index++) {
@@ -161,10 +180,11 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
         entry.after=working;entry.health=working.health;entry.status="ready_to_commit";await save();
       }
       if(!entry.after) throw new Error("Missing committed progress candidate");
-      const current=await loadState(options.dataDir,column);
-      if(serial(current)!==serial(entry.before)&&serial(current)!==serial(entry.after)) throw new Error("Column state changed outside this preserved round; reconciliation required");
+      const current=options.store?entry.before:await load(column);
+      if(!equal(current,entry.before)&&!equal(current,entry.after)) throw new Error("Column state changed outside this preserved round; reconciliation required");
       await options.checkpoint?.("before-source-commit");
-      if(serial(current)!==serial(entry.after)) await atomic(stateFile(options.dataDir,column),entry.after);
+      if(options.store) await options.store.finish(column,id,entry.before,entry.after,entry.batches,(await Promise.all(entry.batches.map(async id=>(await readBatch(options.dataDir,id)).items.length))).reduce((a,b)=>a+b,0));
+      else if(!equal(current,entry.after)) await atomic(stateFile(options.dataDir,column),entry.after);
       await options.checkpoint?.("after-source-commit");
       entry.status="finished";await save();
     }

@@ -253,7 +253,7 @@ async function store(sourceId: string, runId: number, candidates: CollectionCand
  * one interval later. A failure counts toward "failing" (5 in a row) and waits longer after each one,
  * up to six hours; a full budget is not the source's failure: it waits 15 minutes and counts nothing.
  */
-async function recordFetch(db: Db, sourceId: string, runId: number, run: { found: number; created: number; detail: object | null } & ({ cursor: Record<string, unknown> } | { error: string; budget: boolean })): Promise<void> {
+export async function recordFetch(db: Db, sourceId: string, runId: number, run: { found: number; created: number; detail: object | null } & ({ cursor: Record<string, unknown> } | { error: string; budget: boolean })): Promise<void> {
   const detail = run.detail ? db.json(run.detail as never) : null;
   if ("cursor" in run) {
     await db`

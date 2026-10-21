@@ -1027,3 +1027,106 @@ test("cumulative amount budget uses validated received usage and reserves every 
   assert.throws(()=>trialBudget([{state:"received",reservedMicroCny:200,usage}]),/exceeds reservation/);
   assert.throws(()=>trialBudget([{state:"received",reservedMicroCny:400_000,usage:{...usage,promptTokens:0.5}}]),/usage/);
 });
+
+// The bounded archive adapter uses the original source/fetch ledger, without importing materials.
+import { columnDbProgress, COLUMN_CURSOR_KEY } from '../backend/column-db-progress.ts';
+import { collectColumnRound, initialColumnProgress } from '../backend/column-progress.ts';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+const bridgeSource='fishery-column-moa';
+async function bridgeFixture() {
+  await sql`DELETE FROM fetch_runs WHERE source_id=${bridgeSource}`;
+  await sql`DELETE FROM sources WHERE id=${bridgeSource}`;
+  const cursor={unrelated:{etag:'keep',nested:[1,2]},[COLUMN_CURSOR_KEY]:initialColumnProgress('moa')};
+  await sql`INSERT INTO sources (id,name,kind,enabled,cursor,last_ok_at) VALUES (${bridgeSource},'archive bridge synthetic','external',false,${sql.json(cursor)},'2026-10-01T00:00:00Z')`;
+  return cursor;
+}
+function bridgeAfter(outcome:'success'|'failure'|'partial') {
+  const after=initialColumnProgress('moa');after.revision=1;after.pendingUrls=['https://yyj.moa.gov.cn/gzdt/202610/t20261020_99001.htm'];
+  after.health={outcome,lastAttemptAt:'2026-10-21T00:00:00Z',lastSuccessAt:null,lastCaptureAt:null,reason:outcome==='success'?null:'synthetic failed acquisition',pending:1,nextPageUrl:after.cursorUrl,coverage:'blocked'};
+  return after;
+}
+test('source bridge failure and partial preserve complete successful cursor and use core backoff once',async()=>{
+  for(const outcome of ['failure','partial'] as const) {
+    const cursor=await bridgeFixture(),before=initialColumnProgress('moa'),after=bridgeAfter(outcome),id=`bridge-${outcome}`;
+    const [original]=await sql`SELECT cursor::text AS bytes FROM sources WHERE id=${bridgeSource}`;
+    await columnDbProgress.intent('moa',id,before);
+    await columnDbProgress.intent('moa',id,before);
+    await columnDbProgress.finish('moa',id,before,after,[],2);
+    const [first]=await sql`SELECT cursor::text AS bytes,last_ok_at,fail_count,health,next_fetch_at FROM sources WHERE id=${bridgeSource}`;
+    assert.equal(first!.bytes,original!.bytes);assert.deepEqual(JSON.parse(first!.bytes),cursor);assert.equal(first!.last_ok_at.toISOString(),'2026-10-01T00:00:00.000Z');assert.equal(first!.fail_count,1);assert.equal(first!.health,'degraded');assert.ok(first!.next_fetch_at);
+    await columnDbProgress.finish('moa',id,before,after,[],2);
+    const [replay]=await sql`SELECT cursor::text AS bytes,last_ok_at,fail_count,next_fetch_at FROM sources WHERE id=${bridgeSource}`;
+    assert.equal(replay!.bytes,first!.bytes);assert.equal(replay!.fail_count,1);assert.equal(replay!.next_fetch_at.toISOString(),first!.next_fetch_at.toISOString());
+    const runs=await sql`SELECT status,found_count,new_count,detail FROM fetch_runs WHERE source_id=${bridgeSource}`;
+    assert.equal(runs.length,1);assert.equal(runs[0]!.status,'failed');assert.equal(runs[0]!.new_count,0);assert.equal(runs[0]!.found_count,2);assert.equal(runs[0]!.detail.outcome,outcome);assert.deepEqual(runs[0]!.detail.fisheryColumnRound.after.pendingUrls,after.pendingUrls);
+  }
+});
+test('source bridge success merges latest unrelated cursor fields and finalized replay never overwrites newer progress',async()=>{
+  await bridgeFixture();const before=initialColumnProgress('moa'),after=bridgeAfter('success');
+  await columnDbProgress.intent('moa','bridge-success',before);
+  await sql`UPDATE sources SET cursor=cursor || '{"concurrentCoreField":{"value":"preserved"}}'::jsonb WHERE id=${bridgeSource}`;
+  await columnDbProgress.finish('moa','bridge-success',before,after,[],3);
+  const [source]=await sql`SELECT cursor,fail_count FROM sources WHERE id=${bridgeSource}`;
+  assert.equal(source!.cursor.concurrentCoreField.value,'preserved');assert.equal(source!.cursor.unrelated.etag,'keep');assert.deepEqual(source!.cursor[COLUMN_CURSOR_KEY],after);assert.equal(source!.fail_count,0);
+  const newer={...after,revision:2};await sql`UPDATE sources SET cursor=jsonb_set(cursor,'{fisheryColumnProgress}',${sql.json(newer)}) WHERE id=${bridgeSource}`;
+  await columnDbProgress.finish('moa','bridge-success',before,after,[],3);
+  assert.deepEqual(await columnDbProgress.load('moa'),newer);
+  await assert.rejects(columnDbProgress.finish('moa','bridge-success',before,{...after,revision:55},[],3),/Finalized run evidence differs/);
+});
+test('source bridge rejects source config/profile changes, cursor CAS conflicts and run-source mismatch',async()=>{
+  await bridgeFixture();const before=initialColumnProgress('moa'),after=bridgeAfter('success');
+  await columnDbProgress.intent('moa','bridge-guards',before);
+  await sql`UPDATE sources SET config='{"changed":true}' WHERE id=${bridgeSource}`;
+  await assert.rejects(columnDbProgress.finish('moa','bridge-guards',before,after,[],1),/binding mismatch/);
+  await sql`UPDATE sources SET config='{}',cursor=jsonb_set(cursor,'{fisheryColumnProgress,revision}','9') WHERE id=${bridgeSource}`;
+  await assert.rejects(columnDbProgress.finish('moa','bridge-guards',before,after,[],1),/cursor changed/);
+  await sql`UPDATE sources SET cursor=jsonb_set(cursor,'{fisheryColumnProgress}',${sql.json(before)}) WHERE id=${bridgeSource}`;
+  await sql`INSERT INTO sources (id,name,kind,enabled) VALUES ('bridge-wrong-source','synthetic','external',false) ON CONFLICT DO NOTHING`;
+  await sql`UPDATE fetch_runs SET source_id='bridge-wrong-source' WHERE detail->'fisheryColumnRound'->>'roundId'='bridge-guards'`;
+  await assert.rejects(columnDbProgress.finish('moa','bridge-guards',before,after,[],1),/binding mismatch/);
+  await sql`UPDATE sources SET cursor=jsonb_set(cursor,'{fisheryColumnProgress,profileHash}',${sql.json('0'.repeat(64))}) WHERE id=${bridgeSource}`;
+  await assert.rejects(columnDbProgress.load('moa'),/profile\/source binding changed/);
+});
+test('source bridge journal reconciliation after core commit does no GET and does not increment failure twice',async()=>{
+  await bridgeFixture();const dataDir=await mkdtemp(path.join(tmpdir(),'source-bridge-'));let requests=0,intentVerified=false;
+  const options={storage:'db' as const,store:columnDbProgress,id:'bridge-crash',dataDir,columns:['moa' as const],limit:1,maxPages:1,wait:async()=>{},fetch:async()=>{
+    requests++;
+    const journal=JSON.parse(await readFile(path.join(dataDir,'fishery-column-progress/rounds/bridge-crash/manifest.json'),'utf8'));
+    assert.equal(journal.sources[0].sourceId,bridgeSource);
+    const [intent]=await sql`SELECT status FROM fetch_runs WHERE source_id=${bridgeSource} AND detail->'fisheryColumnRound'->>'roundId'='bridge-crash'`;
+    assert.equal(intent!.status,'running');
+    await sql.begin(async tx=>{await tx`SELECT id FROM sources WHERE id=${bridgeSource} FOR UPDATE NOWAIT`;});
+    intentVerified=true;throw new Error('synthetic connection failure');
+  }};
+  try {
+    await assert.rejects(collectColumnRound({...options,checkpoint:async stage=>{if(stage==='after-source-commit') throw new Error('synthetic stopped runner');}}),/stopped runner/);
+    assert.equal(intentVerified,true);
+    const journal=JSON.parse(await readFile(path.join(dataDir,'fishery-column-progress/rounds/bridge-crash/manifest.json'),'utf8'));
+    assert.equal(journal.sources[0].sourceId,bridgeSource);assert.equal(journal.sources[0].status,'ready_to_commit');
+    const originalRequests=requests;
+    await collectColumnRound({...options,resume:{acknowledgeStopped:true,reason:'synthetic previous runner has stopped'}});
+    assert.equal(requests,originalRequests);
+    const [source]=await sql`SELECT fail_count,cursor FROM sources WHERE id=${bridgeSource}`;assert.equal(source!.fail_count,1);assert.deepEqual(source!.cursor[COLUMN_CURSOR_KEY],initialColumnProgress('moa'));
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+test('source bridge DB failure never falls back to the offline file cursor or issues GET',async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),'source-bridge-'));let requested=false;
+  try {
+    await mkdir(path.join(dataDir,'fishery-column-progress'));await writeFile(path.join(dataDir,'fishery-column-progress/moa.json'),JSON.stringify(initialColumnProgress('moa')));
+    await assert.rejects(collectColumnRound({storage:'db',store:{...columnDbProgress,load:async()=>{throw new Error('synthetic DB unavailable');}},id:'bridge-unavailable',dataDir,columns:['moa'],limit:1,maxPages:1,fetch:async()=>{requested=true;throw new Error('unexpected GET');}}),/DB unavailable/);
+    assert.equal(requested,false);assert.equal(JSON.parse(await readFile(path.join(dataDir,'fishery-column-progress/moa.json'),'utf8')).revision,0);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+test('source bridge DB progress API reads core state rather than offline cursor',async()=>{
+  await bridgeFixture();await mkdir(path.join(config.dataDir,'fishery-column-progress'),{recursive:true});
+  const file=path.join(config.dataDir,'fishery-column-progress/moa.json');await writeFile(file,JSON.stringify({...initialColumnProgress('moa'),revision:99}));
+  config.devAdmin={displayName:'Synthetic source bridge status reader'};
+  try {
+    const response=await app.inject({method:'GET',url:'/api/admin/fishery/batches'});
+    assert.equal(response.statusCode,200,response.body);assert.equal(response.headers['cache-control'],'no-store');
+    const body=response.json();assert.equal(body.storage,'db');assert.equal(body.progress.find((row:{column:string})=>row.column==='moa').state.revision,0);assert.equal(body.sourceState.find((row:{id:string})=>row.id===bridgeSource).enabled,false);
+    const offline=await app.inject({method:'GET',url:'/api/admin/fishery/batches?storage=file'});assert.equal(offline.json().storage,'file');assert.equal(offline.json().progress.find((row:{column:string})=>row.column==='moa').state.revision,99);
+  } finally {config.devAdmin=null;await rm(file,{force:true});}
+});

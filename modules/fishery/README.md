@@ -90,3 +90,10 @@ test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工
 业务指南显示“编审整理／最终审核”。历史 `origin=human_editorial` 和 `human_decision` 字段名是既有工作流与来源分类，不证明真人编写或真人专家参与；原 actor、原因、来源证据与历史决定不回填或重写。旧决定未显式记录执行身份时显示“执行身份未知（未记录）”，即使账号或角色含 human 也不推断真人。
 
 正常鉴权与 CSRF 管理员决定接口可提交 `executorKind=human|authorized_agent|unspecified`；省略为 unspecified。后台弹窗可主动声明“真人手动审核”或“授权代理审核”，默认未知。此项为审核执行者声明，不是身份认证或专家资质证明，不授予新权限。读者仅接收白名单执行身份类别，不接收审核账号、原因或其他身份信息。来源、内容、版本与当前 AI 回执哈希绑定及全部可读门槛保持原有规则。
+### 受控轮次接入原信源账本
+
+`collect-columns.ts --incremental` 默认 `--storage file`，仅用于指定私有目录中的隔离归档验收。明确选择 `--storage db` 才读取既有 `fishery-column-moa/fujian/iotc` 的 `sources.cursor.fisheryColumnProgress`；缺失来源、数据库故障或游标/配置冲突立即停止，不回退文件游标，也不创建或启用来源。每轮仍有每源1–5文章、1–3列表页的上限，没有新增队列消费者或定时任务。
+
+数据库模式在GET前将来源绑定意图写入本轮journal，再使用原 `fetch_runs.detail` 登记相同轮次/来源的幂等意图。GET期间不持数据库事务；结束时锁定来源和运行记录，核对配置、游标及来源绑定，复用原 `recordFetch` 更新健康、失败次数和退避。只有完整成功才合并当前整份来源游标中的模块命名空间；失败/部分完成保留整份成功游标和 `last_ok_at`，待完成证据仅留在运行detail和归档journal，下一轮可保守重复请求。归档候选不是新入库素材，`new_count` 始终为0。进程在数据库提交后中断时，原 `--resume --acknowledge-stopped --reason ...` 可对账，已结束的运行不会再次计数或覆盖较新进度。
+
+`--status --storage db --data-dir <private-dir>` 输出真实来源健康、退避和数据库游标；`--storage file` 明确显示隔离文件进度。既有管理员只读接口 `GET /api/admin/fishery/batches?storage=db` 返回同一数据库进度及 `sourceState`；省略参数读取数据库模式；离线验收须明确指定 `?storage=file`。目录中的不可变批次和journal是证据/恢复输入，不是数据库模式的第二份权威游标。运行仍不导入、审核、发布或调用模型。
