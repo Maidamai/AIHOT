@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { setVisibility } from "@aihot/backend/admin/content";
 import { publicationQueue, enqueuePublication, type PublicationJob } from "../backend/publication-queue.ts";
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
@@ -483,4 +486,52 @@ test("normal final approval durably schedules non-paid publication with bounded 
     const stale = await boss.send(publicationQueue.name, next!.data as PublicationJob); await wait(stale!);
     assert.equal((await loadItemDetail(articleId)).kind, "not_found");
   } finally { await release(); installModules([]); }
+});
+
+
+test("real consumer entry installs only configured modules and preserves unknown-date publication on replay", async () => {
+  const boss = await getBoss({ schedule: false, supervise: false });
+  const old = await sql`SELECT id FROM pgboss.job WHERE name=${publicationQueue.name} AND state IN ('created','retry')`;
+  if (old.length) await boss.cancel(publicationQueue.name, old.map(row => row.id));
+  const f = await fixture(), approved = await finalApproval(await draft(f.id), "synthetic-entry-reviewer");
+  const unapproved = await fixture(); await draft(unapproved.id);
+  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  const bootstrap = await syncFisheryPublications("synthetic-entry-bootstrap");
+  const articleId = bootstrap.rows.find(row => row.itemId === approved.id)!.articleId;
+  const beforePool = await loadPool({channel:"all",category:null,tag:null});
+  const receipts = (await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+  const [job] = await sql`SELECT id,data FROM pgboss.job WHERE name=${publicationQueue.name} AND data->>'itemId'=${approved.id} ORDER BY created_on DESC LIMIT 1`;
+  const preload = (disabled: boolean) => `data:text/javascript,${encodeURIComponent(`
+    globalThis.fetch=async()=>{throw new Error("Consumer entry test forbids network/model calls");};
+    ${disabled ? `const {registerHooks}=await import("node:module");registerHooks({resolve(spec,context,next){if(spec==="@aihot/site/modules/server")return {url:"data:text/javascript,export const SERVER_MODULES=[]",shortCircuit:true};return next(spec,context);}});` : ""}
+  `)}`;
+  const entry = fileURLToPath(new URL("../scripts/consume-flows.ts", import.meta.url));
+  const child = spawn(process.execPath,["--import",preload(false),entry],{env:process.env,stdio:["ignore","pipe","pipe"]});
+  let output="";child.stdout.on("data",data=>{output+=data;});child.stderr.on("data",data=>{output+=data;});
+  const exit = once(child,"exit");
+  const waitFor = async (check:()=>Promise<boolean>) => {
+    const end=Date.now()+20000;
+    while(Date.now()<end) {if(await check()) return; if(child.exitCode!==null) assert.fail(`Consumer stopped before publication: ${output}`);await new Promise(resolve=>setTimeout(resolve,50));}
+    assert.fail("Consumer entry did not finish the non-paid replay");
+  };
+  try {
+    await waitFor(async()=>output.includes("fishery manual processor started"));
+    await waitFor(async()=>(await sql`SELECT state FROM pgboss.job WHERE name=${publicationQueue.name} AND id=${job!.id}`)[0]?.state==="completed");
+    const [published]=await sql`SELECT p.eligible,p.published_at,a.publication_time,a.backfill FROM publications p JOIN articles a ON a.id=p.article_id WHERE p.article_id=${articleId}`;
+    assert.equal(published!.eligible,true);assert.equal(published!.published_at,null);assert.equal(published!.publication_time,null);assert.equal(published!.backfill,true);
+    const afterPool=await loadPool({channel:"all",category:null,tag:null});
+    assert.equal(afterPool.total,beforePool.total);assert.ok(afterPool.items.some(item=>item.id===articleId));
+    assert.equal((await sql`SELECT 1 FROM fishery_publication_bindings WHERE document_id=${unapproved.id}`).length,0);
+    await withdraw(f.id,{expectedRevision:1,reason:"Synthetic real-entry withdrawal"},"synthetic-reviewer");
+    const stale=await boss.send(publicationQueue.name,job!.data as PublicationJob);
+    await waitFor(async()=>(await sql`SELECT state FROM pgboss.job WHERE name=${publicationQueue.name} AND id=${stale}`)[0]?.state==="completed");
+    assert.ok(!(await loadPool({channel:"all",category:null,tag:null})).items.some(item=>item.id===articleId));
+    assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,receipts);
+  } finally {child.kill("SIGTERM");await exit;installModules([]);}
+  const jobsBefore=(await sql`SELECT count(*)::int AS n FROM pgboss.job`)[0]!.n;
+  const disabled=spawn(process.execPath,["--import",preload(true),entry],{env:process.env,stdio:["ignore","pipe","pipe"]});
+  let disabledOutput="";disabled.stdout.on("data",data=>{disabledOutput+=data;});disabled.stderr.on("data",data=>{disabledOutput+=data;});
+  const [code]=await once(disabled,"exit");
+  assert.equal(code,1);assert.match(disabledOutput,/Fishery module is not enabled/);assert.doesNotMatch(disabledOutput,/manual processor started/);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.job`)[0]!.n,jobsBefore);
 });

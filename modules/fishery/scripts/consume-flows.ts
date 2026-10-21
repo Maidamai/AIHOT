@@ -1,3 +1,5 @@
+import { installModules } from "@aihot/backend/modules";
+import { SERVER_MODULES } from "@aihot/site/modules/server";
 // Dedicated manual queue consumer. No general worker or schedules; only publication continuation has bounded non-paid recovery.
 import { closeDb } from "@aihot/backend/db";
 import { getBoss, stopBoss } from "@aihot/backend/jobs/queue";
@@ -14,6 +16,8 @@ const requestStop=()=>{stopRequested=true;if(ready) void shutdown().catch(()=>{p
 process.on("SIGTERM",requestStop);
 process.on("SIGINT",requestStop);
 try {
+  installModules(SERVER_MODULES);
+  if(!SERVER_MODULES.some(module=>module.name==="fishery")) throw new Error("Fishery module is not enabled for this site");
   const boss=await getBoss({schedule:false,supervise:false});
   release=await registerManualFlowConsumer(boss,undefined,{onLeaseLost:()=>{process.exitCode=1;requestStop();}});
   ready=true;
