@@ -38,6 +38,17 @@ const api = fakeApi(url => {
   if (url.pathname === "/api/site/timeline") return { filters, cards: category === "equipment" ? [{ key: "real-selected", anchorAt: at, item: feedItem({ id: "real-selected", title: "合成测试：已有精选", category: "equipment" }), group: null }] : [], nextCursor: null, hot: null, dayCounts: {} };
   if (url.pathname === "/api/site/pool") {
     const q = url.searchParams.get("q");
+    if (url.searchParams.get("tag") === "synthetic-date-basis") {
+      // The original publication is in 2024; capture/freshness is explicitly in 2026.
+      const capturedAt = "2026-10-21T02:00:00Z";
+      const items = [
+        feedItem({ ...article, id: "synthetic-published", title: "合成：原文日期并非收录日期", publishedAt: "2024-06-11T00:00:00Z", timelineAt: "2024-06-11T00:00:00Z" }),
+        feedItem({ ...guideCard, id: "synthetic-collected", timelineAt: capturedAt }),
+        feedItem({ ...article, id: "synthetic-mixed-published", publishedAt: "2026-10-20T00:00:00Z", timelineAt: "2026-10-20T00:00:00Z" }),
+        feedItem({ ...guideCard, id: "synthetic-mixed-collected", timelineAt: "2026-10-20T00:00:00Z" }),
+      ];
+      return { filters: { ...filters, tag: "synthetic-date-basis", q: null, tab: "time" }, items, page: 1, pageCount: 1, total: items.length, todayCount: 0, freshness: capturedAt };
+    }
     const midnight = url.searchParams.get("tag") === "synthetic-midnight";
     const timedGuide = midnight ? { ...guideCard, reference: { ...guideCard.reference!, checkedAt: "2026-11-01T15:59:59Z", deadlineDate: "2026-11-01" } } : guideCard;
     const items = (q || url.searchParams.get("tag")) ? [timedGuide] : category === "policy" ? [article] : [article, guideCard];
@@ -159,5 +170,24 @@ test("synthetic guide card crosses Beijing deadline midnight and empty summaries
     await expect(page.getByText("此汇总入口尚未启用，暂无已发布期刊。", { exact: false })).toBeVisible();
     await page.getByRole("link", { name: "阅读行业动态与资料 →", exact: true }).click();
     await expect(page.getByRole("link", { name: guideCard.title, exact: true })).toBeVisible();
+  } finally { await context.close(); }
+});
+
+
+test("synthetic publication-day groups are not relabeled as their later collection day", async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  try {
+    await visit(page, web.origin + "/all?tag=synthetic-date-basis");
+    const published = page.getByRole("region", { name: "2024-06-11", exact: true });
+    await expect(published.getByText("原文发布日期", { exact: true })).toBeVisible();
+    await expect(published.getByText("收录日期 · 不代表原文发布或更新", { exact: true })).toHaveCount(0);
+    const collected = page.getByRole("region", { name: "2026-10-21", exact: true });
+    await expect(collected.getByText("收录日期 · 不代表原文发布或更新", { exact: true })).toBeVisible();
+    await expect(collected).toContainText("原文发布日期未知");
+    const mixed = page.getByRole("region", { name: "2026-10-20", exact: true });
+    await expect(mixed.getByText("原文发布／收录日期 · 请结合各条原文日期阅读", { exact: true })).toBeVisible();
+    await expect(mixed).toContainText("原文发布于 2026-10-20");
+    await expect(mixed).toContainText("原文发布日期未知");
   } finally { await context.close(); }
 });
