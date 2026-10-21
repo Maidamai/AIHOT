@@ -1,3 +1,4 @@
+import { BusinessTimeliness, useBusinessNow } from "./business-timeliness.tsx";
 import { Link } from "react-router";
 import { adminGet } from "@aihot/web/lib/admin.server";
 import type { ComponentProps, LoaderArgs, MetaFunction } from "@aihot/web/lib/route-types";
@@ -10,10 +11,11 @@ export const meta:MetaFunction<typeof loader>=({loaderData})=>[{title:`${loaderD
 export async function loader({request,params}:LoaderArgs){return adminGet<BusinessGuideReaderItem>(request,"/api/admin/fishery/business-reader/"+encodeURIComponent(params.id!));}
 function Evidence({ids,item}:{ids:string[];item:BusinessGuideReaderItem}){return ids.length?<details><summary>查看原文短引与证据（{ids.length}）</summary>{ids.map(id=>{const e=item.evidence[id];return e?<figure className="reader-quote" key={id}><blockquote>{e.quote}</blockquote><figcaption><SafeSource url={e.url}>原文第 {e.paragraph} 段{e.page!==null?` · PDF 第 ${e.page} 页`:""}</SafeSource></figcaption></figure>:<p key={id}>证据暂不可用</p>;})}</details>:null;}
 export default function BusinessGuide({loaderData:d}:ComponentProps<typeof loader>){
-  useFreshMaterial();const p=d.payload;
+  useFreshMaterial();const p=d.payload,now=useBusinessNow(d.timeliness.checkedAt);
   const publication=businessPublication(d),historical=isHistorical(publication.date,d.verifiedAt);
   const fields:[[string,{state:string;value:string|null;evidence:string[]}],...[string,{state:string;value:string|null;evidence:string[]}][]]=[["适用对象",p.audience],["事项与机会",p.opportunity],["限制条件",p.restrictions],["材料清单",p.materials],["国家与地区",p.applicability.countriesOrRegions],["船旗",p.applicability.flagStates],["鱼种",p.applicability.species],["渔法",p.applicability.fishingMethods]];
   return <article className="reader-article"><Link className="reader-back" to={"/fishery/topics?topicId="+p.topicId}>← 返回经营主题</Link><div className="reader-card-labels"><span className="reader-category">{BUSINESS_KINDS[p.kind]}</span><span className="reader-age">人工编审</span>{historical&&<span className="reader-age">历史资料（原文距核验日已满7日）</span>}</div><h1>{p.title.value}</h1><div className="reader-article-byline"><span>{d.source.name}</span><span>{publication.label} <BusinessDate value={publication.date}/></span><span>核验日 {d.verifiedAt.slice(0,10)}</span></div>
+    <BusinessTimeliness item={d} now={now}/>
     <p className="business-notice">{d.verification.label}。尚未确定对具体经营者的法律适用性；不据此判断能否申报或捕捞。原文日期及历史背景应单独核对，核验日不代表原文更新。</p>
     <div className="reader-article-layout"><div className="reader-article-content"><div className="business-fields"><section className="business-field"><h2>指南标题依据</h2><Evidence ids={p.title.evidence} item={d}/></section><section className="business-field"><h2>内容摘要</h2>{p.summary.map((s,i)=><div key={i}><p className="reader-summary-preview">{s.value}</p><Evidence ids={s.evidence} item={d}/></div>)}</section>
     {fields.map(([name,f])=><section className="business-field" key={name}><h2>{name}</h2><p>{f.state==="documented"?f.value:<BusinessUnknown/>}</p><Evidence ids={f.evidence} item={d}/></section>)}

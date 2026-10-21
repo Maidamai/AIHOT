@@ -1,3 +1,4 @@
+import { BusinessTimeliness, useBusinessNow } from "./business-timeliness.tsx";
 import { Link } from "react-router";
 import { adminGet } from "@aihot/web/lib/admin.server";
 import type { ComponentProps, LoaderArgs, MetaFunction } from "@aihot/web/lib/route-types";
@@ -17,7 +18,7 @@ export async function loader({request}:LoaderArgs) {
   return {business,articles,topicId,kind};
 }
 export default function BusinessTopics({loaderData:d}:ComponentProps<typeof loader>) {
-  useFreshMaterial();
+  useFreshMaterial();const now=useBusinessNow(d.business.rows[0]?.timeliness.checkedAt??"1970-01-01T00:00:00Z");
   const href=(topicId=d.topicId,kind=d.kind,page=1)=>"/fishery/topics?"+new URLSearchParams({...topicId?{topicId}:{},...kind?{kind}:{},page:String(page)});
   const pagination=d.kind==="dynamic_article"?d.articles:d.business;
   const rows=d.kind==="dynamic_article"?[]:d.business.rows,articles=d.topicId?[]:d.articles?.rows??[];
@@ -26,7 +27,7 @@ export default function BusinessTopics({loaderData:d}:ComponentProps<typeof load
     <div className="reader-list-layout"><aside className="reader-filters"><h2>经营主题</h2><nav aria-label="经营主题"><Link to={href("")} aria-current={!d.topicId?"page":undefined}>全部主题</Link>{d.business.topics.map(t=><Link key={t.id} to={href(t.id)} aria-current={d.topicId===t.id?"page":undefined}>{t.label}<span>{t.count?`${t.count} 篇`:"待补充"}</span></Link>)}</nav></aside>
       <section className="reader-results" aria-label="主题内容"><nav className="business-kind-filter" aria-label="内容类型"><Link to={href(d.topicId,"")} aria-current={!d.kind?"page":undefined}>全部类型</Link>{Object.entries(BUSINESS_KINDS).map(([key,label])=><Link key={key} to={href(d.topicId,key)} aria-current={d.kind===key?"page":undefined}>{label}</Link>)}</nav>
         {d.topicId&&<p className="business-topic-note">{d.business.topics.find(t=>t.id===d.topicId)?.emptyMessage??"仅展示明确归入此主题、当前可读的人工编审内容。"} 动态文章尚未建立人工主题关联。</p>}
-        {rows.map(r=><article className="reader-card" key={r.id}><div className="reader-card-labels"><span className="reader-category">{BUSINESS_KINDS[r.payload.kind]}</span><span className="reader-age">人工编审</span>{isHistorical(businessPublication(r).date,r.verifiedAt)&&<span className="reader-age">历史资料</span>}</div><h2><Link to={"/fishery/guides/"+r.id}>{r.payload.title.value}</Link></h2><p className="reader-summary-preview">{r.payload.summary[0]?.value}</p><div className="reader-card-bottom"><span>{r.source.name}</span><span>{businessPublication(r).label} <BusinessDate value={businessPublication(r).date}/></span><span>核验日 {r.verifiedAt.slice(0,10)}</span></div></article>)}
+        {rows.map(r=><article className="reader-card" key={r.id}><div className="reader-card-labels"><span className="reader-category">{BUSINESS_KINDS[r.payload.kind]}</span><span className="reader-age">人工编审</span>{isHistorical(businessPublication(r).date,r.verifiedAt)&&<span className="reader-age">历史资料</span>}</div><h2><Link to={"/fishery/guides/"+r.id}>{r.payload.title.value}</Link></h2><BusinessTimeliness item={r} now={now}/><p className="reader-summary-preview">{r.payload.summary[0]?.value}</p><div className="reader-card-bottom"><span>{r.source.name}</span><span>{businessPublication(r).label} <BusinessDate value={businessPublication(r).date}/></span><span>核验日 {r.verifiedAt.slice(0,10)}</span></div></article>)}
         {articles.map(r=><article className="reader-card" key={r.id}><div className="reader-card-labels"><span className="reader-category">动态文章 · 已核对摘要</span><span className="reader-age">{ageLabel(r)}</span></div><h2><Link to={"/fishery/"+r.id}>{r.title}</Link></h2><div className="reader-card-bottom"><span>{r.source.name}</span><span>{originalDate(r)}</span></div></article>)}
         {!rows.length&&!articles.length&&<div className="reader-empty"><h2>此类内容待补充</h2><p>经人工整理、证据核对和批准后显示。其他类型的资料不代替业务指南。</p><Link to={href("","")}>查看全部主题与类型</Link></div>}
         {pagination&&pagination.total>pagination.limit&&<nav className="reader-pagination" aria-label="主题分页">{pagination.page>1?<Link to={href(d.topicId,d.kind,pagination.page-1)}>上一页</Link>:<span/>}<span>第 {pagination.page} 页</span>{pagination.page*pagination.limit<pagination.total?<Link to={href(d.topicId,d.kind,pagination.page+1)}>下一页</Link>:<span/>}</nav>}
