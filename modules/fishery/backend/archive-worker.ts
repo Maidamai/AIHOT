@@ -77,6 +77,7 @@ async function finishRound(revision:string,id:string,settlement?:{runId?:number|
     state.current=null;state.lastRound=id;state.heartbeatAt=new Date().toISOString();
     // Start spacing at completion, so even slow GETs never shorten the hourly bound.
     state.nextAt=new Date(Date.now()+state.intervalSeconds*1000).toISOString();
+    if(settlement?.reason)state.pausedReason=null;
     if(Number(s.fail_count)>=3)state.pausedReason='Three consecutive source failures; inspect before explicit reauthorization';
     else if(state.mode==='validation'&&state.claimed>=2)state.pausedReason='Validation two-round bound reached';
     if(settlement){
@@ -134,7 +135,7 @@ export async function reconcileArchive(reason:string,options:{fetch?:ColumnFetch
       await rmdir(roundDir).catch(error=>{if(error.code!=='ENOENT')throw error;});
     }
     const round=await collectColumnRound({id:state.current.id,dataDir:config.dataDir,columns:['moa'],limit:5,maxPages:1,storage:'db',store:columnDbProgress,...(hasManifest?{resume:{acknowledgeStopped:true as const,reason}}:{}),...options});
-    const imports:Awaited<ReturnType<typeof importBatch>>[]=[],retainedInterrupted:string[]=[];for(const batch of round.sources[0].batches){const child=await readBatch(config.dataDir,batch);if(child.status==='complete')imports.push(await importBatch(batch,'fishery-archive:explicit-reconciliation'));else retainedInterrupted.push(batch);}
+    const imports:Awaited<ReturnType<typeof importBatch>>[]=[],retainedInterrupted:string[]=[];for(const batch of round.sources[0].batches){if(round.sources[0].retainedChildren?.some(child=>child.id===batch)){retainedInterrupted.push(batch);continue;}const child=await readBatch(config.dataDir,batch);if(child.status==='complete')imports.push(await importBatch(batch,'fishery-archive:explicit-reconciliation'));else retainedInterrupted.push(batch);}
     await finishRound(state.revision,state.current.id,{outcome:round.outcome,imports,reason,retainedInterrupted});return {round,imports,retainedInterrupted,modelCalls:0};
   });
 }

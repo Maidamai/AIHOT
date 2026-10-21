@@ -24,7 +24,7 @@ export interface ColumnProgressStore {
   intent(column:ColumnId,roundId:string,before:ColumnProgress):Promise<void>;
   finish(column:ColumnId,roundId:string,before:ColumnProgress,after:ColumnProgress,batches:string[],found:number):Promise<void>;
 }
-interface RoundSource { sourceId?:string; column:ColumnId; status:"running"|"ready_to_commit"|"finished"; before:ColumnProgress; after:ColumnProgress|null; batches:string[]; health:z.infer<typeof healthSchema>|null; }
+interface RoundSource { retainedChildren?:{id:string;reason:"missing_manifest"}[]; sourceId?:string; column:ColumnId; status:"running"|"ready_to_commit"|"finished"; before:ColumnProgress; after:ColumnProgress|null; batches:string[]; health:z.infer<typeof healthSchema>|null; }
 export interface ColumnRound { storage?:"file"|"db"; version:"fishery-column-round/1"; id:string; columns:ColumnId[]; limit:number; maxPages:number; startedAt:string; finishedAt:string|null; status:"running"|"finished"; outcome:"success"|"partial"|"failure"|null; sources:RoundSource[]; recoveries:{at:string;reason:string}[]; }
 const root=(dataDir:string)=>path.resolve(dataDir,"fishery-column-progress");
 const stateFile=(dataDir:string,column:ColumnId)=>path.join(root(dataDir),`${column}.json`);
@@ -82,7 +82,7 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
     reason:error??(failed.length?`${failed.length} article acquisition/parse failure(s); cursor not advanced`:null),pending:next.pendingUrls.length,nextPageUrl:next.cursorUrl,coverage};
   return next;
 }
-const roundSchema=z.object({storage:z.enum(["file","db"]).optional(),version:z.literal("fishery-column-round/1"),id:batchIdSchema,columns:z.array(columnIdSchema).min(1).max(3),limit:z.int().min(1).max(5),maxPages:z.int().min(1).max(3),startedAt:stamp,finishedAt:stamp.nullable(),status:z.enum(["running","finished"]),outcome:outcome.nullable(),recoveries:z.array(z.strictObject({at:stamp,reason:z.string().min(1).max(1000)})).max(20),sources:z.array(z.object({sourceId:z.string().optional(),column:columnIdSchema,status:z.enum(["running","ready_to_commit","finished"]),before:stateSchema,after:stateSchema.nullable(),batches:z.array(batchIdSchema).max(3),health:healthSchema.nullable()})).max(3)});
+const roundSchema=z.object({storage:z.enum(["file","db"]).optional(),version:z.literal("fishery-column-round/1"),id:batchIdSchema,columns:z.array(columnIdSchema).min(1).max(3),limit:z.int().min(1).max(5),maxPages:z.int().min(1).max(3),startedAt:stamp,finishedAt:stamp.nullable(),status:z.enum(["running","finished"]),outcome:outcome.nullable(),recoveries:z.array(z.strictObject({at:stamp,reason:z.string().min(1).max(1000)})).max(20),sources:z.array(z.object({retainedChildren:z.array(z.strictObject({id:batchIdSchema,reason:z.literal("missing_manifest")})).max(3).optional(),sourceId:z.string().optional(),column:columnIdSchema,status:z.enum(["running","ready_to_commit","finished"]),before:stateSchema,after:stateSchema.nullable(),batches:z.array(batchIdSchema).max(3),health:healthSchema.nullable()})).max(3)});
 async function readRound(file:string,id:string):Promise<ColumnRound> {
   if((await stat(file)).size>4*1024*1024) throw new Error("Round checkpoint too large");
   const r=roundSchema.parse(JSON.parse(await readFile(file,"utf8")));
@@ -91,6 +91,7 @@ async function readRound(file:string,id:string):Promise<ColumnRound> {
     if(r.storage==="db"&&s.sourceId!==`fishery-column-${s.column}`) throw new Error("Round source intent mismatch");
     if(!r.columns.includes(s.column)||s.before.column!==s.column||s.after&&s.after.column!==s.column) throw new Error("Round source binding mismatch");
     columnPageIndex(s.column,s.before.cursorUrl);if(s.after) columnPageIndex(s.column,s.after.cursorUrl);
+    if(s.retainedChildren?.some(child=>!s.batches.includes(child.id))) throw new Error("Retained child identity mismatch");
     if(s.batches.some((b,i)=>b!==`${id}-${s.column}-p${i}`)) throw new Error("Round page identity mismatch");
   }
   return r;
@@ -159,6 +160,15 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
           const batchId=`${id}-${column}-p${index}`;let batch:ColumnBatch;
           if(!entry.batches.includes(batchId)) {entry.batches.push(batchId);await save();}
           const captured=path.join(batchRoot(options.dataDir),batchId,"manifest.json");
+          if(!await exists(captured)&&await exists(path.dirname(captured))) {
+            if(!options.resume)throw new Error(`Interrupted child ${batchId} has no manifest; stopped-runner reconciliation required`);
+            // Directory creation precedes the first child manifest. Never rebuild this unknown
+            // archive in place or infer zero requests from the absent manifest.
+            entry.retainedChildren=[...(entry.retainedChildren??[]).filter(child=>child.id!==batchId),{id:batchId,reason:"missing_manifest"}];
+            working.health={outcome:"failure",lastAttemptAt:new Date().toISOString(),lastSuccessAt:entry.before.health?.lastSuccessAt??null,lastCaptureAt:lastCapture,
+              reason:`Interrupted child ${batchId} retained without manifest; no HTTP or import during reconciliation; start a new bounded round for unfinished work`,pending:working.pendingUrls.length,nextPageUrl:working.cursorUrl,coverage:"blocked"};
+            anyFailure=true;break;
+          }
           if(await exists(captured)) {
             batch=await readBatch(options.dataDir,batchId);
             if(batch.status!=="complete") {
@@ -188,7 +198,7 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
       if(!equal(current,entry.before)&&!equal(current,entry.after)) throw new Error("Column state changed outside this preserved round; reconciliation required");
       await guard();
       await options.checkpoint?.("before-source-commit");
-      if(options.store) await options.store.finish(column,id,entry.before,entry.after,entry.batches,(await Promise.all(entry.batches.map(async id=>(await readBatch(options.dataDir,id)).items.length))).reduce((a,b)=>a+b,0));
+      if(options.store) await options.store.finish(column,id,entry.before,entry.after,entry.batches,(await Promise.all(entry.batches.map(async id=>entry.retainedChildren?.some(child=>child.id===id)?0:(await readBatch(options.dataDir,id)).items.length))).reduce((a,b)=>a+b,0));
       else if(!equal(current,entry.after)) await atomic(stateFile(options.dataDir,column),entry.after);
       await options.checkpoint?.("after-source-commit");
       entry.status="finished";await save();

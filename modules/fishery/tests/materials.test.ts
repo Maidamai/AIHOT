@@ -1250,7 +1250,7 @@ test('explicit recovery handles queued and pre-manifest stopped rounds; disable 
     const disabled=await configureArchive({enabled:false,mode:'validation',runId:`recover-${stage}`});assert.equal(disabled.current!.id,job.roundId);assert.equal(disabled.claimed,1);assert.equal((await archiveStatus()).enabled,false);
     await configureArchive({enabled:true,mode:'validation',runId:`recover-${stage}`,intervalSeconds:10});
     const result=await reconcileArchive('Synthetic stopped runner before its first journal/GET',{wait:async()=>{},fetch:async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([stage==='queued'?30:31]):archiveBody(30)})});
-    assert.equal(result.round.id,job.roundId);assert.equal(result.round.outcome,'success');assert.equal((await archiveStatus()).currentRound,null);assert.equal((await archiveStatus()).validationClaimed,1);
+    assert.equal(result.round.id,job.roundId);assert.equal(result.round.outcome,'success');assert.equal((await archiveStatus()).currentRound,null);assert.equal((await archiveStatus()).validationClaimed,1);assert.equal((await archiveStatus()).pausedReason,null);
   }}finally{await b.stop({graceful:false});}
 });
 test('interrupted child remains unchanged while explicit reconciliation closes failed round without importing running batch',async()=>{
@@ -1304,4 +1304,35 @@ test('lease loss after journal temporary write blocks rename and preserves expli
   assert.equal(gets,0);await assert.rejects(readFile(path.join(config.dataDir,'fishery-column-progress','rounds',id,'manifest.json'),'utf8'),{code:'ENOENT'});
   const [s]=await sql`SELECT cursor,fail_count FROM sources WHERE id=${bridgeSource}`;assert.deepEqual(s.cursor,{});assert.equal(s.fail_count,0);
   assert.ok(JSON.parse(await readFile(path.join(config.dataDir,'fishery-column-progress/lock/owner.json'),'utf8')).roundId===id);
+});
+test('child directory without first manifest is retained and settled once without GET or import; next round uses unchanged cursor',async()=>{
+  await archiveFixture();const b=await testArchiveBoss();let gets=0;
+  try{
+    const c=await configureArchive({enabled:true,mode:'validation',runId:'child-before-manifest',intervalSeconds:10}),job=await claimArchive(b,c.revision);
+    const childId=`${job.roundId}-moa-p0`,childDir=path.join(config.dataDir,'fishery-batches',childId),sentinel=Buffer.from('ISOLATED TEST FIXTURE partial raw evidence before first child manifest');
+    const [before]=await sql`SELECT cursor::text AS bytes,last_ok_at FROM sources WHERE id=${bridgeSource}`;
+    const [observed]=await sql`SELECT count(*) AS count FROM fishery_observations`;
+    await sql`UPDATE settings SET value=jsonb_set(value,'{current,stage}','"collecting"') WHERE key=${ARCHIVE_KEY}`;
+    await sql`INSERT INTO job_runs(job,detail) VALUES (${ARCHIVE_QUEUE},${sql.json({roundId:job.roundId,revision:c.revision})})`;
+    let injected=false;
+    await assert.rejects(collectColumnRound({id:job.roundId,dataDir:config.dataDir,columns:['moa'],limit:5,maxPages:1,storage:'db',store:columnDbProgress,fetch:async()=>{gets++;throw new Error('no initial GET');},checkpoint:async stage=>{
+      if(stage!=='before-journal-rename'||injected)return;
+      const intent=await sql`SELECT id FROM fetch_runs WHERE source_id=${bridgeSource} AND detail->'fisheryColumnRound'->>'roundId'=${job.roundId}`;
+      if(!intent.length)return;
+      injected=true;await mkdir(path.join(childDir,'raw'),{recursive:true});await mkdir(path.join(childDir,'body'));await writeFile(path.join(childDir,'raw','retained-partial.bin'),sentinel);
+      throw new Error('Synthetic crash after child directories and before first manifest');
+    }}),/before first manifest/);
+    assert.equal(injected,true);assert.equal(gets,0);
+    const result=await reconcileArchive('Synthetic previous worker stopped with a child directory but no child manifest',{fetch:async()=>{gets++;throw new Error('reconciliation must not GET');}});
+    assert.equal(result.round.outcome,'failure');assert.deepEqual(result.retainedInterrupted,[childId]);assert.deepEqual(result.round.sources[0].retainedChildren,[{id:childId,reason:'missing_manifest'}]);assert.deepEqual(result.imports,[]);assert.equal(gets,0);
+    await assert.rejects(readFile(path.join(childDir,'manifest.json')),{code:'ENOENT'});assert.deepEqual(await readFile(path.join(childDir,'raw','retained-partial.bin')),sentinel);
+    const [after]=await sql`SELECT cursor::text AS bytes,last_ok_at,fail_count FROM sources WHERE id=${bridgeSource}`;assert.equal(after.bytes,before.bytes);assert.equal(after.last_ok_at,before.last_ok_at);assert.equal(after.fail_count,1);assert.equal((await sql`SELECT count(*) AS count FROM fishery_observations`)[0].count,observed.count);
+    const [run]=await sql`SELECT status,found_count,new_count,detail FROM fetch_runs WHERE detail->'fisheryColumnRound'->>'roundId'=${job.roundId}`;assert.equal(run.status,'failed');assert.equal(run.found_count,0);assert.equal(run.new_count,0);assert.match(run.detail.fisheryColumnRound.after.health.reason,/without manifest/);
+    assert.equal((await sql`SELECT id FROM job_runs WHERE job=${ARCHIVE_QUEUE} AND status='running' AND detail->>'roundId'=${job.roundId}`).length,0);
+    await collectColumnRound({id:job.roundId,dataDir:config.dataDir,columns:['moa'],limit:5,maxPages:1,storage:'db',store:columnDbProgress,resume:{acknowledgeStopped:true,reason:'Synthetic finalized missing-manifest replay is read only'},fetch:async()=>{gets++;throw new Error('no replay GET');}});
+    assert.equal(gets,0);assert.equal((await sql`SELECT fail_count FROM sources WHERE id=${bridgeSource}`)[0].fail_count,1);
+    await dueArchive();const next=await claimArchive(b,c.revision);
+    await runArchiveJob(next,{wait:async()=>{},fetch:async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([41]):archiveBody(41)};}});
+    assert.equal(gets,3);assert.ok((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${archiveUrl(41)}`).length);assert.deepEqual(await readFile(path.join(childDir,'raw','retained-partial.bin')),sentinel);
+  }finally{await b.stop({graceful:false});}
 });
