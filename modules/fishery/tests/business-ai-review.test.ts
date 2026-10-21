@@ -98,11 +98,32 @@ test("whole source and guide are isolated from human metadata, oversized wire fa
   assert.equal(JSON.parse(String(request.user)).source.body, body);
   assert.equal(String(request.user).includes("PRIVATE_REASON"), false);
   assert.equal(String(request.user).includes("PRIVATE_ACTOR"), false);
+  const source = JSON.parse(String(request.user)), catalog = buildEvidenceCatalog(input);
+  const expectedIds = new Set(guideAIClaims(p).flatMap(c => c.evidenceIds));
+  assert.equal(source.candidateAnchors.length, expectedIds.size);
+  for (const anchor of source.candidateAnchors) {
+    const span = catalog.spans[anchor.alias]!;
+    assert.equal(anchor.id, span.id); assert.equal(anchor.quote, span.quote); assert.equal(anchor.quote, body.slice(span.start, span.end));
+  }
+  assert.equal(source.source.evidenceCatalog.spans.length, catalog.spans.length);
   const full = body + "\n" + Array.from({ length: 180 }, (_, i) => `${i}公开全文限定条件${"条件".repeat(100)}。`).join("\n");
   assert.throws(() => buildGuideAIReviewRequest({ body: full, bodySha256: sha256(full), observationRevision: 1 }, p), /wire capacity/);
 });
 
-test("compact wire retains all seven omission checks, rejects invalid aliases/indices, and calculates escaped worst-case envelope", () => {
+test("scripted counterexample judgments block expanded subjects, omitted exceptions and day/month mismatch; these are output-gate tests, not model semantic proof", () => {
+  for (const [sourceText, candidateText, outcome] of [
+    ["仅适用远洋渔业企业。", "适用所有企业。", "contradicted"],
+    ["应申报，但紧急救援除外。", "全部情况均应申报。", "contradicted"],
+    ["应当提前六十日提出申请。", "应当提前六十个月提出申请。", "contradicted"],
+  ] as const) {
+    const full = body + "\n" + sourceText, source = { body: full, bodySha256: sha256(full), observationRevision: 1 }, catalog = buildEvidenceCatalog(source), p = payload({ catalog });
+    p.summary = [{ value: candidateText, evidence: [catalog.spans.at(-1)!.id] }];
+    const result = answer(p); result.findings.find(f => f.claimId === "summary.0")!.verdict = outcome;
+    assert.equal(assessGuideAIResult(source, p, result).pass, false);
+  }
+});
+
+test("compact wire retains seven checks, rejects all detail, partial coverage and unsupported omission anchors", () => {
   const p = payload({ catalog: buildEvidenceCatalog(input) }), prepared = buildGuideAIReviewRequest(input, p);
   const wire = guideAIResultToWire(answer(p), prepared.catalog.spans.map(s => s.id), guideAIClaims(p));
   assert.equal(wire.o.length, 7); assert.equal(prepared.request.schema.parse(wire).findings.length, guideAIClaims(p).length);
@@ -111,11 +132,19 @@ test("compact wire retains all seven omission checks, rejects invalid aliases/in
   const duplicate = structuredClone(wire); duplicate.o[1]![0] = duplicate.o[0]![0];
   assert.throws(() => prepared.request.schema.parse(duplicate), /exactly once/);
   const long = structuredClone(wire); long.f[0]![1] = 3; long.f[0]![3] = "字".repeat(11);
-  assert.throws(() => prepared.request.schema.parse(long), /UTF-8/);
+  assert.throws(() => prepared.request.schema.parse(long));
+  for (const code of [0, 1, 2, 3]) {
+    const detail = structuredClone(wire); detail.f[0]![1] = code; detail.f[0]![3] = "x";
+    assert.throws(() => prepared.request.schema.parse(detail));
+  }
+  const partial = structuredClone(wire); partial.c = 1;
+  assert.equal(assessGuideAIResult(input, p, prepared.request.schema.parse(partial)).pass, false);
+  const emptyOmission = structuredClone(wire); emptyOmission.o[6]![1] = 4;
+  assert.throws(() => prepared.request.schema.parse(emptyOmission), /requires source evidence/);
   assert.ok(guideAIOutputEnvelopeBytes(7, 5) <= 1900);
   assert.ok(guideAIOutputEnvelopeBytes(60, 999) > 1900);
-  const aliases = Array.from({length: 4}, (_, i) => i + 100), detail = "\\".repeat(16);
-  const envelope = { c: 2, f: Array.from({length: 7}, (_, i) => [i, 1, aliases, detail]), o: Array.from({length: 7}, (_, i) => [i, 4, aliases, detail]) };
+  const aliases = Array.from({length: 12}, (_, i) => i + 100), detail = "";
+  const envelope = { c: 2, f: Array.from({length: 7}, (_, i) => [i, 0, aliases, detail]), o: Array.from({length: 7}, (_, i) => [i, 4, aliases.slice(0, 4), detail]) };
   assert.equal(guideAIOutputEnvelopeBytes(7, 112), Buffer.byteLength(JSON.stringify(envelope)));
 });
 
@@ -169,6 +198,16 @@ test("received cache can recover explicitly under retained lease, source changes
     const lease = await acquireProcessingLease();
     try { await lease.run(() => assert.rejects(resumeGuideAIReview(t.id, "operator"), /received cached response/)); } finally { await lease.release(); }
   }
+});
+
+test("old rules failed cache remains preserved and cannot resume or become current under the new prompt/schema", async () => {
+  const { g } = await guide(), task = await request(g), raw = { choices: [{ finish_reason: "stop", message: { content: '{"c":1,"o":[[6,4,[],""]]}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }, r = await receipt(task, "received", raw);
+  await sql`UPDATE fishery_business_ai_reviews SET status='failed',receipt_id=${r},binding=binding || ${sql.json({ rulesVersion: "fishery-business-ai/2", schemaVersion: "fishery-business-review-compact-wire/2" })},binding_hash=${"0".repeat(64)} WHERE id=${task.id}`;
+  const lease = await acquireProcessingLease();
+  try { await lease.run(() => assert.rejects(resumeGuideAIReview(task.id, "operator"), /binding changed/)); } finally { await lease.release(); }
+  assert.equal((await getCurrentGuideAIReview(g.id)).current, false);
+  const [preserved] = await sql`SELECT t.status,r.response FROM fishery_business_ai_reviews t JOIN receipts r ON r.id=t.receipt_id WHERE t.id=${task.id}`;
+  assert.equal(preserved!.status, "failed"); assert.deepEqual(preserved!.response, raw);
 });
 
 test("same cumulative ledger cap and unresolved charges stop any future request", () => {
