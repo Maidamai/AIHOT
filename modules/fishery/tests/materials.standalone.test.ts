@@ -883,3 +883,65 @@ test("manual PDF archives preserve all pages and fail on incomplete extraction o
   await assert.rejects(prepareManualSource(raw,{...m,publishedAt:"2025-07-14T00:00:00Z"},r,{parsePdf:async()=>parsed}),/publication date/);
   await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,status:"failed",error:"missing parser"})}),/Full PDF parsing failed/);
 });
+
+test("manual metadata query exceptions accept only the two exact inspected HTTPS identities",()=>{
+  const urls=["https://zj.singlewindow.cn/pen-portal/guide/basic.jspa?id=196","https://www.ccs.org.cn/ccswz/columnDetail?columnid=201900002000000618"];
+  for(const url of urls) {
+    assert.equal(linkSchema.parse(url),url);
+    const u=new URL(url),key=[...u.searchParams.keys()][0]!,value=u.searchParams.get(key)!;
+    for(const invalid of [url+"&extra=1",url+`&${key}=${value}`,url.replace(value,value+"9"),url.replace("https:","http:"),url.replace(u.host,u.host+":8443"),url+"#fragment",url.replace("https://","https://user:pass@"),url.replace(value,"%"+value.charCodeAt(0).toString(16)+value.slice(1)),url.replace(u.hostname,"%"+u.hostname.charCodeAt(0).toString(16)+u.hostname.slice(1))])
+      assert.equal(linkSchema.safeParse(invalid).success,false,invalid);
+  }
+  assert.equal(linkSchema.safeParse("https://example.org/metadata?id=196").success,false);
+  assert.equal(linkSchema.parse("https://example.org/plain"),"https://example.org/plain","Other no-query identities retain their existing rule");
+});
+
+test("manual expanded HTML sources select inspected complete bodies and unique original titles",async()=>{
+  const {prepareManualSource}=await import("../backend/manual-sources.ts");
+  const text="合成公开服务说明，仅用于离线提取测试，不证明业务适用性。".repeat(6),tail="最后完整段落";
+  const cases=[
+    {url:"https://www.mawei.gov.cn/xjwz/zwgk/gggs/tzgg/202603/t20260309_5292976.htm",selector:".article_content",title:"集中申报公告",html:`<meta name="ArticleTitle" content="集中申报公告"><meta name="PubDate" content="2026-02-28 10:09"><span class="article_time">日期：2026-02-28 10:09</span><div class="article_content"><p>${text}</p><p>${tail}</p></div>`,literal:"2026-02-28 10:09",timestamp:"2026-02-28T02:09:00Z"},
+    {url:"https://hyj.quanzhou.gov.cn/zfxxgk/zfxxgkml/zcfg/gfxwj/202507/t20250724_3193147.htm",selector:".article_content > .TRS_Editor",title:"扶持措施通知",html:`<meta name="ArticleTitle" content="扶持措施通知"><meta name="PubDate" content="2025-07-11"><span class="article_time">时间：2025-07-11 15:02</span><div class="article_content">${'<div class="TRS_Editor">'.repeat(20)}<p>${text}</p><p>${tail}</p>${'</div>'.repeat(20)}</div>`,literal:"2025-07-11",timestamp:null},
+    {url:"https://hyj.quanzhou.gov.cn/zfxxgk/zc/xzgfxwj/202507/t20250728_3193952.htm",selector:".rules_text > .TRS_Editor",title:"专项资金规定",html:`<meta name="ArticleTitle" content="专项资金规定"><meta name="PubDate" content="2025-07-24"><div class="rules_text">${'<div class="TRS_Editor">'.repeat(16)}<p>${text}</p><p>${tail}</p>${'</div>'.repeat(16)}</div>`,literal:"2025-07-24",timestamp:null},
+    {url:"https://zj.singlewindow.cn/pen-portal/guide/basic.jspa?id=196",selector:".localGuide",title:"地方特色应用——舟山智慧化一站式口岸监管服务平台",html:`<title>中国（浙江）国际贸易单一窗口</title><div class="localGuide"><div class="mainTitle">地方特色应用——舟山智慧化一站式口岸监管服务平台</div><p>${text}</p><p>${tail}</p></div>`,literal:null,timestamp:null},
+    {url:"https://online.customs.gov.cn/static/pages/guides/000629009001/000629009001.html",selector:".layui-container.guide",title:"进口食品合格评定",html:`<meta name="ArticleTitle" content="办事指南卡片"><meta name="PubDate" content="2026-01-22 17:24"><div class="layui-container guide"><div class="header-title"><h3>进口食品合格评定<i class="layui-icon">图标</i></h3></div><p>${text}</p><p>${tail}</p></div>`,literal:"2026-01-22 17:24",timestamp:"2026-01-22T09:24:00Z"},
+    {url:"https://www.ccs.org.cn/ccswz/columnDetail?columnid=201900002000000618",selector:".ccrj .p",title:"渔业船舶",html:`<title>渔业船舶</title><title>中国船级社</title><div class="ccrj"><h3 class="fnt_36">渔业船舶</h3><div class="p"><p>${text}</p><p>${tail}</p></div></div>`,literal:null,timestamp:null},
+    {url:"https://gat.fujian.gov.cn/ztzl/cryjfwwj/bsxz_28282/202111/t20211115_5774073.htm",selector:".TRS_Editor",title:"外国人停留证件签发服务指南",html:`<meta name="ArticleTitle" content="外国人停留证件签发服务指南"><meta name="PubDate" content="2026-03-02 08:26"><span class="article_time">时间：2026-03-02 08:26</span><div class="TRS_Editor"><p>${text}</p><p>${tail}</p></div>`,literal:"2026-03-02 08:26",timestamp:"2026-03-02T00:26:00Z"},
+  ];
+  for(const c of cases) {
+    const raw=Buffer.from(c.html),manifest={version:"manual-official-source/1",id:"expanded-html",url:c.url,name:"合成官方来源",attribution:"合成归属",title:c.title,publishedAt:c.timestamp,publicationLiteral:c.literal,rawSha256:sha256(raw),bodySha256:"0".repeat(64),parser:"manual-official-html/v1",bodySelector:c.selector};
+    const receipt={requestedUrl:c.url,finalUrl:c.url,status:200,finishedAt:"2026-10-21T00:00:00Z",sha256:sha256(raw)};
+    const result=await prepareManualSource(raw,manifest,receipt);
+    assert.ok(result.body.endsWith(tail));assert.equal(result.body.split(text).length-1,1,"Nested editors must not duplicate the complete body");
+    assert.deepEqual(result.dates.published,c.literal?{precision:"day",value:c.literal.slice(0,10)}:{precision:"unknown",value:null});
+    assert.equal(result.sourceCapture.publishedAt,c.timestamp);
+    await assert.rejects(prepareManualSource(raw,{...manifest,title:"伪造标题"},receipt),/title differs/);
+    await assert.rejects(prepareManualSource(raw,manifest,{...receipt,finalUrl:c.url+"#changed"}),/official URL|metadata link/);
+    if(c.url.includes("t20250724")) {
+      const duplicate=Buffer.from(c.html.replace(/<\/div>$/,`<div class="TRS_Editor"><p>${text}</p></div></div>`));
+      await assert.rejects(prepareManualSource(duplicate,{...manifest,rawSha256:sha256(duplicate)},{...receipt,sha256:sha256(duplicate)}),/Unique complete/);
+      await assert.rejects(prepareManualSource(raw,{...manifest,publishedAt:"2025-07-11T00:00:00Z"},receipt),/precision/);
+    }
+  }
+  const c=cases[0]!,raw=Buffer.from(c.html.replace("日期：2026-02-28 10:09","日期：2026-03-01 10:09")),manifest={version:"manual-official-source/1",id:"conflicting-date",url:c.url,name:"合成来源",attribution:"合成归属",title:c.title,publishedAt:null,publicationLiteral:null,rawSha256:sha256(raw),bodySha256:"0".repeat(64),parser:"manual-official-html/v1",bodySelector:c.selector},receipt={requestedUrl:c.url,finalUrl:c.url,status:200,finishedAt:"2026-10-21T00:00:00Z",sha256:sha256(raw)};
+  assert.equal((await prepareManualSource(raw,manifest,receipt)).dates.published.precision,"unknown","Conflicting visible and metadata publication dates remain unknown");
+  await assert.rejects(prepareManualSource(raw,{...manifest,publicationLiteral:c.literal,publishedAt:c.timestamp},receipt),/literal differs/);
+});
+
+test("manual added PDF identities retain full extraction, size and page-count limits",async()=>{
+  const {prepareManualSource}=await import("../backend/manual-sources.ts");
+  const urls=["https://www.mawei.gov.cn/xjwz/zwgk/gggs/tzgg/202603/P020260910638846579817.pdf","https://hyj.quanzhou.gov.cn/zwgk/fgwj/yyl/202508/P020250804347985996003.pdf","https://hyj.quanzhou.gov.cn/zfxxgk/zc/xzgfxwj/202507/P020251216619209074818.pdf"];
+  for(const url of urls) {
+    const raw=Buffer.from("%PDF-synthetic official original"),m={version:"manual-official-source/1",id:"extra-pdf",url,name:"合成PDF",attribution:"合成来源",title:"合成完整附件",publishedAt:null,publicationLiteral:null,rawSha256:sha256(raw),bodySha256:"0".repeat(64),parser:"manual-official-pdf/v1"},r={requestedUrl:url,finalUrl:url,status:200,finishedAt:"2026-10-21T00:00:00Z",sha256:sha256(raw)};
+    const parsed={status:"parsed" as const,rawSha256:sha256(raw),parser:"Mock full parser",pages:2,text:"--- Page 1 ---\n第一页\n--- Page 2 ---\n完整末页"};
+    const result=await prepareManualSource(raw,m,r,{parsePdf:async()=>parsed});assert.ok(result.body.endsWith("完整末页"));
+    await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,pages:201})}),/Full PDF parsing failed/);
+    await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,text:"--- Page 1 ---\n只有第一页"})}),/page coverage/);
+    await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,text:"--- Page 1 ---\n\n--- Page 2 ---\n"})}),/verified text required/);
+    if(url===urls[0]) {
+      const oversized=Buffer.alloc(10*1024*1024+1);oversized.write("%PDF-");let calls=0;
+      await assert.rejects(prepareManualSource(oversized,{...m,rawSha256:sha256(oversized)},{...r,sha256:sha256(oversized)},{parsePdf:async()=>{calls++;return parsed;}}),/existing size limit/);
+      assert.equal(calls,0,"Oversized PDFs must fail before invoking the parser");
+    }
+  }
+});

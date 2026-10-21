@@ -4,13 +4,18 @@ import { isBlockedAddress } from "@aihot/backend/lib/url";
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 const text = z.string().trim().min(1);
+const verifiedMetadataQueries = new Set([
+  "https://zj.singlewindow.cn/pen-portal/guide/basic.jspa?id=196",
+  "https://www.ccs.org.cn/ccswz/columnDetail?columnid=201900002000000618",
+]);
 // Metadata only; a future collector must use assertPublicUrl at connection time.
 export const linkSchema = z.url().max(2000).refine((value) => {
   const u = new URL(value);
   const host = u.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
-  return u.protocol === "https:" && !u.username && !u.password && !u.search &&
+  const verifiedQuery = verifiedMetadataQueries.has(u.href) && value === u.href && !u.hash && !u.port;
+  return u.protocol === "https:" && !u.username && !u.password && (!u.search || verifiedQuery) &&
     (isIP(host) ? !isBlockedAddress(host) : host.includes(".") && !/(^|\.)(localhost|local|internal)$/.test(host));
-}, "Use a public HTTPS metadata link without credentials or query parameters").transform((value) => new URL(value).href);
+}, "Use a public HTTPS metadata link without credentials or unverified query parameters").transform((value) => new URL(value).href);
 const instant = z.iso.datetime({ offset: true });
 export const dateSchema = z.discriminatedUnion("precision", [
   z.strictObject({ precision: z.literal("unknown"), value: z.null() }),
