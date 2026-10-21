@@ -9,6 +9,7 @@ let web: WebServer;
 const upstreamPaths: string[] = [];
 const api = fakeApi((url, _res, req) => {
   upstreamPaths.push(req.url ?? "");
+  if (url.pathname === "/api/site/pool") return { filters: { channel: "all", category: url.searchParams.get("category"), tag: null, q: null, tab: "time" }, items: [], page: 1, pageCount: 1, total: 0, todayCount: 0, freshness: "2026-10-04T08:00:00.000Z" };
   if (url.pathname === "/api/site/timeline") return { cards: [], nextCursor: null, dayCounts: {}, hot: [], filters: { category: null, channel: null, tag: null } };
 });
 
@@ -33,7 +34,7 @@ test("origin-form slashes keep the router's homepage and unknown-route semantics
   for (const method of ["GET", "HEAD"] as const) {
     const home = await raw("/", method);
     assert.equal(home.status, 200, web.logs());
-    for (const path of ["//", "////", "//?category=ai-models"]) {
+    for (const path of ["//", "////", "//?category=policy"]) {
       const res = await raw(path, method);
       assert.equal(res.status, 200, `${method} ${path}: ${web.logs()}`);
       assert.equal(res.headers["content-type"], home.headers["content-type"]);
