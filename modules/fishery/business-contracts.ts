@@ -36,7 +36,10 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const reason = z.string().trim().min(1).max(2000);
 export const createBusinessGuideSchema = z.strictObject({ documentId: idSchema, snapshotHash: digest, payload: businessGuidePayloadSchema, reason });
 export const updateBusinessGuideSchema = z.strictObject({ expectedRevision: z.int().positive(), snapshotHash: digest, payload: businessGuidePayloadSchema, reason });
-export const decideBusinessGuideSchema = z.strictObject({ expectedRevision: z.int().positive(), payloadHash: digest, snapshotHash: digest, decision: z.enum(["approved", "rejected", "withdrawn"]), approvalMode: z.literal("final").default("final"), aiReviewHash: digest.optional(), reason });
+export const businessExecutorKindSchema = z.enum(["human", "authorized_agent", "unspecified"]);
+export type BusinessExecutorKind = z.infer<typeof businessExecutorKindSchema>;
+export const BUSINESS_EXECUTOR_LABELS: Record<BusinessExecutorKind, string> = { human: "真人手动审核（声明）", authorized_agent: "授权代理审核（声明）", unspecified: "执行身份未知（未记录）" };
+export const decideBusinessGuideSchema = z.strictObject({ expectedRevision: z.int().positive(), payloadHash: digest, snapshotHash: digest, decision: z.enum(["approved", "rejected", "withdrawn"]), approvalMode: z.literal("final").default("final"), aiReviewHash: digest.optional(), executorKind: businessExecutorKindSchema.default("unspecified"), reason });
 export type BusinessGuidePayload = z.infer<typeof businessGuidePayloadSchema>;
 export type BusinessGuideKind = z.infer<typeof businessGuideKindSchema>;
 export interface BusinessGuideSnapshot {
@@ -53,7 +56,7 @@ export interface BusinessGuideAdminRecord {
   snapshot: BusinessGuideSnapshot; snapshotHash: string; payload: BusinessGuidePayload; payloadHash: string;
   createdAt: string; updatedAt: string; verifiedAt: string | null; readable: boolean; blockedReason: string | null;
   aiReview: BusinessGuideAIReview;
-  humanDecision: { mode?: "final"; aiReviewHash?: string; aiEditorialRevision?: number; decision: string; actor: string; at: string; reason: string } | null;
+  humanDecision: { executorKind?: BusinessExecutorKind; mode?: "final"; aiReviewHash?: string; aiEditorialRevision?: number; decision: string; actor: string; at: string; reason: string } | null;
 }
 export interface BusinessGuideAIReview {
   current: boolean; pass: boolean; status: string; reviewHash: string | null;
@@ -74,7 +77,7 @@ export interface BusinessGuideReaderItem {
   id: string; documentId: string; revision: number; payload: BusinessGuidePayload;
   source: BusinessGuideContext["source"]; snapshot: BusinessGuideSnapshot;
   evidence: Record<string, { quote: string; paragraph: number; page: number | null; url: string }>;
-  verifiedAt: string; timeliness: BusinessTimeliness; qualification: { status: "qualified"; label: string }; verification: { origin: "human_editorial"; aiStatus: "passed"; label: string; legalApplicability: "not_determined" };
+  verifiedAt: string; timeliness: BusinessTimeliness; qualification: { status: "qualified"; label: string }; verification: { executorKind: BusinessExecutorKind; origin: "human_editorial"; aiStatus: "passed"; label: string; legalApplicability: "not_determined" };
   eligibility: { canApply: null; canFish: null }; internalOnly: true;
 }
 export interface BusinessGuideReaderPage {

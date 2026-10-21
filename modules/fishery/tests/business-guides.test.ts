@@ -239,7 +239,7 @@ test("four legacy manual approvals remain administrator-only until current AI an
     const human = { decision: "approved", actor: "legacy-human-author", at: "2026-10-21T00:00:00Z", reason: "Retained original manual approval", revision: 2, payloadHash: row.payloadHash, snapshotHash: row.snapshotHash };
     await sql`UPDATE fishery_business_guides SET status='approved',revision=2,verified_at=${human.at},human_decision=${sql.json(human)} WHERE id=${row.id}`;
     const legacy = await businessGuideAdminDetail(row.id); rows.push(legacy);
-    assert.equal(legacy.status, "approved"); assert.equal(legacy.humanDecision!.actor, human.actor); assert.equal(legacy.readable, false); assert.equal(legacy.aiReview.status, "not_requested");
+    assert.equal(legacy.humanDecision!.executorKind, undefined); assert.equal(legacy.status, "approved"); assert.equal(legacy.humanDecision!.actor, human.actor); assert.equal(legacy.readable, false); assert.equal(legacy.aiReview.status, "not_requested");
     await assert.rejects(businessGuideReaderItem(row.id), /No current/);
     await assert.rejects(decideBusinessGuide(row.id, decision(legacy), "reviewer"), /AI review hash/);
   }
@@ -255,6 +255,8 @@ test("four legacy manual approvals remain administrator-only until current AI an
   const again = await decideBusinessGuide(approved.id, decision(approved), "final-reviewer");
   assert.equal(again.aiReview.reviewHash, approved.aiReview.reviewHash); assert.equal(again.aiReview.guideRevision, 2); assert.equal(again.readable, true);
   const item = await businessGuideReaderItem(again.id);
+  assert.equal(item.verification.executorKind, "unspecified");
+  assert.doesNotMatch(JSON.stringify(item), /final-reviewer|legacy-human-author/);
   assert.equal(item.qualification.status, "qualified"); assert.equal(item.verification.aiStatus, "passed"); assert.equal(item.verification.origin, "human_editorial");
 });
 
@@ -285,4 +287,22 @@ test("elapsed dates reject current application-window claims without hiding accu
     assert.doesNotThrow(() => validateBusinessGuidePayload({ ...input, summary: [{ value, evidence: [catalog.spans.at(-1)!.id] }] }, { catalog }), value);
   }
   assert.throws(() => validateBusinessGuidePayload({ ...input, summary: [{ value: "原公告当时表示正在申报，但目前正在受理", evidence: [catalog.spans.at(-1)!.id] }] }, { catalog }), /Elapsed source deadline/);
+});
+
+
+test("new final decisions explicitly distinguish declared executor kinds without deriving them from actors", async () => {
+  for (const executorKind of ["human", "authorized_agent", "unspecified"] as const) {
+    const f = await fixture(), row = await aiPass(await draft(f.id));
+    const actor = "human_editorial-role-is-not-identity";
+    const approved = await decideBusinessGuide(row.id, { ...decision(row), executorKind }, actor);
+    assert.equal(approved.readable, true);
+    assert.equal(approved.humanDecision!.executorKind, executorKind);
+    assert.equal(approved.humanDecision!.actor, actor);
+    assert.equal(approved.humanDecision!.aiReviewHash, row.aiReview.reviewHash);
+    const item = await businessGuideReaderItem(row.id);
+    assert.equal(item.verification.executorKind, executorKind);
+    assert.equal(item.verification.origin, "human_editorial");
+    assert.doesNotMatch(JSON.stringify(item), /human_editorial-role-is-not-identity/);
+    await assert.rejects(decideBusinessGuide(row.id, { ...decision(approved), executorKind: "admin" }, actor));
+  }
 });

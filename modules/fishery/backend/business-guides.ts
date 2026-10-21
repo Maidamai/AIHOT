@@ -196,7 +196,7 @@ export async function decideBusinessGuide(id: string, input: unknown, actor: str
       if (!ai.current || !ai.pass || !ai.reviewHash || ai.reviewHash !== data.aiReviewHash || ai.guideRevision !== editorialRevision(before))
         throw new Conflict("Current passing AI comparison required before final human approval");
     }
-    const at = new Date().toISOString(), decision = { decision: data.decision, actor, at, reason: data.reason, revision: before.revision + 1, payloadHash: before.payload_hash, snapshotHash: before.snapshot_hash, ...(ai ? { mode: data.approvalMode, aiReviewHash: ai.reviewHash!, aiEditorialRevision: ai.guideRevision! } : {}) };
+    const at = new Date().toISOString(), decision = { decision: data.decision, executorKind: data.executorKind, actor, at, reason: data.reason, revision: before.revision + 1, payloadHash: before.payload_hash, snapshotHash: before.snapshot_hash, ...(ai ? { mode: data.approvalMode, aiReviewHash: ai.reviewHash!, aiEditorialRevision: ai.guideRevision! } : {}) };
     const [row] = await tx`UPDATE fishery_business_guides SET revision=revision+1,status=${data.decision},human_decision=${tx.json(decision)},
       verified_at=${data.decision === "approved" ? at : null},actor=${actor},updated_at=now() WHERE id=${id} RETURNING *`;
     await audit(actor, "fishery.business.decision", `business-guide:${id}`, data.reason, before, row!, { db: tx });
@@ -224,7 +224,7 @@ async function readableItems(db: Db, now: Date): Promise<BusinessGuideReaderItem
     const attachmentUrl = observation?.payload.sourceCapture?.attachmentUrl;
     items.push({ id: row.id, documentId: row.document_id, revision: row.revision, payload: row.payload, source: context.source, snapshot: context.snapshot,
       evidence: Object.fromEntries(context.catalog.spans.filter(s => ids.has(s.id)).map(s => [s.id, { quote: s.quote, paragraph: s.paragraph, page: s.page, url: capture && s.page !== null && attachmentUrl ? attachmentUrl : context.source.url }])),
-      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), qualification: { status: "qualified", label: "AI对照核查及最终人工审定通过" }, verification: { origin: "human_editorial", aiStatus: "passed", label: "人工编写，经AI对照核查及最终人工审定的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
+      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), qualification: { status: "qualified", label: "AI对照核查及最终审核通过" }, verification: { executorKind: ["human", "authorized_agent"].includes(row.human_decision?.executorKind) ? row.human_decision.executorKind : "unspecified", origin: "human_editorial", aiStatus: "passed", label: "编审整理，经AI对照核查及最终审核的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
       eligibility: { canApply: null, canFish: null }, internalOnly: true });
   }
   return items;

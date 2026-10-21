@@ -84,3 +84,9 @@ node modules/fishery/scripts/prepare-official.ts --source iotc \
 `scripts/pilot-evidence.ts`仅允许`AIHOT_ENVIRONMENT=test`、本机或隔离Compose服务`fishery-db`的`*_test`库，以及loopback HTTP API。`--archives`校验旧原件hash并离线解析，`--live-captures`读取同次显式采集生成的收据；两者互斥，不把旧归档标为实时采集。通过核心素材入口把成功正文和原始字节存入隔离库私有档案，模块API仍只接收元数据。真实许可保持unknown、主记录不审核。只有显式`--exercise-test-review`才对测试克隆使用合成许可和测试审核，验证导出、同URL字节替换、解析器版本、权利版本和撤回门槛；没有模型评分。
 
 test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工业务批准或真实转载授权”标记，标记参与内容hash。失败原件即使测试批准仍不能导出。实际环境、命令和验收范围见[本机隔离试部署记录](../../docs/fishery-center/local-pilot.md)。
+
+## 业务指南审核执行身份
+
+业务指南显示“编审整理／最终审核”。历史 `origin=human_editorial` 和 `human_decision` 字段名是既有工作流与来源分类，不证明真人编写或真人专家参与；原 actor、原因、来源证据与历史决定不回填或重写。旧决定未显式记录执行身份时显示“执行身份未知（未记录）”，即使账号或角色含 human 也不推断真人。
+
+正常鉴权与 CSRF 管理员决定接口可提交 `executorKind=human|authorized_agent|unspecified`；省略为 unspecified。后台弹窗可主动声明“真人手动审核”或“授权代理审核”，默认未知。此项为审核执行者声明，不是身份认证或专家资质证明，不授予新权限。读者仅接收白名单执行身份类别，不接收审核账号、原因或其他身份信息。来源、内容、版本与当前 AI 回执哈希绑定及全部可读门槛保持原有规则。
