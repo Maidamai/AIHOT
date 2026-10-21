@@ -344,7 +344,8 @@ export async function loadTopicPage(slug: string, page: number, now?: Date): Pro
   ]);
   const groupName = TOPIC_GROUPS.find((g) => g.key === topic.group)?.name ?? "";
   return {
-    topic: { ...summarize(topic, seats, index.at, brands, live), groupName, poolTotal: pool },
+    topic: { ...summarize(topic, seats, index.at, brands, live), groupName, poolTotal: pool,
+      poolHref: !topic.entityId && topic.tags.length === 1 ? `/all?${new URLSearchParams({ tag: topic.tags[0]! })}` : null },
     modules: Object.fromEntries(parts.map((part) => [part.name, part.part(live)])),
     items: rows.map(toFeedItemSummary),
     page,

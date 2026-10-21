@@ -472,7 +472,7 @@ export interface SearchSuggestions {
 }
 
 export interface TopicPage {
-  topic: TopicSummary & { groupName: string; /** Every listed report, selected or not. */ poolTotal: number };
+  topic: TopicSummary & { groupName: string; /** Every listed report, selected or not. */ poolTotal: number; /** Exact tag-only topics can link to their existing full pool. */ poolHref?: string | null };
   /** The site's modules' parts of the page, under their names; each module's web part draws its own. */
   modules: Record<string, unknown>;
   items: FeedItemSummary[];

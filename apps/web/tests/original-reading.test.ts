@@ -43,6 +43,11 @@ const api = fakeApi(url => {
   }
   if (url.pathname === "/api/site/items/synthetic-guide") return itemDetail({ ...guideCard, x: null, discoveredAt: at, links: { original: guide.source.url }, readingMode: "summary-only", body: null, hasTranslation: false, markdownAvailable: false, moduleDetails: { fishery: { kind: "business_guide", guide } } });
   if (url.pathname === "/api/site/items/synthetic-article") return itemDetail({ ...article, x: null, discoveredAt: at });
+  if (url.pathname === "/api/site/topics/compliance") return {
+    topic: { slug: "compliance", name: "许可配额履约", group: "field", groupName: "业务主题", definition: "合成测试主题", brand: null,
+      total: 0, recent: 0, indexable: false, latest: null, poolTotal: 1, poolHref: "/all?tag=" + encodeURIComponent("许可配额履约") },
+    modules: {}, items: [], page: 1, pageCount: 1, pageSize: 20,
+  };
   if (url.pathname === "/api/site/items/availability") return {};
 });
 before(async () => { browser = await chromium.launch({ channel: "chromium" }); web = await startWebServer(api); });
@@ -75,6 +80,11 @@ test("original desktop home falls back honestly, filters and searches into core 
     await expect(page.getByRole("link", { name: "合成测试官方信息入口", exact: false })).toHaveAttribute("href", "https://example.org/synthetic-service");
     await expect(page.getByText("收录于", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/original-reading-synthetic-guide-desktop.png", fullPage: true });
+    await visit(page, web.origin + "/topics/compliance");
+    await expect(page.getByText("这个主题暂时还没有精选内容", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "查看已收录资料（1） →", exact: true }).click();
+    assert.equal(new URL(page.url()).searchParams.get("tag"), "许可配额履约");
+    await expect(page.getByRole("link", { name: guideCard.title, exact: true })).toBeVisible();
     assert.ok(hits.some(h => h.startsWith("/api/site/pool?category=policy")));
     assert.ok(!hits.some(h => h.startsWith("/api/admin/")));
   } finally { await context.close(); }

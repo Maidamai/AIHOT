@@ -137,6 +137,13 @@ export default function TopicRoute() {
         </div>
       ))}
 
+      {topic.poolTotal > 0 && topic.poolHref && (
+        <p className="mb-5 text-[13px] leading-relaxed text-ink-3">
+          本主题还收录了资料与未精选报道。
+          <Link to={topic.poolHref} className="ml-2 text-accent hover:underline">查看已收录资料（{topic.poolTotal}） →</Link>
+        </p>
+      )}
+
       <h2 className="sr-only">{page === 1 ? `${topic.name}的精选` : `精选归档 · 第 ${page} 页`}</h2>
       {items.length === 0 ? (
         <div className="lg:card">

@@ -16,7 +16,9 @@ test("topic directory and pool counts stop reusing a withdrawn entry after one m
     VALUES(${id},${id},${id},${`https://example.org/${id}`},'许可规则',now(),now())`;
   await sql`INSERT INTO publications(article_id,source_id,title,summary,url,timeline_at,discovered_at,sort_at,selected,eligible,visible_after,tags,channel,category)
     VALUES(${id},${id},'许可规则更新','摘要',${`https://example.org/${id}`},now(),now(),now(),true,true,now()-interval '1 minute',ARRAY['许可配额履约'],'news','policy')`;
-  assert.equal((await loadTopicPage("compliance", 1))!.topic.poolTotal, 1);
+  const initial = (await loadTopicPage("compliance", 1))!;
+  assert.equal(initial.topic.poolTotal, 1);
+  assert.equal(new URL(initial.topic.poolHref!, "http://localhost").searchParams.get("tag"), "许可配额履约");
   await sql`UPDATE publications SET visibility='withdrawn' WHERE article_id=${id}`;
   t.mock.timers.tick(61_000);
   const page = (await loadTopicPage("compliance", 1))!;
