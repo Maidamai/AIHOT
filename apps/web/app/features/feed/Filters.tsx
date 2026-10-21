@@ -45,7 +45,7 @@ function filterKey(category: CategoryKey | null, channel: ChannelKey): string {
 /** Desktop: the filter as a row of tabs beside the search field. */
 export function CategoryTabs({ base, category, channel = "all", layoutId, className = "" }: { base: string; category: CategoryKey | null; channel?: ChannelKey; layoutId: string; className?: string }) {
   const [params] = useSearchParams();
-  return <div><p className="mb-2 text-[12px] text-ink-4">内容分类 · <Link to="/topics" className="text-accent">按业务主题浏览</Link></p><PillTabs items={filterOptions(base, params, "全部").map(o => ({ ...o, prefetchOnPress: true }))} active={filterKey(category, channel)} layoutId={layoutId} label="内容分类（业务主题见主题页与标签）" className={className} /></div>;
+  return <div className={className}><p className="mb-2 text-[12px] text-ink-4">内容分类 · <Link to="/topics" className="text-accent">按业务主题浏览</Link></p><PillTabs items={filterOptions(base, params, "全部").map(o => ({ ...o, prefetchOnPress: true }))} active={filterKey(category, channel)} layoutId={layoutId} label="内容分类（业务主题见主题页与标签）" className={className} /></div>;
 }
 
 /**
