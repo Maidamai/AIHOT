@@ -20,6 +20,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
   const o = d.latest?.payload, c = o?.sourceCapture, { run, busy } = useAdminAction(), fresh = useFreshMaterial();
   const me = (useRouteLoaderData("admin-layout") as { me: AdminMe }).me;
   const [flowIdentity,setFlowIdentity]=useState("");
+  const [selection,setSelection]=useState(false);
   const [command, setCommand] = useState<Command | null>(null), [ack, setAck] = useState(false), [downloading, setDownloading] = useState(false), [error, setError] = useState<string | null>(null);
   const base = `/api/admin/fishery/documents/${d.id}`, frozen = busy || downloading, terminal = !!d.withdrawnReason || !d.latest;
   const open = (kind: Command["kind"]) => { setAck(false); setError(null); setCommand({ id: d.id, kind, revision: d.latest!.revision, sourceRevision: d.source.revision }); };
@@ -45,9 +46,10 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
       <div className="min-w-0 space-y-5">
         <Card title="AI 草稿与内部审核任务">
           <p className="text-[13px] text-ink-3">创建任务不发送模型请求。任务绑定当前观察、正文与来源许可版本；AI核查后仍须人工决定内部合格，不能公开发布。</p>
-          <form className="my-4 flex flex-wrap items-end gap-3" onSubmit={async e=>{e.preventDefault();await run("POST",base+"/flows",{identity:flowIdentity},{success:"任务已创建，可进入查看"});}}>
+          <form className="my-4 flex flex-wrap items-end gap-3" onSubmit={async e=>{e.preventDefault();await run("POST",base+"/flows",{identity:flowIdentity,selection},{success:"任务已创建，可进入查看"});}}>
             <label className="text-[13px]">尝试名称<input aria-label="任务尝试名称" required pattern="[a-zA-Z0-9_-]{1,64}" maxLength={64} value={flowIdentity} onChange={e=>setFlowIdentity(e.target.value)} className="mt-1 block rounded-control border border-line bg-bg-sunk px-3 py-2" placeholder="例如 review-20261020" /></label>
             <Button type="submit" disabled={terminal||frozen||!d.text?.hashMatches}>创建内部审核任务</Button>
+            <label className="text-[13px]"><input type="checkbox" checked={selection} onChange={e=>setSelection(e.target.checked)}/> 本任务先做预筛和双评分（最多新增3次调用，门槛未校准；不代替事实审核）</label>
           </form>
           <ul className="space-y-3 text-[13px]">{d.flows.map(task=><li key={task.id}><Link className="text-accent" to={`/admin/fishery/flows/${task.id}`}>{task.identity} · {task.status}</Link>{task.stale&&<span className="ml-2 text-hot">版本已失效</span>}</li>)}</ul>{!d.flows.length&&<p className="text-[13px] text-ink-3">尚无AI审核任务。</p>}
         </Card>

@@ -2,7 +2,7 @@
 
 ## 单任务选材预筛与双评分（默认关闭）
 
-原有任务、合格内容与自动派发不补跑选材。仅新建且显式带 `selection:true` 的任务使用新版阶段；创建本身不发送请求。已有同证据任务的模式不同会明确冲突，不能借新 identity 升级或重评分旧稿。本轮不提供新增付费勾选入口，启用与真实样本验收须在既有授权和实际审批允许的范围内进行。
+原有任务、合格内容与自动派发不补跑选材。仅新建且显式带 `selection:true` 的任务使用新版阶段；创建本身不发送请求。已有同证据任务的模式不同会明确冲突，不能借新 identity 升级或重评分旧稿。管理员可在现有素材页为单份新任务勾选该模式，默认未勾选；仍由正常会话/CSRF、素材审核与另一步排队操作保护。启用与真实样本验收须在既有授权和实际审批允许的范围内进行。
 
 复用原 `runSelectionPrefilter/runSelectionScores` 并注入受控调用器，不执行整套 `processArticle`。顺序为 prefilter、score-1、score-2、generation、review、最终审定。每个评分有独立 subject、attemptTag 和 stage_requests；返回后逐步事务保存结果、completeReceipt 与下一阶段，评分二与 outcome 原子落库。恢复只复用已收或已完成回执；pending/unknown 保留费用预留并阻断，failed 不自动重发，明确 regenerate 仅增加目标阶段尝试，最多三次。
 

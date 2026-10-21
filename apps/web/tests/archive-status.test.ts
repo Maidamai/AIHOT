@@ -21,7 +21,16 @@ let status: ArchiveStatus | undefined = initial;
 let browser: Browser;
 let web: WebServer;
 const reads: Array<{ path: string; method: string; cookie: string }> = [];
-const api = fakeApi((url, response, request) => {
+const createdSelections:Array<{identity:string;selection:boolean}>=[];
+const syntheticDate={precision:'unknown',value:null};
+const selectionMaterial={
+ id:'synthetic-selection-material',sourceId:'synthetic',title:'合成测试：单任务选材',issuer:'Synthetic',sourceAttribution:'Synthetic',canonicalUrl:'https://example.org/synthetic',documentNumber:null,articleId:null,withdrawnReason:null,
+ state:'pending',testOnly:true,blockers:[{code:'synthetic',message:'仅供隔离浏览器测试'}],
+ source:{id:'synthetic',name:'Synthetic',revision:1,enabled:false,participationMode:'editorial',testOnly:true,profile:{rightsStatus:'unknown',allowedSummary:false,allowedPublication:false,rightsCheckedAt:null,reviewDueAt:null,evidenceUrl:null}},
+ latest:{revision:1,observedAt:'2026-10-21T10:00:00Z',actor:'synthetic',contentHash:'a'.repeat(64),payload:{originalTitle:'Synthetic original',title:'合成测试',summaryZh:'合成素材，不能当真实报道。',rawSha256:'a'.repeat(64),language:'zh',policyStatus:'unknown',dates:{published:syntheticDate,adopted:syntheticDate,effectiveFrom:syntheticDate,effectiveUntil:syntheticDate},scope:{regions:[],species:[],flags:[],activities:[],unknownFields:[]},evidence:[]}},
+ review:null,observations:[],reviews:[],text:{body:'合成远洋渔业测试正文。',truncated:false,hashMatches:true,acquisitionMode:'archive_replay'}
+};
+const api = fakeApi(async(url, response, request) => {
   if (!url.pathname.startsWith("/api/admin/")) return;
   const cookie = request.headers.cookie ?? "";
   reads.push({ path: url.pathname, method: request.method ?? "", cookie });
@@ -29,6 +38,12 @@ const api = fakeApi((url, response, request) => {
   if (url.pathname === "/api/admin/me") return { name: "Synthetic admin", csrf: "synthetic-csrf", dev: false };
   if (url.pathname === "/api/admin/nav-counts") return {};
   if (url.pathname === "/api/admin/fishery/batches") return { rows: batches, archiveStatus: status, progress: [], rounds: [] };
+  if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/detail')return selectionMaterial;
+  if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/flows'){
+   if(request.method==='GET')return {rows:[]};
+   assert.equal(request.method,'POST');assert.equal(request.headers['x-csrf-token'],'synthetic-csrf');
+   let body='';for await(const chunk of request)body+=chunk.toString();createdSelections.push(JSON.parse(body));response.statusCode=201;return {id:'synthetic-task',status:'queued'};
+  }
 });
 before(async () => { browser = await chromium.launch({ channel: "chromium" }); web = await startWebServer(api); });
 after(async () => { await browser?.close(); await web?.stop(); });
@@ -107,4 +122,21 @@ test("collection status uses the original admin authentication redirect and neve
   assert.ok(response.headers.get("Location")?.startsWith("/api/auth/login?"));
   assert.equal(response.headers.get("Cache-Control"), "private, no-store");
   assert.ok(!(await response.text()).includes("synthetic-authorization"));
+});
+
+test('single-task selection is opt-in, persists only the explicit choice and never starts model processing on creation',async()=>{
+ const {context,page}=await authorizedPage(390);createdSelections.length=0;
+ try{
+  await visit(page,web.origin+'/admin/fishery/synthetic-selection-material');
+  const choice=page.getByRole('checkbox',{name:/本任务先做预筛和双评分/});
+  await expect(choice).not.toBeChecked();await expect(page.getByText(/最多新增3次调用/)).toBeVisible();
+  await page.getByLabel('任务尝试名称').fill('synthetic-default-off');
+  await page.getByRole('button',{name:'创建内部审核任务',exact:true}).click();
+  await expect.poll(()=>createdSelections.length).toBe(1);assert.equal(createdSelections[0].selection,false);
+  await choice.check();await page.getByLabel('任务尝试名称').fill('synthetic-explicit-choice');
+  await page.getByRole('button',{name:'创建内部审核任务',exact:true}).click();
+  await expect.poll(()=>createdSelections.length).toBe(2);assert.equal(createdSelections[1].selection,true);
+  assert.ok(!reads.some(r=>r.method==='POST'&&/\/flows\/[^/]+\/run/.test(r.path)));
+  await page.reload();await expect(choice).not.toBeChecked();
+ }finally{await context.close();}
 });
