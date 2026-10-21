@@ -1,3 +1,4 @@
+import type { BusinessGuideReaderItem } from "../business-contracts.ts";
 import type { ReactNode } from "react";
 import { dateLabel } from "./shared.tsx";
 import "./business.css";
@@ -13,4 +14,11 @@ export function isHistorical(date:{precision:string;value:string|null},reference
   if(!date.value)return false;
   const latest=date.precision==="year"?date.value+"-12-31":date.precision==="month"?new Date(Date.UTC(Number(date.value.slice(0,4)),Number(date.value.slice(5,7)),0)).toISOString().slice(0,10):date.value;
   return Date.parse(reference)-Date.parse(latest+"T00:00:00Z")>=7*86400000;
+}
+
+export function businessPublication(item:Pick<BusinessGuideReaderItem,"payload"|"source">){
+  const date=item.payload.dates.published.value;
+  if(date.precision!=="unknown"&&date.value)return {date,label:"原文发布日期",metadata:false};
+  if(item.source.published.precision!=="unknown"&&item.source.published.value)return {date:item.source.published,label:"来源元数据发布日期",metadata:true};
+  return {date,label:"原文发布日期",metadata:false};
 }
