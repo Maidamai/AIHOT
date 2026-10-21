@@ -11,7 +11,7 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
 import { config } from "@aihot/backend/config";
-import { sql, closeDb } from "@aihot/backend/db";
+import { sql, closeDb, type Tx } from "@aihot/backend/db";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { createDocument, observe, registerSource, review, withdraw } from "../backend/store.ts";
 import { sha256 } from "../backend/source-adapters.ts";
@@ -330,6 +330,24 @@ test("reviewed guides use original publication pool/detail and immediately disap
     assert.equal(publication!.published_at, null); assert.equal(publication!.publication_time, null); assert.equal(publication!.backfill, true);
     assert.equal(publication!.grouping_status, "pending"); assert.equal(publication!.body_mode, "summary"); assert.equal(publication!.syndicate, false);
     assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${id}`).length, 0);
+    // Controlled barrier: compute accepted IDs, mutate only canonical module state, then execute
+    // that already-built predicate. Core article revision remains unchanged in every case.
+    const barrier = async (mutate: (tx: Tx) => Promise<unknown>) => {
+      const accepted = (await fisheryPublicationCondition(new Date())).condition;
+      const rollback = new Error("Rollback controlled qualification race");
+      await assert.rejects(sql.begin(async tx => {
+        await mutate(tx);
+        const rows = await tx`SELECT p.article_id FROM publications p WHERE p.article_id=${id} AND ${accepted}`;
+        assert.equal(rows.length, 0, "Final SQL rejects qualification revoked after accepted-ID calculation");
+        throw rollback;
+      }), error => error === rollback);
+    };
+    await barrier(tx => tx`UPDATE fishery_documents SET withdrawn_reason='Controlled race withdrawal' WHERE id=${f.id}`);
+    await barrier(tx => tx`INSERT INTO fishery_reviews(document_id,revision,source_revision,decision,applicability_reviewed,note,actor)
+      VALUES (${f.id},1,1,'rejected',false,'Controlled newer material decision','synthetic-barrier')`);
+    await barrier(tx => tx`UPDATE fishery_business_guides SET human_decision=NULL WHERE id=${created.id}`);
+    await barrier(tx => tx`UPDATE fishery_sources SET revision=revision+1 WHERE source_id=${f.sourceId}`);
+    await barrier(tx => tx`UPDATE fishery_observations SET payload=jsonb_set(payload,'{title}','"Changed after qualification"'::jsonb) WHERE document_id=${f.id}`);
     const first = await loadPool({channel:"all",category:null,tag:null});
     assert.ok(first.items.some(item => item.id === id));
     const detail = await loadItemDetail(id);

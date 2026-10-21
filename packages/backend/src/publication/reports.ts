@@ -1,3 +1,4 @@
+import { hasPublicationReadGuard } from "../modules.ts";
 // Reports through the public read layer: website DTOs and the v1 shapes. Only real reports are
 // listed; a missing date is a 404, never another day. Withdrawn citations are marked, not shown.
 import type { ReportCitation, ReportDetail, ReportIndexEntry, ReportNavigationEntry, ReportKind } from "@aihot/contracts/site";
@@ -396,13 +397,15 @@ export async function loadReport(kind: ReportKind, key: string): Promise<ReportD
  */
 const INDEX_LIMIT = 400;
 const indexes = new Map<ReportKind, Cached<{ rows: Awaited<ReturnType<typeof reportIndexRows>>; gone: Set<string> }>>();
+async function readReportIndex(kind: ReportKind) {
+  const rows = await reportIndexRows(kind, INDEX_LIMIT);
+  return { rows, gone: await unavailableHeadlineIds(rows, kind === "daily" ? "daily" : "periodic") };
+}
 export function reportIndex(kind: ReportKind) {
+  if (hasPublicationReadGuard()) return readReportIndex(kind);
   let entry = indexes.get(kind);
   if (!entry) {
-    entry = cached(async () => {
-      const rows = await reportIndexRows(kind, INDEX_LIMIT);
-      return { rows, gone: await unavailableHeadlineIds(rows, kind === "daily" ? "daily" : "periodic") };
-    }, { freshMs: 60_000, maxStaleMs: 60_000 });
+    entry = cached(() => readReportIndex(kind), { freshMs: 60_000, maxStaleMs: 60_000 });
     indexes.set(kind, entry);
   }
   return entry.get();

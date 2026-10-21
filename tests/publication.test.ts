@@ -618,3 +618,25 @@ test("live module approval gates original detail/list/share/sync and advances an
     assert.ok(changes.changes.some(change => change.id === id && change.op === "remove"));
   } finally { installModules(previous); }
 });
+
+
+test("warmed report archives and v1 headlines recheck live module qualification on every read", async () => {
+  const { installModules, serverModules } = await import("@aihot/backend/modules");
+  const { listReports, v1Dailies } = await import("@aihot/backend/publication/reports");
+  const previous = serverModules(), id = await article(), key = "2099-11-28", title = `LIVE-REPORT-${T}`;
+  await publishArticle(id, released());
+  const content = { sections: [{ label: "资料", items: [{ itemId: id, title, summary: "Reviewed reference", sourceUrl: "https://example.org/reference", sourceName: "Test" }] }], flashes: [] };
+  await sql`INSERT INTO reports(kind,key,window_start,window_end,content,generated_at,origin)
+    VALUES ('daily',${key},now()-interval '1 day',now(),${sql.json(content)},now(),'manual')`;
+  let admitted = true;
+  installModules([...previous, { name: "test-report-current-approval", publication: {
+    readCondition: async () => ({ condition: sql`p.article_id <> ${id} OR ${admitted}` }),
+  } }]);
+  try {
+    assert.equal((await listReports("daily")).find(r => r.key === key)!.title, title);
+    assert.equal((await v1Dailies(400)).items.find(r => r.date === key)!.leadTitle, title);
+    admitted = false;
+    assert.equal((await listReports("daily")).find(r => r.key === key)!.title, null);
+    assert.equal((await v1Dailies(400)).items.find(r => r.date === key)!.leadTitle, null);
+  } finally { installModules(previous); }
+});
