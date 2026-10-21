@@ -135,6 +135,8 @@ export interface OutlineEntry {
  * unless …/original asks for the original. Only the body shown is sent, with its outline.
  */
 export interface SiteItemDetail extends ItemSummary {
+  /** Read-only module content, supplied by the same guarded item read as this detail. */
+  moduleDetails?: Record<string, unknown>;
   /** The post with all its media; its text is the body. */
   x: Omit<XPostView, "text" | "translation"> | null;
   /** Selected, but its fact's seat is held by this report: marked 同事件, without a reason of its own. */

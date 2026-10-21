@@ -6,7 +6,7 @@
 // page's code: the page waits for its parts while its own code loads (site-modules.ts `loadParts`) and then
 // renders them like any import.
 import type { ComponentType, ReactNode } from "react";
-import type { TopicSummary } from "@aihot/contracts/site";
+import type { SiteItemDetail, TopicSummary } from "@aihot/contracts/site";
 import type { NavItem, Tab } from "./components/shell/nav";
 
 export interface AdminNavEntry {
@@ -154,6 +154,8 @@ export interface WebModule {
   };
   agent?: Part<AgentPart>;
   topicPage?: Part<TopicPagePart>;
+  /** Structured content inside the original item page, keyed by this module's name. */
+  itemDetails?: Part<ComponentType<{ data: unknown; item: SiteItemDetail }>>;
   /** Paths of the marks it serves that are drawn in white, for a dark tile (components/BrandMark.tsx). */
   darkMarks?: string[];
   /** The starred page (routes/starred.tsx): buttons ahead of 导入文件 that bring stars in from elsewhere, each resolving to the line it reports. */

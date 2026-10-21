@@ -9,7 +9,7 @@ import { CATEGORY_LABELS } from "@aihot/contracts/taxonomy";
 import { ITEM_COPY } from "@aihot/site";
 import { SameEventBadge, SelectedBadge } from "../../components/ui/Badge";
 import { ScoreLabel } from "../../components/ui/Score";
-import { beijingTime } from "@aihot/contracts/time";
+import { beijingDate, beijingTime } from "@aihot/contracts/time";
 import { MediaThumbs, SourceLine, StarButton, readTone } from "./parts";
 import { GroupButton, GroupSources } from "./ReadingGroup";
 import { QuotedLine } from "../item/QuotedPost";
@@ -62,6 +62,10 @@ export const FeedItem = memo(function FeedItem({ item, group, filters, read = fa
           </span>
         </span>
       </header>
+
+      {showTags && (!item.publishedAt || beijingDate(item.publishedAt) !== beijingDate(at ?? item.timelineAt)) && (
+        <p className="mt-1 text-[12px] leading-relaxed text-ink-4">{item.publishedAt ? `原文发布于 ${beijingDate(item.publishedAt)}` : "原文发布日期未知，列表时间为收录时间"}</p>
+      )}
 
       {isX ? (
         item.summary ? <p className={`mt-1.5 whitespace-pre-line text-[15px] leading-[1.75] line-clamp-5 lg:mt-2 lg:line-clamp-4 ${readTone(read, "text-ink")}`}>

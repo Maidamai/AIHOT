@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { Await, isRouteErrorResponse, Link, useAsyncError, useLoaderData, useNavigate, useRevalidator, type ClientLoaderFunctionArgs } from "react-router";
 import type { Route } from "./+types/item";
 import type { FeedItemSummary, SiteItemDetail } from "@aihot/contracts/site";
+import type { ComponentType } from "react";
+import { loadParts } from "../site-modules";
 import { ITEM_COPY, SITE } from "@aihot/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
 import { pageReuse } from "../lib/page-reuse";
@@ -26,10 +28,13 @@ import { scrollToAnchor } from "../lib/motion";
 import { takePreview } from "../features/item/preview";
 import { IconArrowLeft, IconCopy, IconDownload, IconExternal, IconImage, IconMenu, IconMore, IconShare } from "../components/icons";
 import { BarButton, PhoneBar } from "../components/shell/PhoneBar";
+import { HOME_LABEL } from "../components/shell/nav";
 import { isPhone, type Screen } from "../components/shell/screens";
 
 export const handle: Screen = { home: "featured", toolbar: true };
 export { pageHeaders as headers } from "../lib/api.server";
+
+const ITEM_PARTS = await loadParts<ComponentType<{ data: unknown; item: SiteItemDetail }>>(m => m.itemDetails);
 
 const PosterSheet = lazy(() => import("../features/item/PosterSheet"));
 
@@ -69,7 +74,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
       articleLd({ path: `/items/${item.id}`, headline: item.title, description: item.summary, publishedAt: item.publishedAt, image: `/og/items/${item.id}.png`, basedOn: item.links.original }),
       breadcrumbLd([
         { name: SITE.name, path: "/" },
-        { name: item.selected ? "精选" : "全部动态", path: item.selected ? "/" : "/all" },
+        { name: item.selected ? HOME_LABEL : "全部动态", path: item.selected ? "/" : "/all" },
         { name: item.title, path: `/items/${item.id}` },
       ]),
     ],
@@ -207,7 +212,7 @@ function ItemPreview({ preview }: { preview: FeedItemSummary }) {
   const shownAt = preview.publishedAt ?? preview.timelineAt;
   return (
     <div className="mx-auto max-w-[var(--page-max-reading)] pb-8">
-      <PhoneBar back={{ to: preview.selected ? "/" : "/all", label: preview.selected ? "精选" : "全部" }} title={isX ? preview.x!.authorName : preview.title} />
+      <PhoneBar back={{ to: preview.selected ? "/" : "/all", label: preview.selected ? HOME_LABEL : "全部" }} title={isX ? preview.x!.authorName : preview.title} />
       <article className="pb-6 pt-3" aria-busy="true">
         <div className="mb-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-ink-3">
           <span className="font-semibold text-ink-2">{isX ? preview.x!.authorName : preview.source.name}</span>
@@ -260,7 +265,7 @@ function ItemGone() {
   const gone = isRouteErrorResponse(error) && error.status === 404;
   return (
     <div className="mx-auto max-w-sm pb-8">
-      <PhoneBar back={{ to: "/", label: "精选" }} />
+      <PhoneBar back={{ to: "/", label: HOME_LABEL }} />
       <div className="py-24 text-center">
         <div className="text-[20px] font-bold text-ink">{gone ? "找不到这篇内容" : "暂时无法加载"}</div>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-3">{gone ? "链接可能有误，或者这篇内容已经下架。" : "服务暂时繁忙，请稍后再试。"}</p>
@@ -319,6 +324,7 @@ function ItemView({ item }: { item: SiteItemDetail }) {
   const shownAt = item.publishedAt ?? item.discoveredAt;
   const timeLabel = item.publishedAt ? "发布时间" : "收录时间";
   const summaryOnly = item.readingMode === "summary-only";
+  const details = ITEM_PARTS.filter(p => item.moduleDetails?.[p.name] != null);
   const showOutline = item.outline.length >= 3;
   const originalLabel = isX ? "在 X 查看原推" : "打开原文";
 
@@ -444,7 +450,7 @@ function ItemView({ item }: { item: SiteItemDetail }) {
 
       {/* Phones: back to where the reader came from, the title once it has scrolled away, more actions. */}
       <PhoneBar
-        back={{ to: item.selected ? "/" : "/all", label: item.selected ? "精选" : "全部" }}
+        back={{ to: item.selected ? "/" : "/all", label: item.selected ? HOME_LABEL : "全部" }}
         title={isX ? item.x!.authorName : item.title}
         actions={
           <BarButton label="更多操作" onClick={() => setActionsOpen(true)}>
@@ -525,7 +531,9 @@ function ItemView({ item }: { item: SiteItemDetail }) {
             </div>
           )}
 
-          {summaryOnly && <p className="mt-7 rounded-control bg-bg-sunk px-4 py-3 text-[13.5px] leading-relaxed text-ink-3">应来源方要求，这里只提供摘要与原文入口。完整内容请阅读原文。</p>}
+          {summaryOnly && details.length === 0 && <p className="mt-7 rounded-control bg-bg-sunk px-4 py-3 text-[13.5px] leading-relaxed text-ink-3">应来源方要求，这里只提供摘要与原文入口。完整内容请阅读原文。</p>}
+
+          {details.map(({ name, part: Detail }) => <Detail key={name} data={item.moduleDetails![name]} item={item} />)}
 
           {item.body && bodyHtml && (
             <section className="mt-9 border-t border-line pt-4 xl:mt-10">

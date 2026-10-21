@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Form, Link, useNavigation, useSearchParams } from "react-router";
 import { CATEGORY_KEYS, CATEGORY_LABELS, CHANNEL_LABELS, type CategoryKey, type ChannelKey } from "@aihot/contracts/taxonomy";
 import { SITE } from "@aihot/site";
+import { HOME_LABEL } from "../../components/shell/nav";
 import { IconClose, IconFilter, IconSearch } from "../../components/icons";
 import { PillTabs } from "../../components/ui/Tabs";
 import { ChoiceTick, Sheet, sheetChoice } from "../../components/ui/Sheet";
@@ -51,7 +52,7 @@ export function CategoryTabs({ base, category, channel = "all", layoutId, classN
  * The phone bar of 精选 and 全部: the brand, the 精选 | 全部 switch (a filter in use carries over), and
  * buttons for the filter sheet and search.
  */
-export function FeedBar({ base, category, channel }: { base: "/" | "/all"; category: CategoryKey | null; channel: ChannelKey }) {
+export function FeedBar({ base, category, channel, featuredLabel = HOME_LABEL }: { base: "/" | "/all"; category: CategoryKey | null; channel: ChannelKey; featuredLabel?: string }) {
   const [params] = useSearchParams();
   const [sheet, setSheet] = useState(false);
   const scope = (to: string) => hrefWith(to, params, { q: null, tab: null, search: null });
@@ -68,10 +69,10 @@ export function FeedBar({ base, category, channel }: { base: "/" | "/all"; categ
           <PillTabs
             size="sm"
             layoutId="feed-scope"
-            label="看精选或全部"
+            label={`看${featuredLabel}或全部`}
             active={base === "/" ? "featured" : "all"}
             items={[
-              { key: "featured", label: "精选", to: scope("/"), resetScroll: true, prefetchOnPress: true },
+              { key: "featured", label: featuredLabel, to: scope("/"), resetScroll: true, prefetchOnPress: true },
               { key: "all", label: "全部", to: scope("/all"), resetScroll: true, prefetchOnPress: true },
             ]}
           />

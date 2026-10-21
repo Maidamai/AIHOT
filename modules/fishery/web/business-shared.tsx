@@ -1,6 +1,6 @@
 import type { BusinessGuideReaderItem } from "../business-contracts.ts";
 import type { ReactNode } from "react";
-import { dateLabel } from "./shared.tsx";
+const dateLabel = (date: { precision: string; value: string | null }) => date.value ? `${date.value}（${({ year: "年", month: "月", day: "日" } as Record<string, string>)[date.precision] ?? date.precision}精度）` : "未知";
 import "./business.css";
 export const BUSINESS_KINDS={business_guide:"业务指南",policy_reference:"政策资料",dynamic_article:"动态文章"};
 export function SafeSource({url,children}:{url:string|null|undefined;children:ReactNode}) {

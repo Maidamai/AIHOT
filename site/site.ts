@@ -117,6 +117,8 @@ export const POLICY = {
 
 /** 导航（电脑侧栏、手机底栏、“我的”页）。 */
 export const NAV = {
+  /** The original home entry may use a site-specific name; omitted sites keep 精选. */
+  homeLabel: "行业动态",
   /**
    * 不放进导航的引擎入口，目前只支持热点榜（"/hot"）和主题（"/topics"）。页面照样能打开；原来回到它的返回按钮和链接改回精选，
    * 写 "/hot" 时首页也不放当前热点。
