@@ -56,6 +56,8 @@ const api = fakeApi(url => {
   }
   if (url.pathname === "/api/site/items/synthetic-guide") return itemDetail({ ...guideCard, x: null, discoveredAt: at, links: { original: guide.source.url }, readingMode: "summary-only", body: null, hasTranslation: false, markdownAvailable: false, moduleDetails: { fishery: { kind: "business_guide", guide } } });
   if (url.pathname === "/api/site/items/synthetic-article") return itemDetail({ ...article, x: null, discoveredAt: at });
+  if (url.pathname === "/api/site/items/synthetic-duplicate") return itemDetail({ id: "synthetic-duplicate", title: "合成测试：正文限定不变", originalTitle: "  合成测试：正文限定不变  ", summary: "合成测试：正文限定不变", selected: false, score: null, reason: null });
+  if (url.pathname === "/api/site/items/synthetic-distinct") return itemDetail({ id: "synthetic-distinct", title: "合成测试：配额调整", summary: "仅适用于合成测试海域，不能泛化至其他海域。", selected: false, score: null, reason: null });
   if (url.pathname === "/api/site/topics/compliance") return {
     topic: { slug: "compliance", name: "许可配额履约", group: "field", groupName: "业务主题", definition: "合成测试主题", brand: null,
       total: 0, recent: 0, indexable: false, latest: null, poolTotal: 1, poolHref: "/all?tag=" + encodeURIComponent("许可配额履约") },
@@ -136,6 +138,42 @@ test("original phone filters, guide fields and local favorites remain usable wit
     const star = page.getByRole("button", { name: "收藏", exact: true }).filter({ visible: true });
     await star.click();
     await expect(page.getByRole("button", { name: "已收藏", exact: true }).filter({ visible: true })).toBeVisible();
+  } finally { await context.close(); }
+});
+
+test("guide phone opening keeps dates, audience and official source ahead of its single summary", async () => {
+  for (const width of [375, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 812 } });
+    const page = await context.newPage();
+    try {
+      await visit(page, web.origin + "/items/synthetic-guide");
+      for (const target of [page.getByRole("status", { name: "文载时效与申请状态" }), page.getByRole("heading", { name: "适用对象", exact: true }).locator(".."), page.getByRole("link", { name: "查看来源原文", exact: false })]) {
+        const box = await target.boundingBox();
+        assert.ok(box && box.y >= 0 && box.y + box.height < 812, "Key guide facts must be in the first phone viewport");
+      }
+      await expect(page.getByText(guide.payload.summary[0]!.value, { exact: true })).toHaveCount(1);
+      await expect(page.getByText("固定摘要", { exact: true })).toHaveCount(0);
+      const unknowns = page.getByRole("group", { name: "尚未核实的信息" });
+      await expect(unknowns).not.toHaveAttribute("open", "");
+      await expect(unknowns.getByRole("heading", { name: "船旗", exact: true })).not.toBeVisible();
+      await unknowns.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      await expect(unknowns.getByRole("heading", { name: "船旗", exact: true })).toBeVisible();
+      await expect(unknowns).toContainText("不代表没有适用条件或限制");
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    } finally { await context.close(); }
+  }
+});
+
+test("an identical article title and summary is shown once without dropping a distinct qualifier", async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  try {
+    await visit(page, web.origin + "/items/synthetic-duplicate");
+    await expect(page.getByRole("heading", { name: "合成测试：正文限定不变", exact: true })).toBeVisible();
+    await expect(page.locator("article").getByText("合成测试：正文限定不变", { exact: true })).toHaveCount(1);
+    await visit(page, web.origin + "/items/synthetic-distinct");
+    await expect(page.getByText("仅适用于合成测试海域，不能泛化至其他海域。", { exact: true })).toBeVisible();
   } finally { await context.close(); }
 });
 

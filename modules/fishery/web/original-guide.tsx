@@ -44,25 +44,46 @@ export function BusinessGuideBody({ guide }: { guide: BusinessGuideReaderItem })
   const historical = isHistorical(publication.date, guide.verifiedAt);
   const now = useBusinessNow(guide.timeliness.checkedAt);
   const fields = [
-    ["适用对象", p.audience], ["事项与机会", p.opportunity], ["限制条件", p.restrictions], ["材料清单", p.materials],
-    ["国家与地区", p.applicability.countriesOrRegions], ["船旗", p.applicability.flagStates], ["鱼种", p.applicability.species], ["渔法", p.applicability.fishingMethods],
+    ["事项与机会", p.opportunity], ["限制条件", p.restrictions], ["材料清单", p.materials], ["国家与地区", p.applicability.countriesOrRegions],
   ] as const;
+  const secondary = [["船旗", p.applicability.flagStates], ["鱼种", p.applicability.species], ["渔法", p.applicability.fishingMethods]] as const;
+  const unverified = secondary.filter(([, field]) => field.state === "unknown");
+  const sameTitle = (value: string) => value.replace(/\s+/g, " ").trim() === p.title.value.replace(/\s+/g, " ").trim();
+  const summary = p.summary.filter(s => !sameTitle(s.value));
+  const titleEvidence = [...new Set([...p.title.evidence, ...p.summary.filter(s => sameTitle(s.value)).flatMap(s => s.evidence)])];
   const dateNames = { published: "原文发布日期（正文引句）", effectiveFrom: "生效日期", deadline: "截止日期", expiresAt: "失效日期" };
-  return <div className="mt-8 border-t border-line pt-5" aria-label="办事指南与政策资料">
-    <div className="mb-3 text-[12px] font-semibold text-accent">{p.kind === "business_guide" ? "办事指南" : "政策资料"} · 编审整理</div>
-    <p className="mb-3 text-[12px] leading-relaxed text-ink-3">{publication.label}：{dateText(publication.date)}{historical ? " · 历史资料（原文距核验日已满7日）" : !publication.date.value ? " · 原文日期未知，无法判断历史背景" : ""}</p>
+  return <div className="mt-5 border-t border-line pt-4" aria-label="办事指南与政策资料">
+    <div className="flex flex-wrap items-center justify-between gap-3 text-[12px] font-semibold text-accent">
+      <span>{p.kind === "business_guide" ? "办事指南" : "政策资料"} · 编审整理</span>
+      <SourceLink url={guide.source.url}>查看来源原文</SourceLink>
+    </div>
     <BusinessTimeliness item={guide} now={now} />
-    <p className="mb-6 text-[13px] leading-[1.8] text-ink-3">{guide.verification.label}。具体法律适用性未知，不据此判断能否申报或捕捞。核验日不代表原文发布或更新。</p>
     <div className="grid gap-5">
-      <Field title="指南标题依据" evidence={p.title.evidence} guide={guide}>{p.title.value}</Field>
-      <Field title="内容摘要" guide={guide}>{p.summary.map((summary, i) => <div key={i} className="mb-3"><p>{summary.value}</p><Evidence ids={summary.evidence} guide={guide} /></div>)}</Field>
+      <Field title="适用对象" evidence={p.audience.evidence} guide={guide}>{p.audience.state === "documented" ? p.audience.value : unknown}</Field>
+      <div className="text-[12px] leading-relaxed text-ink-3">
+        <p>{publication.label}：{dateText(publication.date)}{historical ? " · 历史资料（原文距核验日已满7日）" : !publication.date.value ? " · 原文日期未知，无法判断历史背景" : ""}</p>
+        <p className="mt-2">{guide.verification.aiStatus === "passed" ? "AI对照核查已通过" : "AI核查待补"}，最终审核身份见下方来源与核验记录。具体法律适用性未知，不据此判断能否申报或捕捞。核验日不代表原文发布或更新。</p>
+      </div>
+      {summary.length > 0 && <Field title="内容摘要" guide={guide}>{summary.map((s, i) => <div key={i} className="mb-3"><p>{s.value}</p><Evidence ids={s.evidence} guide={guide} /></div>)}</Field>}
+      <details className="border-b border-line pb-4 text-[13px] text-ink-3">
+        <summary className="cursor-pointer text-accent">指南标题依据</summary>
+        <p className="mt-3 leading-relaxed">{p.title.value}</p><Evidence ids={titleEvidence} guide={guide} />
+      </details>
       {fields.map(([title, field]) => <Field key={title} title={title} evidence={field.evidence} guide={guide}>{field.state === "documented" ? field.value : unknown}</Field>)}
+      {secondary.filter(([, field]) => field.state === "documented").map(([title, field]) => <Field key={title} title={title} evidence={field.evidence} guide={guide}>{field.value}</Field>)}
       <Field title="文载状态" evidence={p.documentStatus.evidence} guide={guide}>{p.documentStatus.state === "unknown" ? unknown : p.documentStatus.value === "formal" ? "正式文件（文载）" : "征求意见稿（文载）"}</Field>
       {(Object.keys(dateNames) as Array<keyof typeof dateNames>).map(key => <Field key={key} title={dateNames[key]} evidence={p.dates[key].evidence} guide={guide}>{dateText(p.dates[key].value)}</Field>)}
-      <Field title="修订、废止与解释关系" guide={guide}>{p.relations.length ? p.relations.map((relation, i) => <div key={i}>
+      {p.relations.length > 0 && <Field title="修订、废止与解释关系" guide={guide}>{p.relations.map((relation, i) => <div key={i}>
         <p>{{ amends: "修订", repeals: "废止", interprets: "解释", supersedes: "取代" }[relation.type]} · <SourceLink url={relation.url}>{relation.title}</SourceLink></p>
         <Evidence ids={relation.evidence} guide={guide} />
-      </div>) : unknown}</Field>
+      </div>)}</Field>}
+      {(unverified.length > 0 || !p.relations.length) && <details className="border-b border-line pb-5 text-[13px] text-ink-3" aria-label="尚未核实的信息">
+        <summary className="cursor-pointer text-accent">尚未核实：{[...unverified.map(([title]) => title), ...(!p.relations.length ? ["修订关系"] : [])].join("、")}</summary>
+        <p className="my-3 leading-relaxed">以下信息尚未核实，不代表没有适用条件或限制。</p>
+        <div className="grid gap-5">{unverified.map(([title, field]) => <Field key={title} title={title} evidence={field.evidence} guide={guide}>{unknown}</Field>)}
+          {!p.relations.length && <Field title="修订、废止与解释关系" guide={guide}>{unknown}</Field>}
+        </div>
+      </details>}
       <Field title="官方办理或信息入口" evidence={p.serviceEntry.evidence} guide={guide}>
         {p.serviceEntry.state === "documented" ? <SourceLink url={p.serviceEntry.url}>{p.serviceEntry.label}</SourceLink> : unknown}
         <p className="mt-2 text-[12px] text-ink-3">原文记载入口不代表当前可办理，也不代表本站提供代办。</p>
@@ -78,13 +99,13 @@ export function BusinessGuideBody({ guide }: { guide: BusinessGuideReaderItem })
           <div><dt className="text-ink-3">核验日</dt><dd>{guide.verifiedAt.slice(0, 10)}（非原文发布日期）</dd></div>
           <div><dt className="text-ink-3">具体法律适用性</dt><dd>{unknown}</dd></div>
         </dl>
-        <p className="mt-4"><SourceLink url={guide.source.url}>查看来源原文</SourceLink></p>
       </Field>
     </div>
   </div>;
 }
 
-export default function OriginalGuide({ data }: { data: unknown; item: SiteItemDetail }) {
+function OriginalGuide({ data }: { data: unknown; item: SiteItemDetail }) {
   const details = data as { kind?: string; guide?: BusinessGuideReaderItem } | null;
   return details?.kind === "business_guide" && details.guide ? <BusinessGuideBody guide={details.guide} /> : null;
 }
+export default Object.assign(OriginalGuide, { rendersSummary: (data: unknown) => (data as { kind?: string; guide?: unknown } | null)?.kind === "business_guide" && !!(data as { guide?: unknown }).guide });

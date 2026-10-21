@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { Await, isRouteErrorResponse, Link, useAsyncError, useLoaderData, useNavigate, useRevalidator, type ClientLoaderFunctionArgs } from "react-router";
 import type { Route } from "./+types/item";
 import type { FeedItemSummary, SiteItemDetail } from "@aihot/contracts/site";
-import type { ComponentType } from "react";
+import type { ItemDetailPart } from "../modules";
 import { loadParts } from "../site-modules";
 import { ITEM_COPY, SITE } from "@aihot/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
@@ -35,7 +35,8 @@ import { isPhone, type Screen } from "../components/shell/screens";
 export const handle: Screen = { home: "featured", toolbar: true };
 export { pageHeaders as headers } from "../lib/api.server";
 
-const ITEM_PARTS = await loadParts<ComponentType<{ data: unknown; item: SiteItemDetail }>>(m => m.itemDetails);
+const ITEM_PARTS = await loadParts<ItemDetailPart>(m => m.itemDetails);
+const sameText = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
 
 const PosterSheet = lazy(() => import("../features/item/PosterSheet"));
 
@@ -229,7 +230,7 @@ function ItemPreview({ preview }: { preview: FeedItemSummary }) {
           )}
         </div>
         {!isX && <h1 data-page-title="" className="text-[26px] font-bold leading-[1.38] tracking-[-0.01em] text-ink">{preview.title}</h1>}
-        {preview.summary && (
+        {preview.summary && (isX || !sameText(preview.summary, preview.title)) && (
           <section className={isX ? "mt-4" : "mt-7"}>
             <div className="mb-2 text-[12px] font-semibold text-accent">{isX && preview.summary.replace(/\s+/g, " ").trim() === preview.title ? "原文" : "AI 导读"}</div>
             <p className="text-[18px] leading-[1.7] text-ink">{preview.summary}</p>
@@ -326,6 +327,7 @@ function ItemView({ item }: { item: SiteItemDetail }) {
   const timeLabel = item.publishedAt ? "发布时间" : "收录时间";
   const summaryOnly = item.readingMode === "summary-only";
   const details = ITEM_PARTS.filter(p => item.moduleDetails?.[p.name] != null);
+  const structuredSummary = details.some(({ name, part }) => part.rendersSummary?.(item.moduleDetails![name]));
   const showOutline = item.outline.length >= 3;
   const originalLabel = isX ? "在 X 查看原推" : "打开原文";
 
@@ -500,9 +502,9 @@ function ItemView({ item }: { item: SiteItemDetail }) {
             )}
           </div>
           {!isX && <h1 data-page-title="" className="text-[26px] font-bold leading-[1.38] tracking-[-0.01em] text-ink lg:text-[32px] lg:leading-[1.34] xl:text-[36px] xl:leading-[1.3]">{item.title}</h1>}
-          {!isX && item.originalTitle && <p className="mt-2.5 text-[14px] leading-relaxed text-ink-4">{item.originalTitle}</p>}
+          {!isX && item.originalTitle && !sameText(item.originalTitle, item.title) && <p className="mt-2.5 text-[14px] leading-relaxed text-ink-4">{item.originalTitle}</p>}
 
-          {item.summary && (!isX || item.summary.replace(/\s+/g, " ").trim() !== item.title) && (
+          {item.summary && !structuredSummary && !sameText(item.summary, item.title) && (
             <section className={isX ? "mt-4" : "mt-7 xl:mt-8"}>
               <div className="mb-2 text-[12px] font-semibold text-accent">{summaryOnly ? "摘要" : "AI 导读"}</div>
               <p className="text-[18px] leading-[1.7] text-ink xl:text-[20px] xl:leading-[1.7]">{item.summary}</p>

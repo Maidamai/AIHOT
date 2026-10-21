@@ -19,6 +19,11 @@ export interface AdminNavEntry {
 
 export type Part<T> = () => Promise<{ default: T }>;
 
+export type ItemDetailPart = ComponentType<{ data: unknown; item: SiteItemDetail }> & {
+  /** A structured part can render the summary once, beside its important fields. */
+  rendersSummary?: (data: unknown) => boolean;
+};
+
 /** What each panel of the agent page, and each module's part drawn on it, is given (routes/agent.tsx). */
 export interface AgentPanelProps {
   /** The site's public address, read on the server so the page and the browser agree. */
@@ -155,7 +160,7 @@ export interface WebModule {
   agent?: Part<AgentPart>;
   topicPage?: Part<TopicPagePart>;
   /** Structured content inside the original item page, keyed by this module's name. */
-  itemDetails?: Part<ComponentType<{ data: unknown; item: SiteItemDetail }>>;
+  itemDetails?: Part<ItemDetailPart>;
   /** Paths of the marks it serves that are drawn in white, for a dark tile (components/BrandMark.tsx). */
   darkMarks?: string[];
   /** The starred page (routes/starred.tsx): buttons ahead of 导入文件 that bring stars in from elsewhere, each resolving to the line it reports. */
