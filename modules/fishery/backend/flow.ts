@@ -388,7 +388,7 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
           });
           state.outcome=outcome;
           const stopped=outcome.label!=='SCORED';
-          stage=stopped?(outcome.label==='BLOCK'||outcome.label==='UNKNOWN'?'prefilter':stage==='generation'?'score-2':stage):'generation';
+          stage=stopped?(outcome.label==='BLOCK'||outcome.label==='UNKNOWN'?'prefilter':String(stage)==='generation'?'score-2':stage):'generation';
           await sql`UPDATE fishery_flow_tasks SET selection=${sql.json(state)},stage=${stage},status=${stopped?'needs_evidence':'running'},error=${stopped?sql.json({code:'FISHERY_SELECTION_STOP',stage,phase:'selection',reason:outcome.label+'; selection is not fact approval',receiptId:null,noAutomaticRetry:true}):null},updated_at=now() WHERE id=${id}`;
           if(stopped)return;
         }
