@@ -1,5 +1,17 @@
 # 手动官方栏目采集与 AI 准备
 
+## 业务指南单次隔离核查
+
+`node modules/fishery/scripts/review-business-guides.ts --id <guide-id>` 默认只读取完整归档、校验当前指南绑定并打印请求/输出包络及原累计预算，不创建任务、不调用模型。可重复 `--id`，每批必须明确给出1至8个唯一指南ID；8项只是单批安全边界，不是累计调用授权上限。旧4份指南各需至少1次核查，新6份候选各需至少1次；预检通过不代表AI或人工批准。
+
+真实处理由操作者先停止既有手动consumer，核对未决任务、回执及同一累计账本，再仅为此oneshot进程启用既有模型配置和凭据：`node modules/fishery/scripts/review-business-guides.ts --execute --id <guide-id> --actor <operator>`。所有指定指南先完整预检，之后在既有全局processing lease内串行创建/复用任务并核查；不启动第二consumer、pg-boss调度或常驻API模型开关。SIGTERM/SIGINT或失锁后等待在途落账，不处理下一指南，不自动重试。最终人工批准仍须正常后台操作。
+
+旧20次授权账本须独立执行明确升级：`node modules/fishery/scripts/review-business-guides.ts --upgrade-budget --actor <operator> --reason <audit-reason>`；该操作模型开关可以关闭，只保留原历史entry并升级为累计10元金额限制，不重置、不复制、不退款，也不与execute联动。旧账本若有pending/unknown/refused先核账，CLI拒绝升级。预算升级后另跑只读预检，再显式选择是否执行；部署回退不得回滚累计费用账本。
+
+普通execute不会重试failed/running任务。已对账且确有received/completed原始响应时，单独用 `--resume-cache --id <guide-id> --actor <operator>` 在同一租约内仅恢复缓存；预检必须显示requiredCalls=0，不能借恢复产生新计费。输出只有安全绑定、审核状态、回执和预算指标，不输出完整正文、凭据或内部审核备注。API页面读取和本CLI默认预检均为零模型调用。
+
+## 手动栏目采集
+
 范围仅农业农村部渔业渔政管理局「工作动态」和福建省海洋与渔业局「省局动态」。前者旧「远洋渔业」专栏更新慢，后者需保留完整正文容器；样本链接只用于核对解析，不作为抓取列表。当前页之外的历史分页尚未采集。
 
 在具有正常公网 DNS 的受控环境手动运行（Node ≥24.11，已安装本仓库依赖）：
