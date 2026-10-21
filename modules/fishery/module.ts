@@ -7,6 +7,7 @@ export default defineModule({ name: "fishery", apiPaths: [/^\/api\/admin\/fisher
   {path:"fishery/:id",file:"web/reader-item.tsx",id:"fishery-reader-item"},
   {path:"fishery/*",file:"web/reader-unavailable.tsx",id:"fishery-reader-unavailable"},
 ], adminPages: [
+  {path:"admin/fishery/manual-sources",file:"web/business-manual-sources.tsx",id:"fishery-manual-sources"},
   {path:"admin/fishery/guides/:id",file:"web/business-admin.tsx",id:"fishery-business-admin"},
   { path: "admin/fishery", file: "web/list.tsx", id: "fishery-materials" },
   { path: "admin/fishery/collect", file: "web/collect.tsx", id: "fishery-batches" },
