@@ -1,5 +1,5 @@
 // Fixed cumulative authorization; historical reservations retain their original amounts.
-export const TRIAL = Object.freeze({ id:"deepseek-fishery-20261020", maxRequests:20, reserveMicroCny:400_000, maxReservedMicroCny:10_000_000,
+export const TRIAL = Object.freeze({ id:"deepseek-fishery-20261020", maxRequests:null, reserveMicroCny:400_000, maxReservedMicroCny:10_000_000,
   maxWireBytes:96_000, inputTokenCeiling:100_000, maxOutputTokens:2048, endpoint:"https://api.deepseek.com/chat/completions", model:"deepseek-flash", verifiedVersion:"DeepSeek-V4.1-Flash-1017", verifiedAt:"2026-10-20" });
 export function validateTrialWire(url:unknown,options:RequestInit|undefined) {
   if(url!==TRIAL.endpoint||options?.method!=="POST"||typeof options.body!=="string"||Buffer.byteLength(options.body)>TRIAL.maxWireBytes) throw new Error("Trial request destination/method/size refused");
@@ -14,11 +14,32 @@ export function trialUsage(value:unknown) {
   // Peak uncached input CNY2/M + output CNY8/M; no cache/idle discount assumed.
   return {promptTokens:Number(u.prompt_tokens),completionTokens:Number(u.completion_tokens),estimatedMicroCny:Number(u.prompt_tokens)*2+Number(u.completion_tokens)*8};
 }
-export function trialCapacity(entries:{state:string;reservedMicroCny:number}[],requiredCalls=1) {
+export type TrialEntry={id?:number;state:string;reservedMicroCny:number;usage?:ReturnType<typeof trialUsage>|null};
+export const amountOnlyPolicy="amount-only/v1";
+export function trialBudget(entries:TrialEntry[]) {
+  let spentMicroCny=0,unsettledReserveMicroCny=0;
+  for(const e of entries) {
+    if(!Number.isSafeInteger(e.reservedMicroCny)||e.reservedMicroCny<0||!["received","pending","unknown","refused"].includes(e.state)) throw new Error("Trial historical reservation missing/invalid; manual reconciliation required");
+    if(e.usage!=null&&e.usage.promptTokens!==undefined&&e.usage.completionTokens!==undefined&&e.usage.estimatedMicroCny!==undefined) {
+      const usage=trialUsage({prompt_tokens:e.usage.promptTokens,completion_tokens:e.usage.completionTokens});
+      if(usage.estimatedMicroCny!==e.usage.estimatedMicroCny||usage.estimatedMicroCny>e.reservedMicroCny) throw new Error("Trial usage exceeds reservation or is inconsistent; manual reconciliation required");
+      if(e.state==="received") {spentMicroCny+=usage.estimatedMicroCny;continue;}
+    }
+    unsettledReserveMicroCny+=e.reservedMicroCny;
+  }
+  const occupiedMicroCny=spentMicroCny+unsettledReserveMicroCny;
+  if(!Number.isSafeInteger(occupiedMicroCny)) throw new Error("Trial budget integer overflow");
+  return {spentMicroCny,unsettledReserveMicroCny,occupiedMicroCny};
+}
+export function validateTrialLedger(value:unknown): asserts value is {id:string;maxRequests:null;maxReservedMicroCny:number;policy?:string;entries:TrialEntry[]} {
+  const ledger=value as {id?:unknown;maxRequests?:unknown;maxReservedMicroCny?:unknown;policy?:unknown;entries?:TrialEntry[]}|null;
+  if(!ledger||ledger.id!==TRIAL.id||ledger.maxRequests!==null||ledger.maxReservedMicroCny!==TRIAL.maxReservedMicroCny||ledger.policy!==amountOnlyPolicy||!Array.isArray(ledger.entries)||ledger.entries.some((e,i)=>e.id!==i+1)||trialBudget(ledger.entries).occupiedMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Existing cumulative authorization ledger missing/changed; explicit amount-only policy upgrade required");
+}
+export function trialCapacity(entries:TrialEntry[],requiredCalls=1) {
   if(!Number.isInteger(requiredCalls)||requiredCalls<1||requiredCalls>2) throw new Error("Invalid stage capacity request");
-  if(entries.some(e=>!Number.isSafeInteger(e.reservedMicroCny)||e.reservedMicroCny<0)) throw new Error("Trial historical reservation missing/invalid; manual reconciliation required");
+  const budget=trialBudget(entries);
   if(entries.some(e=>e.state!=="received")) throw new Error("Trial has pending, refused or unknown outcome; manual reconciliation required");
-  if(entries.length+requiredCalls>TRIAL.maxRequests||entries.reduce((sum,e)=>sum+e.reservedMicroCny,0)+requiredCalls*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard request/reservation limit reached");
+  if(budget.occupiedMicroCny+requiredCalls*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard amount/reservation limit reached");
 }
 export function installTrialTransport(callbacks:{reserve:(wireBytes:number)=>Promise<number>;beforeSend?:()=>Promise<void>;settle:(id:number,state:"received"|"refused"|"unknown",usage:ReturnType<typeof trialUsage>|null,responseModel?:string|null)=>Promise<void>},transport:typeof fetch=globalThis.fetch) {
   const previous=globalThis.fetch;

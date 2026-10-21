@@ -17,7 +17,7 @@ import { sha256 } from "./source-adapters.ts";
 import { withFisheryAuthorization, assertFisheryCapacity, authorizationKey } from "./authorization.ts";
 
 import { buildEvidenceCatalog, anchorIds, assertSavedEvidenceArtifact } from "./evidence.ts";
-import { TRIAL } from "./trial-transport.ts";
+import { TRIAL, validateTrialLedger } from "./trial-transport.ts";
 import { acquireProcessingLease, assertProcessingLease } from "./processing-lease.ts";
 
 const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
@@ -195,7 +195,8 @@ async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=fals
     JOIN LATERAL (SELECT revision,content_hash FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1) o ON true
     LEFT JOIN LATERAL (SELECT id,decision FROM fishery_reviews WHERE document_id=d.id AND revision=o.revision AND source_revision=s.revision ORDER BY id DESC LIMIT 1) r ON true WHERE d.id=${row.document_id}`;
   const reasons:string[]=[],ledger=stored?.value,entries=Array.isArray(ledger?.entries)?ledger.entries:[];
-  const ledgerValid=ledger?.id===TRIAL.id&&ledger.maxRequests===TRIAL.maxRequests&&ledger.maxReservedMicroCny===TRIAL.maxReservedMicroCny&&Array.isArray(ledger.entries)&&entries.length<=TRIAL.maxRequests&&entries.every((e:any,i:number)=>e.id===i+1&&["pending","unknown","received","refused"].includes(e.state)&&Number.isSafeInteger(e.reservedMicroCny)&&e.reservedMicroCny>=0)&&entries.reduce((sum:number,e:any)=>sum+e.reservedMicroCny,0)<=TRIAL.maxReservedMicroCny;
+  let ledgerValid=false;
+  try {validateTrialLedger(ledger);ledgerValid=true;} catch { /* Invalid authorization remains closed. */ }
   if(!ledgerValid) reasons.push("Existing cumulative authorization ledger is missing or inconsistent; no allowance is created");
   if(entries.some((e:any)=>e.state!=="received")) reasons.push("Global ledger pending/unknown/refused outcome requires billing reconciliation");
   if(receipts.some(r=>["pending","unknown"].includes(r.status))) reasons.push("Global fishery receipt pending/unknown requires reconciliation");

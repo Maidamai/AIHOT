@@ -26,10 +26,10 @@ import { paidRequest, completeReceipt } from "@aihot/backend/providers/receipts"
 import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
 
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
-import { authorizationKey } from "../backend/authorization.ts";
+import { authorizationKey, upgradeExistingTrialToAmountOnly, assertFisheryCapacity } from "../backend/authorization.ts";
 import { prepareFisheryDraft, buildFisheryDraftRequest } from "../backend/ai-draft.ts";
 import { acquireProcessingLease } from "../backend/processing-lease.ts";
-import { TRIAL } from "../backend/trial-transport.ts";
+import { TRIAL, amountOnlyPolicy, trialBudget, trialCapacity } from "../backend/trial-transport.ts";
 
 import { readerPage, readerItem } from "../backend/reader.ts";
 
@@ -597,8 +597,8 @@ test("manual processor only consumes explicit flows, persists blocks and failure
   const previousFetch=globalThis.fetch;
   globalThis.fetch=async()=>{throw new Error("Unexpected external request in manual processor test");};
   process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL="https://api.deepseek.com";process.env.LLM_REASONING_TOKENS="0";process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';
-  const ledger={id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny};
-  const setLedger=async(entries:{state:string;reservedMicroCny:number}[])=>{await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json({...ledger,entries})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;};
+  const ledger={id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny};
+  const setLedger=async(entries:{state:string;reservedMicroCny:number}[])=>{await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json({...ledger,entries:entries.map((e,i)=>({...e,id:i+1}))})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;};
   let calls=0,fail=false,ineligible=false,emptySummary=false,hold:Promise<void>|undefined,releaseHold:(()=>void)|undefined;
   const invoke=async(options:any)=>{
     calls++;if(hold) await hold;if(fail) throw new Error("Synthetic model failure");
@@ -631,9 +631,9 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     assert.equal((await settled(closedJob)).state,"failed");
     const closedTask=await flowDetail(closed.id);assert.equal(closedTask.status,"failed");assert.equal(closedTask.error.phase,"authorization");assert.match(closedTask.error.reason,/MODEL_CALLS_ENABLED/);assert.equal(calls,0);
     config.modelCallsEnabled=true;
-    await setLedger(Array.from({length:20},()=>({state:"received",reservedMicroCny:400000})));
+    await setLedger(Array.from({length:25},()=>({state:"received",reservedMicroCny:400000})));
     const full=await task("manual-capacity"),fullJob=await enqueueOn(flowQueue,{id:full.id});
-    assert.equal((await settled(fullJob)).state,"failed");assert.match((await flowDetail(full.id)).error.reason,/hard request/);assert.equal(calls,0);
+    assert.equal((await settled(fullJob)).state,"failed");assert.match((await flowDetail(full.id)).error.reason,/hard amount/);assert.equal(calls,0);
     await setLedger([]);
     process.env.LLM_MODEL="refused-model";
     const refused=await task("manual-authorization"),refusedJob=await enqueueOn(flowQueue,{id:refused.id});
@@ -885,7 +885,7 @@ test("a verified irrelevant recapture supersedes qualified evidence while 404 an
 
 test("synthetic interrupted-before-request reconciliation is leased, fingerprinted, zero-call and preserves saved generation",async()=>{
   const boss=await getBoss({schedule:false,supervise:false});await boss.createQueue(flowQueue.name,flowQueue.options);
-  const ledger={id:TRIAL.id,entries:[] as {id:number;state:string;reservedMicroCny:number}[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny};
+  const ledger={id:TRIAL.id,entries:[] as {id:number;state:string;reservedMicroCny:number}[],maxRequests:TRIAL.maxRequests,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny};
   const setLedger=async()=>sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json(ledger)}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
   await setLedger();
   const body="合成远洋渔业中断恢复测试原文。",evidence=["p1s1"],date={date:{precision:"unknown",value:null},evidence:[]};
@@ -996,4 +996,34 @@ test("synthetic old lease owner cannot claim after waiting for a document lock",
     assert.deepEqual(await sql`SELECT value FROM settings WHERE key=${authorizationKey}`,ledgerBefore);assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n,receiptCount);
     await ownerB.assertHeld();
   }finally{releaseDocument();await editing;await ownerB?.release();await ownerA.release();}
+});
+
+
+test("explicit amount-only upgrade retains cumulative history and audits the original ledger",async()=>{
+  const entries=Array.from({length:18},(_,i)=>({id:i+1,state:"received",wireBytes:100,reservedMicroCny:400_000,usage:{promptTokens:100,completionTokens:10,estimatedMicroCny:280}}));
+  const old={id:TRIAL.id,maxRequests:20,maxReservedMicroCny:10_000_000,entries};
+  await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json(old)}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
+  await assert.rejects(assertFisheryCapacity(),/explicit amount-only/);
+  const result=await upgradeExistingTrialToAmountOnly("tester","User explicitly cancelled count cap; retain cumulative ten yuan");
+  assert.equal(result.entryCount,18);assert.equal(result.spentMicroCny,5040);assert.equal(result.modelCalls,0);
+  const [stored]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+  assert.deepEqual(stored!.value.entries,entries);assert.equal(stored!.value.maxRequests,null);
+  await assertFisheryCapacity(2);
+  const [record]=await sql`SELECT before,after FROM audit_log WHERE subject=${authorizationKey} AND action='fishery.authorization.amount_only' ORDER BY id DESC LIMIT 1`;
+  assert.match(record!.before.ledgerHash,/^[a-f0-9]{64}$/);assert.equal(record!.after.previousLedgerHash,record!.before.ledgerHash);
+  await assert.rejects(upgradeExistingTrialToAmountOnly("tester","repeat"),/upgrade refused/);
+});
+
+test("cumulative amount budget uses validated received usage and reserves every unresolved cost",()=>{
+  const usage={promptTokens:100,completionTokens:10,estimatedMicroCny:280};
+  const entries=Array.from({length:30},()=>({state:"received",reservedMicroCny:400_000,usage}));
+  assert.doesNotThrow(()=>trialCapacity(entries,2));assert.equal(trialBudget(entries).occupiedMicroCny,8400);
+  assert.equal(trialBudget([{state:"received",reservedMicroCny:400_000}]).occupiedMicroCny,400_000);
+  for(const state of ["pending","unknown","refused"]) {
+    assert.equal(trialBudget([{state,reservedMicroCny:400_000,usage}]).occupiedMicroCny,400_000);
+    assert.throws(()=>trialCapacity([{state,reservedMicroCny:400_000,usage}]),/reconciliation/);
+  }
+  assert.throws(()=>trialCapacity(Array.from({length:25},()=>({state:"received",reservedMicroCny:400_000}))),/hard amount/);
+  assert.throws(()=>trialBudget([{state:"received",reservedMicroCny:200,usage}]),/exceeds reservation/);
+  assert.throws(()=>trialBudget([{state:"received",reservedMicroCny:400_000,usage:{...usage,promptTokens:0.5}}]),/usage/);
 });
