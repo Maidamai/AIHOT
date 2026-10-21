@@ -8,7 +8,7 @@ import { getBoss, stopBoss, enqueueOn, shutdownSignal } from "@aihot/backend/job
 import { acquireProcessingLease, assertProcessingLease, type ProcessingLease } from "../backend/processing-lease.ts";
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { authorizationKey, assertFisheryCapacity, withFisheryAuthorization } from "../backend/authorization.ts";
-import { TRIAL } from "../backend/trial-transport.ts";
+import { TRIAL, amountOnlyPolicy } from "../backend/trial-transport.ts";
 import { flowQueue } from "../backend/flow.ts";
 
 after(async()=>{await stopBoss();await closeDb();});
@@ -16,7 +16,7 @@ const wire={method:"POST",body:JSON.stringify({model:TRIAL.model,messages:[{role
 const response=()=>new Response(JSON.stringify({model:"mock",usage:{prompt_tokens:10,completion_tokens:2}}),{status:200});
 async function seedTestLedger() {
   assert.match(new URL(config.databaseUrl).pathname,/_(test|ci)$/,"never initialize/reset a real authorization ledger");
-  await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:TRIAL.maxRequests,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
+  await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
 }
 async function entries() {return (await sql`SELECT value->'entries' AS entries FROM settings WHERE key=${authorizationKey}`)[0]!.entries as {state:string}[];}
 async function terminateOwnLease(lease:Pick<ProcessingLease,"backendPid">) {

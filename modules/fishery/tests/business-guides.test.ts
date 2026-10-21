@@ -15,7 +15,7 @@ import { businessGuideContext, businessGuideAdminDetail, businessGuideReaderPage
   updateBusinessGuide, decideBusinessGuide, businessGuideHistory, validateBusinessGuidePayload } from "../backend/business-guides.ts";
 import type { BusinessGuideAdminRecord, BusinessGuideContext, BusinessGuidePayload } from "../business-contracts.ts";
 
-import { createGuideAIReview, guideAIClaims, guideAIResultSchema, processGuideAIReview, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
+import { createGuideAIReview, guideAIClaims, guideAIResultSchema, guideAIResultToWire, processGuideAIReview, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error("Offline guide gate tests forbid external/model requests"); };
@@ -63,9 +63,14 @@ function aiAnswer(p: BusinessGuidePayload): GuideAIResult {
 async function aiPass(row: BusinessGuideAdminRecord, mutate?: (result: GuideAIResult) => void) {
   const task = await createGuideAIReview(row.id, { identity: `offline_${row.revision}`, expectedRevision: row.revision, payloadHash: row.payloadHash, snapshotHash: row.snapshotHash }, "synthetic-ai-requester");
   const data = aiAnswer(row.payload); mutate?.(data);
-  const response = { model: "offline-fake", choices: [{ message: { role: "assistant", content: JSON.stringify(data) } }], usage: { prompt_tokens: 100, completion_tokens: 100 } };
-  const [r] = await sql`INSERT INTO receipts(logical_key,service,model,purpose,subject,status,response) VALUES(${task.id},'deepseek','offline-fake',${task.request_intent.purpose},${task.request_intent.subject},'received',${sql.json(response)}) RETURNING id`;
-  await processGuideAIReview(task.id, (async options => ({ data: options.schema.parse(data), receiptId: Number(r!.id), model: "offline-fake", usage: null, reused: true })) as GuideAIInvoke);
+  await processGuideAIReview(task.id, (async options => {
+    const input = JSON.parse(String(options.user));
+    const wire = guideAIResultToWire(data, input.source.evidenceCatalog.spans.map((span: [number, string]) => span[1]), input.claims);
+    const response = { model: "offline-fake", choices: [{ message: { role: "assistant", content: JSON.stringify(wire) }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 100 } };
+    assert.equal(options.purpose, task.request_intent.purpose); assert.equal(options.subject, task.request_intent.subject);
+    const [r] = await sql`INSERT INTO receipts(logical_key,service,model,purpose,subject,status,response) VALUES(${task.id},'deepseek','offline-fake',${options.purpose},${options.subject},'received',${sql.json(response)}) RETURNING id`;
+    return { data: options.schema.parse(wire), receiptId: Number(r!.id), model: "offline-fake", usage: null, reused: false };
+  }) as GuideAIInvoke);
   return businessGuideAdminDetail(row.id);
 }
 async function finalApproval(row: BusinessGuideAdminRecord, actor: string) {
