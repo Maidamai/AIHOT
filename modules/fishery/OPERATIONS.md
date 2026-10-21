@@ -158,3 +158,12 @@ v5.5对reported_occurred补充保守的转述纠正、否认和歧义门禁：�
 每次请求在锁定原累计账本后、写入预留前核验租约，并在实际发送前再次核验。预留已提交但发送前失锁时保留pending，不自动退款或重发；已经发送的请求允许接收响应并持久结算。失锁先停止取新任务，等待在途响应和handler落账后才完成release及队列关闭，不用通用shutdown abort冒充排空。强杀、失锁、缺失心跳或未决费用均须人工核对任务、队列job、回执与同一累计账本；不得以重启、修改状态或清零账本消除未知结果。部署保持restart:no，不自动故障重启或补跑。
 
 管理员reconcile只在当前证据/执行指纹、停止确认、租约互斥及未决费用检查均通过后记录中断结果；该操作零模型调用、不自动排队。已有生成落库时必须保留原生成及回执，区分尚未发出的审核阶段。后续恢复或可能新增计费的尝试仍由管理员显式选择，并再次核验当前版本、回执与剩余额度。原任务、归档、回执、审计及累计费用历史均保留，账本不清零。
+
+
+## 人工核验公开官方归档导入
+
+另有独立的管理员入口 `GET /api/admin/fishery/manual-sources` 与带正常会话/CSRF 的 `POST /api/admin/fishery/manual-sources/:id/import`。其读取 `<data-dir>/fishery-manual-archives/<id>/manifest.json`、`receipt.json`、`raw.bin` 和 `body.txt`，不主动访问网站、调用模型、批准素材或发布。该入口仅接受代码明确核定的四个官方原件URL，不属于三个栏目采集器，不能计作自动来源接通。
+
+manifest 使用严格版本 `manual-official-source/1`：`id,url,name,attribution,title,publishedAt,publicationLiteral,rawSha256,bodySha256,parser`，HTML另需已核定的 `bodySelector`。parser 为 `manual-official-html/v1` 或 `manual-official-pdf/v1`。日期未知用null，PDF签署日不代替网页发布日期。receipt使用现有 `requestedUrl,finalUrl,status,finishedAt,sha256` 结构；只接收HTTP200，原件字节和回执/manifest哈希均需一致。所有读取拒绝目录或文件软链接、非法ID及超限文件。
+
+HTML以明确正文容器提取全部文字、段落和表格，不截断；图片附件不OCR、不伪合并成人工正文。PDF通过现有extractPdf重新解析，要求完整连续页码和正文，缺失工具、空白页或结构解析失败会显示不可导入。服务器重新解析的正文必须逐字节等于body.txt，不能仅信任人工提供的body/hash。回执、哈希和手动核验不是网站签名；来源归属、正文意义、日期冲突、适用性和权利仍需普通人工审核。新来源自动采集、全文及各项使用许可关闭；导入仍经过既有source/document/observation链，不自动产生文章或流程任务。

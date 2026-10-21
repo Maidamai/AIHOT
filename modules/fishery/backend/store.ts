@@ -114,7 +114,7 @@ export async function listDocuments() {
 export function evidenceIdentity(input: unknown) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const capture = payload.sourceCapture;
-  if (capture) { const { capturedAt: _time, attachmentCapturedAt: _attachmentTime, archiveId: _archive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
+  if (capture) { const { capturedAt: _time, attachmentCapturedAt: _attachmentTime, archiveId: _archive, manualArchiveId: _manualArchive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
   return hash(payload);
 }
 type CaptureColumn={id:string;name:string;issuer:string};
@@ -137,7 +137,7 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     // Lock the source to serialize imports of the same URL and preserve operator rights settings.
     await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
     if (!(await tx`SELECT 1 FROM fishery_sources WHERE source_id=${sourceId}`).length) {
-      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: sourceAttribution, healthNote: "手动官方栏目试采；自动采集关闭，转载权未知" });
+      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: sourceAttribution, healthNote: column.id.startsWith("manual-") ? "人工核验公开官方归档；非自动采集器，HTTP回执不是网站签名，尚需普通人工审核，转载权未知" : "手动官方栏目试采；自动采集关闭，转载权未知" });
       await tx`INSERT INTO fishery_sources(source_id,revision,profile) VALUES (${sourceId},1,${tx.json(profile)})`;
       await audit(actor,"fishery.source",`source:${sourceId}`,"Manual batch registration",null,{ revision:1, profile },{db:tx});
     }

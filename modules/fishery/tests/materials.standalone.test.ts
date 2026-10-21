@@ -829,3 +829,54 @@ test("original IOTC entry10 stays rejected and an ambiguous 20281 source cannot 
   assert.throws(()=>validateFisheryDraft(input,fisheryDraftWireSchema(buildEvidenceCatalog(input),manual).parse(counterfactual),manual),/Calendar date/);
   assert.equal(JSON.stringify(fixture),original);
 });
+
+
+test("manual official archives require exact original bytes, complete deterministic bodies and ordinary review",async()=>{
+  const {prepareManualSource,verifyManualSource,listManualSources}=await import("../backend/manual-sources.ts");
+  const {readSourceBody}=await import("../backend/source-body.ts");
+  const {captureSchema}=await import("../contracts.ts");
+  const id="manual-archive-test",url="https://fgs.moa.gov.cn/flfg/202508/t20250801_6476248.htm";
+  const text="远洋渔业官方归档用于核对原文和完整附件。".repeat(12);
+  const raw=Buffer.from(`<meta name="ArticleTitle" content="公开法规"><div class="TRS_Editor"><p>${text}</p><table><tr><td>最后表格</td><td>完整保留</td></tr></table><p>最后段落</p></div>`);
+  const manifest={version:"manual-official-source/1",id,url,name:"公开法规",attribution:"官方归档来源",title:"公开法规",publishedAt:null,publicationLiteral:null,rawSha256:sha256(raw),bodySha256:"0".repeat(64),parser:"manual-official-html/v1",bodySelector:".TRS_Editor"};
+  const receipt={requestedUrl:url,finalUrl:url,status:200,finishedAt:"2026-10-21T00:00:00Z",sha256:sha256(raw)};
+  const parsed=await prepareManualSource(raw,manifest,receipt);
+  assert.ok(parsed.body.endsWith("最后段落"));assert.ok(parsed.body.includes("最后表格完整保留"));
+  assert.equal(parsed.sourceCapture.adapter,"manual_official");assert.equal(parsed.sourceCapture.acquisitionMode,"archive_replay");
+  for(const status of [404,412]) await assert.rejects(prepareManualSource(raw,manifest,{...receipt,status}),/HTTP 200/);
+  await assert.rejects(prepareManualSource(Buffer.concat([raw,Buffer.from("changed")]),manifest,receipt),/hashes/);
+  await assert.rejects(prepareManualSource(raw,{...manifest,url:"https://example.com/"},receipt),/official URL/);
+  await assert.rejects(prepareManualSource(raw,{...manifest,bodySelector:"body"},receipt),/selector/);
+  assert.equal(captureSchema.safeParse({...parsed.sourceCapture,adapter:"moa"}).success,false);
+  assert.equal(captureSchema.safeParse({...parsed.sourceCapture,archiveId:"old-archive"}).success,false);
+  const payload={...observationFixture,rawSha256:sha256(raw),sourceCapture:parsed.sourceCapture};
+  const relocated={...payload,sourceCapture:{...parsed.sourceCapture,manualArchiveId:"other-archive",capturedAt:"2026-10-22T00:00:00Z"}};
+  assert.equal(evidenceIdentity(payload),evidenceIdentity(relocated));
+  assert.notEqual(evidenceIdentity(payload),evidenceIdentity({...payload,sourceCapture:{...parsed.sourceCapture,bodySha256:"1".repeat(64)}}));
+  assert.notEqual(evidenceIdentity(payload),evidenceIdentity({...payload,rawSha256:"2".repeat(64),sourceCapture:{...parsed.sourceCapture,rawSha256:"2".repeat(64)}}));
+  const dataDir=await mkdtemp(path.join(tmpdir(),"manual-archives-")),dir=path.join(dataDir,"fishery-manual-archives",id);
+  try {
+    await mkdir(dir,{recursive:true});await writeFile(path.join(dir,"manifest.json"),JSON.stringify({...manifest,bodySha256:sha256(parsed.body)}));
+    await writeFile(path.join(dir,"receipt.json"),JSON.stringify(receipt));await writeFile(path.join(dir,"raw.bin"),raw);await writeFile(path.join(dir,"body.txt"),parsed.body);
+    assert.equal((await verifyManualSource(dataDir,id)).body,parsed.body);
+    assert.equal((await listManualSources(dataDir))[0]!.importable,true);
+    await writeFile(path.join(dir,"body.txt"),parsed.body.slice(0,-10));
+    await assert.rejects(verifyManualSource(dataDir,id),/complete deterministic/);
+    assert.equal((await listManualSources(dataDir))[0]!.importable,false);
+    await assert.rejects(verifyManualSource(dataDir,"../escape"));
+    await assert.rejects(readSourceBody({manualArchiveId:"../escape",bodySha256:sha256(parsed.body)}),/Invalid manual archive/);
+    assert.equal(await readSourceBody({bodySha256:null}),null);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("manual PDF archives preserve all pages and fail on incomplete extraction or invented publication dates",async()=>{
+  const {prepareManualSource}=await import("../backend/manual-sources.ts");
+  const raw=Buffer.from("%PDF-synthetic original"),url="https://www.moa.gov.cn/govpublic/YYJ/202507/P020250731549012145690.pdf";
+  const m={version:"manual-official-source/1",id:"pdf-test",url,name:"官方原件",attribution:"官方来源",title:"官方PDF",publishedAt:null,publicationLiteral:null,rawSha256:sha256(raw),bodySha256:"0".repeat(64),parser:"manual-official-pdf/v1"};
+  const r={requestedUrl:url,finalUrl:url,status:200,finishedAt:"2026-10-21T00:00:00Z",sha256:sha256(raw)};
+  const parsed={status:"parsed" as const,rawSha256:sha256(raw),parser:"Mock Poppler/v1",pages:2,text:"--- Page 1 ---\n完整第一页\n--- Page 2 ---\n完整第二页"};
+  const result=await prepareManualSource(raw,m,r,{parsePdf:async()=>parsed});assert.equal(result.sourceCapture.attachmentPages,2);assert.ok(result.body.endsWith("完整第二页"));
+  await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,text:"--- Page 1 ---\n仅第一页"})}),/page coverage/);
+  await assert.rejects(prepareManualSource(raw,{...m,publishedAt:"2025-07-14T00:00:00Z"},r,{parsePdf:async()=>parsed}),/publication date/);
+  await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,status:"failed",error:"missing parser"})}),/Full PDF parsing failed/);
+});
