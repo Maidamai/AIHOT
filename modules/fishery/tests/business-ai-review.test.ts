@@ -10,7 +10,7 @@ import { buildEvidenceCatalog } from "../backend/evidence.ts";
 import { observationFixture } from "./fixtures.ts";
 import { businessGuideContext, createBusinessGuide, updateBusinessGuide } from "../backend/business-guides.ts";
 import type { BusinessGuideContext, BusinessGuidePayload } from "../business-contracts.ts";
-import { assessGuideAIResult, buildGuideAIReviewRequest, guideAIClaims, createGuideAIReview, getCurrentGuideAIReview, processGuideAIReview, resumeGuideAIReview, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
+import { assessGuideAIResult, buildGuideAIReviewRequest, guideAIClaims, createGuideAIReview, getCurrentGuideAIReview, processGuideAIReview, resumeGuideAIReview, preflightGuideAIReview, guideAIResultToWire, guideAIOutputEnvelopeBytes, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
 import { acquireProcessingLease } from "../backend/processing-lease.ts";
 import { trialCapacity, TRIAL } from "../backend/trial-transport.ts";
 import { chatJson } from "@aihot/backend/providers/llm";
@@ -54,7 +54,7 @@ function payload(c: Pick<BusinessGuideContext, "catalog">): BusinessGuidePayload
 
 const input = { body, bodySha256: sha256(body), observationRevision: 1 };
 function answer(p: BusinessGuidePayload): GuideAIResult {
-  return { coverage: "complete_input", findings: guideAIClaims(p).map(c => ({ claimId: c.id, verdict: "supported", evidence: c.evidenceIds, reason: "Synthetic support" })), omissions: ["conditions_exceptions", "materials_completeness", "amounts_dates", "applicability", "attachments_scope"].map(field => ({ field, verdict: "none", evidence: [], reason: "Synthetic no omission" })) } as GuideAIResult;
+  return { coverage: "complete_input", findings: guideAIClaims(p).map(c => ({ claimId: c.id, verdict: "supported", evidence: c.evidenceIds, reason: "Synthetic support" })), omissions: ["title_summary_scope", "audience", "conditions_exceptions", "materials_completeness", "amounts_dates", "applicability", "attachments_scope"].map(field => ({ field, verdict: "none", evidence: [], reason: "Synthetic no omission" })) } as GuideAIResult;
 }
 async function guide() {
   const f = await fixture(), c = await businessGuideContext(f.id), p = payload(c);
@@ -64,12 +64,12 @@ async function guide() {
 async function request(g: Awaited<ReturnType<typeof guide>>["g"], identity = "first") {
   return createGuideAIReview(g.id, { identity, expectedRevision: g.revision, payloadHash: g.payloadHash, snapshotHash: g.snapshotHash }, "private-actor");
 }
-async function receipt(task: Record<string, any>, status = "received", response: unknown = { offline: true }) {
+async function receipt(task: Record<string, any>, status = "received", response: unknown = { choices: [{ finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) {
   const [r] = await sql`INSERT INTO receipts(logical_key,service,model,purpose,subject,status,response) VALUES(${task.id},'deepseek','fake',${task.request_intent.purpose},${task.request_intent.subject},${status},${sql.json(response as never)}) RETURNING id`;
   return Number(r!.id);
 }
 function fake(data: GuideAIResult, receiptId: number, onCall = () => {}) {
-  return (async options => { onCall(); return { data: options.schema.parse(data), receiptId, model: "offline-fake", usage: null, reused: true }; }) as GuideAIInvoke;
+  return (async options => { onCall(); return { data: options.schema.parse(guideAIResultToWire(data, JSON.parse(String(options.user)).source.evidenceCatalog.spans.map((s: [number, string]) => s[1]), JSON.parse(String(options.user)).claims)), receiptId, model: "offline-fake", usage: null, reused: true }; }) as GuideAIInvoke;
 }
 
 test("claim and omission checks independently block contradiction, missing evidence, ambiguous, unknown coverage and omitted restrictions", () => {
@@ -98,18 +98,38 @@ test("whole source and guide are isolated from human metadata, oversized wire fa
   assert.equal(JSON.parse(String(request.user)).source.body, body);
   assert.equal(String(request.user).includes("PRIVATE_REASON"), false);
   assert.equal(String(request.user).includes("PRIVATE_ACTOR"), false);
-  const full = body + "\n" + Array.from({ length: 120 }, (_, i) => `${i}公开全文限定条件${"条件".repeat(100)}。`).join("\n");
+  const full = body + "\n" + Array.from({ length: 180 }, (_, i) => `${i}公开全文限定条件${"条件".repeat(100)}。`).join("\n");
   assert.throws(() => buildGuideAIReviewRequest({ body: full, bodySha256: sha256(full), observationRevision: 1 }, p), /wire capacity/);
+});
+
+test("compact wire retains all seven omission checks, rejects invalid aliases/indices, and calculates escaped worst-case envelope", () => {
+  const p = payload({ catalog: buildEvidenceCatalog(input) }), prepared = buildGuideAIReviewRequest(input, p);
+  const wire = guideAIResultToWire(answer(p), prepared.catalog.spans.map(s => s.id), guideAIClaims(p));
+  assert.equal(wire.o.length, 7); assert.equal(prepared.request.schema.parse(wire).findings.length, guideAIClaims(p).length);
+  const bad = structuredClone(wire); bad.f[0]![2] = [999];
+  assert.throws(() => prepared.request.schema.parse(bad));
+  const duplicate = structuredClone(wire); duplicate.o[1]![0] = duplicate.o[0]![0];
+  assert.throws(() => prepared.request.schema.parse(duplicate), /exactly once/);
+  const long = structuredClone(wire); long.f[0]![1] = 3; long.f[0]![3] = "字".repeat(11);
+  assert.throws(() => prepared.request.schema.parse(long), /UTF-8/);
+  assert.ok(guideAIOutputEnvelopeBytes(7, 5) <= 1900);
+  assert.ok(guideAIOutputEnvelopeBytes(60, 999) > 1900);
+  const aliases = Array.from({length: 4}, (_, i) => i + 100), detail = "\\".repeat(16);
+  const envelope = { c: 2, f: Array.from({length: 7}, (_, i) => [i, 1, aliases, detail]), o: Array.from({length: 7}, (_, i) => [i, 4, aliases, detail]) };
+  assert.equal(guideAIOutputEnvelopeBytes(7, 112), Buffer.byteLength(JSON.stringify(envelope)));
 });
 
 test("create/read/deduplicate are zero-call; fake success awaits human, final approval preserves editorial revision, same-payload edit invalidates", async () => {
   const { g, c, p } = await guide(); const task = await request(g);
+  const metrics = await preflightGuideAIReview(g.id);
+  assert.equal(metrics.requiredCalls, 1); assert.equal(metrics.omissionCount, 7); assert.ok(metrics.outputEnvelopeBytes < 1900); assert.equal("actor" in metrics, false);
   assert.equal((await request(g)).id, task.id);
   assert.equal((await request(g, "different_identity")).id, task.id);
   assert.equal((await getCurrentGuideAIReview(g.id)).status, "queued");
   const r = await receipt(task), data = answer(p); let calls = 0;
   const result = await processGuideAIReview(task.id, fake(data, r, () => calls++));
   assert.equal(calls, 1); assert.equal(result.pass, true); assert.equal(result.status, "needs_final_human");
+  assert.equal((await preflightGuideAIReview(g.id)).requiredCalls, 0);
   await assert.rejects(processGuideAIReview(task.id, fake(data, r, () => calls++)), /not queued/);
   assert.equal(calls, 1);
   await sql`UPDATE fishery_business_guides SET status='approved',revision=revision+1,human_decision=${sql.json({ mode: "final", revision: g.revision + 1, aiEditorialRevision: g.revision })} WHERE id=${g.id}`;
@@ -155,7 +175,16 @@ test("same cumulative ledger cap and unresolved charges stop any future request"
   const entries = Array.from({ length: 18 }, () => ({ state: "received", reservedMicroCny: 400000 }));
   assert.doesNotThrow(() => trialCapacity(entries, 1));
   assert.throws(() => trialCapacity([...entries, { state: "unknown", reservedMicroCny: TRIAL.reserveMicroCny }]));
-  assert.throws(() => trialCapacity([...entries, ...entries.slice(0, 2)], 1));
+  assert.throws(() => trialCapacity(Array.from({ length: 25 }, () => ({ state: "received", reservedMicroCny: TRIAL.reserveMicroCny })), 1));
+});
+
+test("complete JSON with length finish reason or missing usage fails closed without second invocation", async () => {
+  for (const response of [{ choices: [{ finish_reason: "length" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }, { choices: [{ finish_reason: "stop" }] }]) {
+    const { g, p } = await guide(), task = await request(g), r = await receipt(task, "received", response); let calls = 0;
+    await assert.rejects(processGuideAIReview(task.id, fake(answer(p), r, () => calls++)), /stop|usage/);
+    await assert.rejects(processGuideAIReview(task.id, fake(answer(p), r, () => calls++)), /not queued/);
+    assert.equal(calls, 1); assert.equal((await getCurrentGuideAIReview(g.id)).pass, false);
+  }
 });
 
 test("chatJson replays its original cached raw response without a transport request", async () => {
@@ -171,10 +200,10 @@ test("chatJson replays its original cached raw response without a transport requ
     const key = logicalKeyFor({ service: "llm", model: "offline-fake", purpose: prepared.purpose, subject: prepared.subject,
       identity: { model: "offline-fake", promptVersion: prepared.promptVersion, system: sha256(prepared.system), user: sha256(String(prepared.user)), temperature: 0, maxTokens: 2048, extra: null },
       requestSummary: {}, attemptTag: prepared.attemptTag });
-    const raw = { choices: [{ message: { content: JSON.stringify(result) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    const raw = { choices: [{ message: { content: JSON.stringify(guideAIResultToWire(result, buildEvidenceCatalog(input).spans.map(s => s.id), guideAIClaims(p))) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
     await sql`INSERT INTO receipts(logical_key,service,model,purpose,subject,status,response) VALUES(${key},'llm','offline-fake',${prepared.purpose},${prepared.subject},'received',${sql.json(raw)})`;
     const cached = await chatJson(prepared);
-    assert.equal(cached.reused, true); assert.deepEqual(cached.data, result);
+    assert.equal(cached.reused, true); assert.equal(cached.data.coverage, result.coverage); assert.equal(assessGuideAIResult(input, p, cached.data).pass, true);
   } finally {
     config.modelCallsEnabled = before;
     for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) { if (envBefore[key] === undefined) delete process.env[key]; else process.env[key] = envBefore[key]; }
