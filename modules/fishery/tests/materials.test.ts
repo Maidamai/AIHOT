@@ -1,4 +1,147 @@
 import { publicationQueue } from "../backend/publication-queue.ts";
+
+test('second-score provider refusal keeps its own stage and never starts article generation',async()=>{
+ const d=await selectionFixture(71),sent:string[]=[],base=selectionMock(d.body,sent);
+ const result=await runFlow(d.task.id,async(q:any)=>{
+  if(q.purpose==='score_article'&&q.subject.includes(':score-2:'))throw new ProviderRejectedError('Synthetic contentFilter 1301',400,false);
+  return base(q);
+ });
+ assert.equal(result.status,'needs_evidence');assert.equal(result.stage,'score-2');assert.equal(result.selection.outcome.label,'REFUSED');assert.deepEqual(sent,['prefilter','score-1']);assert.equal(result.internalArticle,null);
+});
+
+
+test('selection regeneration preserves prior receipts and can reconcile a later zero-request interruption',async()=>{
+ await getBoss({schedule:false,supervise:false});
+ const d=await selectionFixture(70),sends:string[]=[];let fail=true;
+ const invoke=selectionMock(d.body,sends,{failSecond:()=>fail});
+ assert.equal((await runFlow(d.task.id,invoke)).stage,'score-2');
+ await retryFlow(d.task.id,{note:'Synthetic explicit second-stage regeneration',mode:'regenerate',acknowledgeNewCharge:true},'tester');fail=false;
+ await sql.unsafe(`CREATE FUNCTION selection_regen_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${d.task.id}' AND NEW.stage_requests ? 'generation:1' THEN RAISE EXCEPTION 'Synthetic request intent not saved'; END IF; RETURN NEW; END $$`);
+ await sql.unsafe('CREATE TRIGGER selection_regen_fault BEFORE UPDATE ON fishery_flow_tasks FOR EACH ROW EXECUTE FUNCTION selection_regen_fault()');
+ const [previousLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+ try{
+  const stopped=await runFlow(d.task.id,invoke);assert.equal(stopped.stage,'generation');assert.equal(stopped.selection.attempts['score-2'],2);
+  assert.ok(stopped.stage_requests['score-2:1']);assert.ok(stopped.stage_requests['score-2:2']);
+  await sql.unsafe('DROP TRIGGER selection_regen_fault ON fishery_flow_tasks');
+  await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
+  await sql`UPDATE fishery_flow_tasks SET status='running',error=NULL WHERE id=${d.task.id}`;
+  const interrupted=await flowDetail(d.task.id);assert.equal(interrupted.reconciliation.eligible,true,JSON.stringify(interrupted.reconciliation.reasons));assert.equal(interrupted.reconciliation.newCallsOnResume,2);
+  await reconcileFlow(d.task.id,{snapshotHash:interrupted.snapshotHash,executionFingerprint:interrupted.reconciliation.executionFingerprint,expectedStatus:'running',acknowledgeRunnerStopped:true,reason:'Synthetic old direct runner stopped and generation intent never committed'},'tester');
+  await retryFlow(d.task.id,{note:'Explicitly resume the missing generation and review',acknowledgeNewCharge:true},'tester');
+  assert.equal((await runFlow(d.task.id,invoke)).status,'needs_human_review');assert.deepEqual(sends,['prefilter','score-1','score-2','generation','review']);
+ }finally{
+  await sql.unsafe('DROP TRIGGER IF EXISTS selection_regen_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION selection_regen_fault()');
+  if(previousLedger)await sql`UPDATE settings SET value=${sql.json(previousLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
+ }
+});
+
+
+test('selection keeps a saved outcome across a generation-request interruption; changed version stops subsequent calls',async()=>{
+ const d=await selectionFixture(68),sends:string[]=[],invoke=selectionMock(d.body,sends);
+ await sql.unsafe(`CREATE FUNCTION selection_generation_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${d.task.id}' AND NEW.stage_requests ? 'generation:1' THEN RAISE EXCEPTION 'Synthetic before generation request'; END IF; RETURN NEW; END $$`);
+ await sql.unsafe('CREATE TRIGGER selection_generation_fault BEFORE UPDATE ON fishery_flow_tasks FOR EACH ROW EXECUTE FUNCTION selection_generation_fault()');
+ try{
+  const interrupted=await runFlow(d.task.id,invoke);assert.equal(interrupted.status,'failed');assert.equal(interrupted.stage,'generation');
+  assert.equal(interrupted.selection.outcome.label,'SCORED');assert.deepEqual(sends,['prefilter','score-1','score-2']);
+  await sql.unsafe('DROP TRIGGER selection_generation_fault ON fishery_flow_tasks');
+  await retryFlow(d.task.id,{note:'Resume durable selection outcome without repaying scores'},'tester');
+  assert.equal((await runFlow(d.task.id,invoke)).status,'needs_human_review');assert.deepEqual(sends,['prefilter','score-1','score-2','generation','review']);
+ }finally{await sql.unsafe('DROP TRIGGER IF EXISTS selection_generation_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION selection_generation_fault()');}
+ const changed=await selectionFixture(69),sent:string[]=[];
+ const blocked=await runFlow(changed.task.id,selectionMock(changed.body,sent,{after:async stage=>{
+  if(stage==='prefilter')await observe(changed.id,{...observationFixture,expectedRevision:1,summaryZh:'Synthetic changed metadata',language:'zh',sourceCapture:{adapter:'moa',sourceUrl:'https://example.org/version-test',capturedAt:'2026-10-21T08:01:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(changed.body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+ }}));
+ assert.equal(blocked.status,'failed');assert.equal(blocked.stale,true);assert.deepEqual(sent,['prefilter']);
+});
+test('two dispatchers on the same approved snapshot create one task, queue job and dispatch audit',async()=>{
+ const d=await automaticFixture(60),boss=await getBoss({schedule:false,supervise:false});
+ await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic concurrent identical dispatch verification');
+ const [v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
+ let arrivals=0,release!:()=>void;const barrier=new Promise<void>(r=>release=r);
+ const gate=()=>{let first=true;return async()=>{if(first){first=false;if(++arrivals===2)release();await barrier;}};};
+ try{
+  const results=await Promise.all([dispatchAutomaticDocuments(undefined,{assertHeld:gate()}),dispatchAutomaticDocuments(undefined,{assertHeld:gate()})]);
+  assert.equal(results.flatMap(r=>r.rows).filter(r=>r.state==='enqueued').length,1);
+  const tasks=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${d.id}`;assert.equal(tasks.length,1);
+  const jobs=await sql`SELECT id FROM pgboss.job WHERE name='fishery.flow' AND data->>'id'=${tasks[0].id}`;assert.equal(jobs.length,1);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.flow.auto_enqueued' AND subject=${'fishery:'+d.id}`)[0].n,1);
+  await boss.cancel(flowQueue.name,jobs[0].id);
+ }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
+});
+function selectionMock(body:string,sends:string[],options:{label?:string;failSecond?:()=>boolean;after?:(stage:string)=>Promise<void>;missingEvidence?:boolean}={}){
+ return async(q:any)=>{
+  const stage=q.purpose==='prefilter_article'?'prefilter':q.purpose==='score_article'?q.subject.includes(':score-1:')?'score-1':'score-2':q.purpose==='fishery_draft'?'generation':'review';
+  if(stage==='score-2'&&options.failSecond?.())throw new Error('Synthetic second score before response');
+  const e=['p1s1'],u={date:{precision:'unknown',value:null},evidence:[]};
+  const data=stage==='prefilter'?{label:options.label??'PASS',reason:'Synthetic relevant original'}:stage.startsWith('score-')?{attentionScore:95}:stage==='generation'?{
+   relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:options.missingEvidence?'原文没有这个数字9999。':body,evidence:e}],
+   dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]
+  }:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound source',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
+  const r=await paidRequest({service:'selection-local-mock',model:'mock',purpose:q.purpose,subject:q.subject,identity:{promptVersion:q.promptVersion,system:q.system,user:q.user},attemptTag:q.attemptTag},async()=>{
+   sends.push(stage);await options.after?.(stage);return {response:data};
+  });
+  return {data:q.schema.parse(r.response),receiptId:r.receiptId,reused:r.reused,model:'mock',usage:null};
+ };
+}
+async function selectionFixture(number:number){
+ const d=await automaticFixture(number),[v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+ await approve(d.id,1,v.revision);return {...d,task:await createFlow(d.id,{identity:'selection-'+number,selection:true},'tester')};
+}
+test('selection persists three independent receipts, needs final fact approval and keeps historical material historical',async()=>{
+ const d=await selectionFixture(61),sends:string[]=[];
+ assert.equal(await flowRequiredCalls(d.task.id),5);
+ const result=await runFlow(d.task.id,selectionMock(d.body,sends));
+ assert.equal(result.status,'needs_human_review',JSON.stringify(result.error));assert.deepEqual(sends,['prefilter','score-1','score-2','generation','review']);
+ assert.equal(new Set(Object.values(result.selection.results).map((r:any)=>r.receiptId)).size,3);
+ assert.notEqual(result.stage_requests['score-1:1'].subject,result.stage_requests['score-2:1'].subject);
+ assert.notEqual(result.stage_requests['score-1:1'].attemptTag,result.stage_requests['score-2:1'].attemptTag);
+ assert.equal(result.selection.outcome.attentionCandidate,true);assert.equal(result.selection.outcome.calibrated,false);assert.equal(result.selection.outcome.factApproval,false);
+ assert.equal(result.internalArticle,null);assert.equal(result.timeline.historical,true);assert.equal(await flowRequiredCalls(d.task.id),0);
+ await decideFlow(d.task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'Synthetic separate final evidence approval'},'authorized-agent:test');
+ assert.ok((await flowDetail(d.task.id)).internalArticle);
+ await assert.rejects(createFlow(d.id,{identity:'not-a-legacy-backfill'},'tester'),/different selection mode/);
+});
+test('second score interruption resumes only missing work and never repays prefilter or first score',async()=>{
+ const d=await selectionFixture(62),sends:string[]=[];let failed=true;const invoke=selectionMock(d.body,sends,{failSecond:()=>failed});
+ const first=await runFlow(d.task.id,invoke);assert.equal(first.status,'failed');assert.equal(first.stage,'score-2');assert.deepEqual(sends,['prefilter','score-1']);
+ assert.equal(await flowRequiredCalls(d.task.id),3);
+ await retryFlow(d.task.id,{note:'Synthetic explicit second score recovery'},'tester');failed=false;
+ const resumed=await runFlow(d.task.id,invoke);assert.equal(resumed.status,'needs_human_review',JSON.stringify(resumed.error));
+ assert.deepEqual(sends,['prefilter','score-1','score-2','generation','review']);
+});
+test('received second score with failed persistence reuses receipt; unknown blocks every recovery mode',async()=>{
+ const d=await selectionFixture(63),sends:string[]=[],invoke=selectionMock(d.body,sends);
+ await sql.unsafe(`CREATE FUNCTION selection_save_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${d.task.id}' AND NEW.selection->'results' ? 'score-2' AND OLD.stage='score-2' THEN RAISE EXCEPTION 'Synthetic second score save outage'; END IF; RETURN NEW; END $$`);
+ await sql.unsafe('CREATE TRIGGER selection_save_fault BEFORE UPDATE ON fishery_flow_tasks FOR EACH ROW EXECUTE FUNCTION selection_save_fault()');
+ try{
+  const failed=await runFlow(d.task.id,invoke);assert.equal(failed.status,'failed');assert.equal(failed.stage,'score-2');assert.equal(failed.error.phase,'persist');assert.deepEqual(sends,['prefilter','score-1','score-2']);
+  await sql.unsafe('DROP TRIGGER selection_save_fault ON fishery_flow_tasks');
+  const [r]=await sql`SELECT id FROM receipts WHERE subject=${failed.stage_requests['score-2:1'].subject}`;
+  await sql`UPDATE receipts SET status='unknown' WHERE id=${r.id}`;
+  await assert.rejects(retryFlow(d.task.id,{note:'Unknown must not resend'},'tester'),/pending\/unknown/);
+  await assert.rejects(retryFlow(d.task.id,{note:'Unknown must not regenerate',mode:'regenerate',acknowledgeNewCharge:true},'tester'),/pending\/unknown/);
+  assert.equal(sends.length,3);await sql`UPDATE receipts SET status='received' WHERE id=${r.id}`;
+  await assert.rejects(retryFlow(d.task.id,{note:'Keep received response',mode:'regenerate',acknowledgeNewCharge:true},'tester'),/resume same attempt/);
+  await retryFlow(d.task.id,{note:'Resume existing second score receipt'},'tester');
+  const done=await runFlow(d.task.id,invoke);assert.equal(done.status,'needs_human_review',JSON.stringify(done.error));assert.deepEqual(sends,['prefilter','score-1','score-2','generation','review']);
+  assert.equal(done.selection.outcome.label,'SCORED','Outcome was persisted in the score-2 transaction');
+ }finally{await sql.unsafe('DROP TRIGGER IF EXISTS selection_save_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION selection_save_fault()');}
+});
+test('selection BLOCK and UNKNOWN stop scores; high score cannot bless a fact without evidence; isolation stops the next call',async()=>{
+ for(const [n,label] of [[64,'BLOCK'],[65,'UNKNOWN']] as const){
+  const d=await selectionFixture(n),sends:string[]=[],result=await runFlow(d.task.id,selectionMock(d.body,sends,{label}));
+  assert.equal(result.status,'needs_evidence');assert.deepEqual(sends,['prefilter']);assert.equal(result.selection.outcome.label,label);assert.equal(result.internalArticle,null);assert.equal(await flowRequiredCalls(d.task.id),0);
+ }
+ const bad=await selectionFixture(66),paid:string[]=[],result=await runFlow(bad.task.id,selectionMock(bad.body,paid,{missingEvidence:true}));
+ assert.equal(result.status,'failed');assert.equal(result.stage,'generation');assert.equal(result.selection.outcome.attentionCandidate,true);assert.equal(result.internalArticle,null);
+ await assert.rejects(decideFlow(bad.task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'High scores do not prove facts'},'tester'),/相关性|Review|review/);
+ const isolated=await selectionFixture(67),sent:string[]=[];
+ try{
+  const blocked=await runFlow(isolated.task.id,selectionMock(isolated.body,sent,{after:async stage=>{if(stage==='prefilter')await sql`UPDATE sources SET participation_mode='isolated' WHERE id='fishery-column-moa'`;}}));
+  assert.equal(blocked.status,'failed');assert.deepEqual(sent,['prefilter']);assert.match(blocked.error.reason,/isolated/);
+ }finally{await sql`UPDATE sources SET participation_mode='editorial' WHERE id='fishery-column-moa'`;}
+});
+
 import {AUTOMATIC_FLOW_KEY,configureAutomaticFlows,dispatchAutomaticDocuments,automaticFlowPermit} from '../backend/automatic-flows.ts';
 import { syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadItemDetail } from "@aihot/backend/publication/detail";
@@ -26,7 +169,7 @@ import { collectColumns,readCapturedText } from "../backend/column-batches.ts";
 import { importBatch } from "../backend/import-batch.ts";
 import { COLUMNS } from "../backend/official-columns.ts";
 
-import { paidRequest, completeReceipt } from "@aihot/backend/providers/receipts";
+import { paidRequest, completeReceipt,ProviderRejectedError } from "@aihot/backend/providers/receipts";
 import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, runFlow, retryFlow, decideFlow, flowRequiredCalls, flowQueue, runQueuedFlows } from "../backend/flow.ts";
 
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";

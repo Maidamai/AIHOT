@@ -1,5 +1,17 @@
 # 手动官方栏目采集与 AI 准备
 
+## 单任务选材预筛与双评分（默认关闭）
+
+原有任务、合格内容与自动派发不补跑选材。仅新建且显式带 `selection:true` 的任务使用新版阶段；创建本身不发送请求。已有同证据任务的模式不同会明确冲突，不能借新 identity 升级或重评分旧稿。本轮不提供新增付费勾选入口，启用与真实样本验收须在既有授权和实际审批允许的范围内进行。
+
+复用原 `runSelectionPrefilter/runSelectionScores` 并注入受控调用器，不执行整套 `processArticle`。顺序为 prefilter、score-1、score-2、generation、review、最终审定。每个评分有独立 subject、attemptTag 和 stage_requests；返回后逐步事务保存结果、completeReceipt 与下一阶段，评分二与 outcome 原子落库。恢复只复用已收或已完成回执；pending/unknown 保留费用预留并阻断，failed 不自动重发，明确 regenerate 仅增加目标阶段尝试，最多三次。
+
+预筛 BLOCK/UNKNOWN、无评分门槛、内容拒绝和部分评分分别记录，不能作为 PASS。双评分仅记录内部关注价值及未校准的参考门槛，不修改原 selected/qualified，不替代素材审批、逐字段事实证据核查或最终决定。历史和未知发布日期仍按原时效投影显示，收录时间不当作发布日期。
+
+完整正文超过60000字符或最终请求体超过96000字节即停止，不截断后声称全文。传输层只接受512、1024、2048三档输出，仍固定官方模型/地址、禁用思考及工具。新完整任务按最多五次、每次0.40元最坏预留检查同一累计10元账本；可信usage结算后可释放差额，未知结果不释放。后续每次请求前重核来源、正文版本、来源分级和素材审批，已有队列retryLimit仍为0。
+
+新增迁移0100–0103只增加可空selection状态并扩展阶段约束，不回填旧任务。回滚前停止或审计隔离新版任务，不能让旧消费者接手未知阶段；不删任务、回执或累计账本。
+
 ## 业务指南单次隔离核查
 
 若任务严格因发送前框架 `Budget for llm exhausted (day)` 失败，须先停止旧executor并核对没有该请求的任何receipt/attempt及累计账本未决费用。可单独执行 `node modules/fishery/scripts/review-business-guides.ts --resume-unsent --id <guide-id> --actor <operator> --reason <stop-and-reconciliation-reason>`。此模式只接受一个指南，模型开关可关闭；它在全局processing lease下锁原failed任务，校验原绑定和完整请求意图、无receipt/result、精确day预算错误及原累计金额容量，审计旧error、操作者理由和未发送证据后，只把原id改为queued。不会增加预留、修改账本、换identity、调用模型或自动审批。随后仍须另行显式 `--execute` 才可能发出首次请求。任何receipt（包括failed/unknown/received）、其他错误或绑定变化均拒绝；无receipt也不能借 `--resume-cache` 重发。

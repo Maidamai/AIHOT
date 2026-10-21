@@ -16,7 +16,25 @@ import { importBatch } from "../backend/import-batch.ts";
 import { config } from "@aihot/backend/config";
 import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft, fisheryDraftWireSchema,parseFisheryManualRevision } from "../backend/ai-draft.ts";
-import { TRIAL, installTrialTransport, trialCapacity, trialUsage } from "../backend/trial-transport.ts";
+import { TRIAL, installTrialTransport, trialCapacity, trialUsage,validateTrialWire } from "../backend/trial-transport.ts";
+import {runFisherySelection,newSelection} from '../backend/selection.ts';
+
+test('selection transport admits only the three bounded output sizes; missing usage retains full unknown reserve',async()=>{
+ const request=(tokens:number)=>({method:'POST',body:JSON.stringify({model:TRIAL.model,messages:[{role:'system',content:'Synthetic prompt'},{role:'user',content:'Synthetic public test source'}],max_tokens:tokens,temperature:0,response_format:{type:'json_object'},thinking:{type:'disabled'}})});
+ for(const tokens of [512,1024,2048])assert.doesNotThrow(()=>validateTrialWire(TRIAL.endpoint,request(tokens)));
+ for(const tokens of [0,513,1025,2049,64000])assert.throws(()=>validateTrialWire(TRIAL.endpoint,request(tokens)),/parameters refused/);
+ assert.throws(()=>validateTrialWire('https://example.org/chat/completions',request(512)),/destination/);
+ const entries:any[]=[];let sent=0;
+ const restore=installTrialTransport({reserve:async()=>{trialCapacity(entries);entries.push({state:'pending',reservedMicroCny:TRIAL.reserveMicroCny});return 1;},settle:async(id,state,usage)=>{entries[id-1].state=state;entries[id-1].usage=usage;}},async()=>{sent++;return new Response(JSON.stringify({model:TRIAL.model,choices:[]}),{status:200});});
+ try{
+  await assert.rejects(fetch(TRIAL.endpoint,request(512)),/usage missing/);assert.equal(sent,1);assert.equal(entries[0].state,'unknown');assert.equal(entries[0].reservedMicroCny,400000);assert.throws(()=>trialCapacity(entries,5),/reconciliation/);
+ }finally{restore();}
+});
+test('selection refuses an overlong complete source before any model request',async()=>{
+ let sends=0;
+ const a={id:'synthetic-long',revision:1,title:'Synthetic',url:'https://example.org/public',author:null,publishedAt:null,bodyText:'海'.repeat(60001),excerpt:null,xPost:null,media:[],source:{name:'Synthetic',kind:'external',tier:'T1',firstParty:true}};
+ await assert.rejects(runFisherySelection(a,newSelection('T1'),async()=>{sends++;throw new Error('Must not send');},async()=>{}),/complete original body/);assert.equal(sends,0);
+});
 import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
 import { createHash } from "node:crypto";

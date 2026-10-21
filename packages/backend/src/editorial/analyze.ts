@@ -219,7 +219,7 @@ export function waitsForPage(a: AnalyzeInputArticle): boolean {
   return a.bodyStatus === "pending" && !a.bodyText && !a.xPost && pageFetchable(a.url, a.source.kind);
 }
 
-type StepOpts = { attemptTag?: string; scoreModel?: string };
+type StepOpts = { attemptTag?: string; scoreModel?: string; prefilterModel?: string; invoke?: typeof chatJson };
 type ReceiptObserver = (receiptId: number) => void;
 
 /** A stopping worker finishes the stage it is in, never starts the next. */
@@ -229,9 +229,9 @@ const subjectOf = (a: AnalyzeInputArticle) => `article:${a.id}@${a.revision}`;
 const tagged = (attemptTag: string | undefined, step: string) => [attemptTag, step].filter(Boolean).join(":") || undefined;
 
 async function runPrefilter(a: AnalyzeInputArticle, opts: StepOpts): Promise<NonNullable<AnalysisRun["prefilter"]>> {
-  const model = await modelFor("prefilter");
+  const model = opts.prefilterModel ?? await modelFor("prefilter");
   checkAnalysisRunning();
-  const res = await chatJson({
+  const res = await (opts.invoke ?? chatJson)({
     model,
     purpose: "prefilter_article",
     subject: subjectOf(a),
@@ -281,7 +281,7 @@ async function runScores(
   for (let i = 0; i < SCORE_CALLS; i++) {
     checkAnalysisRunning();
     try {
-      const res = await chatJson({
+      const res = await (opts.invoke ?? chatJson)({
         model, purpose: "score_article", subject: subjectOf(a), promptVersion: PROMPT_VERSIONS.score, system: SCORE_SYSTEM, user: input,
         schema: ScoreSchema, temperature: call.temperature, maxTokens: call.maxTokens, timeoutMs: call.timeoutMs,
         // Each call is its own paid request; an explicit re-evaluation gets new ones.
