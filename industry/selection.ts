@@ -17,3 +17,5 @@ export const SELECTION = {
    */
   understandFloor: 50,
 } as const;
+
+// 行业示例已替换，门槛沿用原值，尚未经远洋渔业标注样本重新校准。
