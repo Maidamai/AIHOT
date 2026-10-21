@@ -8,7 +8,7 @@ import { defineQueue } from "@aihot/backend/modules";
 import { enqueueOn, getBoss } from "@aihot/backend/jobs/queue";
 import { chatJson, type ChatJsonOptions, type ChatJsonResult } from "@aihot/backend/providers/llm";
 import { completeReceipt } from "@aihot/backend/providers/receipts";
-import { itemAvailability } from "@aihot/backend/publication/availability";
+import { sourceArticleAvailable } from "./source-availability.ts";
 import { hash, lockDocument, NotFound } from "./store.ts";
 import { readSourceBody } from "./source-body.ts";
 import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
@@ -31,7 +31,7 @@ async function snapshot(documentId:string) {
   if(row.withdrawn_reason) throw new Conflict("Document withdrawn");
   const c=row.payload.sourceCapture;
   if(!c||c.httpStatus!==200||c.parseStatus!=="parsed"||!c.bodySha256||c.conflicts.length) throw new Conflict("Verified archived source body required");
-  if(row.article_id) {const available=(await itemAvailability([row.article_id]))[row.article_id];if(!available||!["public","summary-only"].includes(available.status)) throw new Conflict("Linked source article unavailable");}
+  if(row.article_id&&!await sourceArticleAvailable(row.article_id)) throw new Conflict("Linked source article unavailable");
   const value={executionConfig:fisheryConfigurationVersion(),documentId,sourceId:row.source_id,sourceRevision:row.source_revision,sourceProfileHash:hash(row.profile),observationRevision:row.revision,observationHash:row.content_hash,bodySha256:c.bodySha256,rawSha256:c.rawSha256};
   return {value,hash:hash(value),payload:row.payload,articleId:row.article_id};
 }

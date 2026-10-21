@@ -1,3 +1,4 @@
+import { hasPublicationReadGuard } from "../modules.ts";
 // v1 items and the selected sync (snapshot + changes), read from the same public read layer.
 import type { PublicApiCategoryKey } from "@aihot/contracts/taxonomy";
 import { sql, type Db } from "../db.ts";
@@ -7,7 +8,7 @@ import { publicCategoryCondition, API_ITEM_COLUMNS, API_ITEM_FROM, type ApiItemR
 import { listedCondition, seatedCondition } from "./scope.ts";
 import { publicMatchCondition, searchTerms, withSearchCapacity } from "./pool.ts";
 import { sharedSearch } from "../lib/cache.ts";
-import { v1Payload, type V1ItemPayload } from "./publish.ts";
+import { reconcilePublicationLedger, v1Payload, type V1ItemPayload } from "./publish.ts";
 
 export interface V1ItemsQuery {
   mode: "selected" | "all";
@@ -35,10 +36,14 @@ export function rowToV1(row: ApiItemRow): V1ItemPayload {
 }
 
 /** Search callers across HTTP and tools share one read. */
-export const v1Items = sharedSearch(
+const cachedV1Items = sharedSearch(
   (q: V1ItemsQuery) => JSON.stringify([q.mode, q.window, q.by, q.category, q.q, q.limit, q.cursor]),
   queryItems, (q) => !!q.q?.trim(),
 );
+
+export function v1Items(query: V1ItemsQuery, now?: Date): Promise<V1ItemsResult> {
+  return hasPublicationReadGuard() ? queryItems(query, now ?? new Date()) : cachedV1Items(query, now);
+}
 
 async function queryItems(query: V1ItemsQuery, now: Date): Promise<V1ItemsResult> {
   const windowMs = query.window === "24h" ? 86400000 : 7 * 86400000;
@@ -55,7 +60,7 @@ async function queryItems(query: V1ItemsQuery, now: Date): Promise<V1ItemsResult
     if (c.a < windowStart.getTime()) throw new InvalidCursorError("the rolling window moved past this cursor");
     after = { a: c.a, i: c.i };
   }
-  const scope = query.mode === "selected" ? seatedCondition(now) : listedCondition(now);
+  const scope = query.mode === "selected" ? (await seatedCondition(now)).condition : (await listedCondition(now)).condition;
   const terms = query.q ? searchTerms(query.q) : [];
 
   const run = (db: Db) => db<(ApiItemRow & { sort_at: Date })[]>`
@@ -108,6 +113,7 @@ export async function ledgerEpoch(): Promise<string> {
 
 /** The ledger's latest sequence: a snapshot and a page of changes read up to it. */
 export async function ledgerWatermark(): Promise<number> {
+  await reconcilePublicationLedger();
   const [row] = await sql<{ w: number }[]>`SELECT coalesce(max(seq), 0) AS w FROM selected_ledger`;
   return Number(row?.w ?? 0);
 }
@@ -174,7 +180,8 @@ export async function selectedSnapshot(q: SnapshotQuery, now = new Date()) {
       ORDER BY article_id, seq DESC
     ) latest
     JOIN selected_state st ON st.article_id = latest.article_id AND st.in_set
-    WHERE latest.op = 'upsert'
+    JOIN publications p ON p.article_id = latest.article_id
+    WHERE latest.op = 'upsert' AND ${(await seatedCondition(now)).condition}
     ORDER BY latest.article_id
     LIMIT ${q.limit + 1}`;
   const page = rows.slice(0, q.limit);
@@ -210,7 +217,7 @@ export async function selectedChanges(q: { cursor: string; limit: number }, now 
   const rows = await sql<{ seq: number; article_id: string; op: "upsert" | "remove"; changed_at: Date; payload: V1ItemPayload | null }[]>`
     SELECT l.seq, l.article_id, CASE WHEN p.article_id IS NULL THEN 'remove' ELSE l.op END AS op, l.changed_at,
       CASE WHEN p.article_id IS NOT NULL THEN ${ledgerPayload(c.f === "minimal", sql`l.payload`)} END AS payload
-    FROM selected_ledger l LEFT JOIN publications p ON p.article_id = l.article_id AND ${listedCondition(now)}
+    FROM selected_ledger l LEFT JOIN publications p ON p.article_id = l.article_id AND ${(await listedCondition(now)).condition}
     WHERE l.seq > ${c.w} AND l.seq <= ${w}
     ORDER BY l.seq LIMIT ${q.limit + 1}`;
   const page = rows.slice(0, q.limit);

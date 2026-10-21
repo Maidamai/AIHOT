@@ -43,7 +43,7 @@ export async function digestReports(db: Db, storyIds: number[], now = new Date()
       an.output->'fact' AS structured_fact
     FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
     JOIN sources s ON s.id = p.source_id LEFT JOIN analyses an ON an.id = p.analysis_id
-    WHERE f.story_id = ANY(${storyIds}::bigint[]) AND ${evidenceCondition()} AND ${listedCondition(now)}
+    WHERE f.story_id = ANY(${storyIds}::bigint[]) AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
     ORDER BY f.story_id, p.article_id, (fa.role = 'primary') DESC, f.id`;
 }
 

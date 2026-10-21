@@ -36,10 +36,10 @@ async function queryLatestHotRanking(): Promise<HotRanking | null> {
     JOIN LATERAL (
       SELECT max(coalesce(p.published_at, p.discovered_at)) AS at
       FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${listedCondition(now)}
+      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
     ) latest ON true
     WHERE f.story_id IN ${sql(entries.map((entry) => entry.storyId))} AND p.article_id IN ${sql(entries.map((entry) => entry.representativeItemId ?? ""))}
-      AND ${evidenceCondition()} AND ${listedCondition(now)}
+      AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
     ORDER BY f.story_id, p.article_id, (fa.role = 'primary') DESC, f.id` : [];
   const valid = new Map(current.map((report) => [`${report.story_id}:${report.article_id}`, report]));
   // Regrouping can invalidate a saved representative before the next heat refresh. Do not link the

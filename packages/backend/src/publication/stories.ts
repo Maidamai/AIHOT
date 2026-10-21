@@ -79,7 +79,7 @@ async function storyReports(storyId: number, now: Date): Promise<ReportRow[]> {
       CASE WHEN ${compositeCondition()} THEN 'mention' ELSE fa.role END AS role, p.body_mode, p.score, p.timeline_at, ${REPRESENTATIVE_COLUMNS}
     FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
     JOIN sources s ON s.id = p.source_id
-    WHERE f.story_id = ${storyId} AND ${storyReportCondition(now)}
+    WHERE f.story_id = ${storyId} AND ${(await storyReportCondition(now)).condition}
     ORDER BY p.article_id, (fa.role = 'primary') DESC, (fa.role <> 'mention') DESC, f.id`;
 }
 
@@ -129,14 +129,14 @@ async function relatedStories(storyId: number, now: Date) {
     SELECT st.public_id::text, st.title, l.relation FROM story_links l JOIN stories st ON st.id = l.other_id
     LEFT JOIN LATERAL (
       SELECT count(*) FILTER (WHERE valid) AS reports, bool_and(valid) AS unchanged
-      FROM ${relatedEvidence(sql`l.story_id`, sql`l.other_id`, now)} evidence
+      FROM ${relatedEvidence(sql`l.story_id`, sql`l.other_id`, (await storyReportCondition(now)).condition)} evidence
     ) support ON l.relation = 'related'
     WHERE l.story_id = ${storyId} AND st.merged_into IS NULL
       AND (l.relation <> 'related' OR support.unchanged IS NOT FALSE OR support.reports >= ${RELATED_MIN_REPORTS})
       AND EXISTS (
       SELECT 1 FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
       JOIN sources s ON s.id = p.source_id
-      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${storyReportCondition(now)}
+      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${(await storyReportCondition(now)).condition}
     ) ORDER BY st.latest_at DESC NULLS LAST, st.id DESC LIMIT 8`;
 }
 
@@ -234,7 +234,7 @@ async function queryHotCovers({ entries }: HotRanking) {
       SELECT m FROM jsonb_array_elements(coalesce(a.media, '[]'::jsonb)) m
       WHERE m->>'kind' = 'image' AND coalesce((m->>'width')::numeric, 800) >= 480 LIMIT 1
     ) img
-    WHERE p.story_id = ANY(${ids}::bigint[]) AND ${listedCondition(at)} AND p.body_mode <> 'summary'
+    WHERE p.story_id = ANY(${ids}::bigint[]) AND ${(await listedCondition(at)).condition} AND p.body_mode <> 'summary'
     ORDER BY p.story_id, (p.article_id::text = ANY(${reps}::text[])) DESC, p.first_party DESC, p.selected DESC, coalesce(p.score, 0) DESC, p.article_id`;
   const covers = new Map(rows.map((c) => [Number(c.story_id), { url: c.m.url, width: typeof c.m.width === "number" ? c.m.width : null, height: typeof c.m.height === "number" ? c.m.height : null }]));
   return covers;

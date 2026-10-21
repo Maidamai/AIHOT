@@ -1,3 +1,5 @@
+import { serverModules } from "../modules.ts";
+import { currentPublicationCondition } from "./scope.ts";
 // Item detail and Markdown export, both behind the same visibility and licence rules.
 import type { OutlineEntry, SiteItemDetail, StoryRef } from "@aihot/contracts/site";
 import { ITEM_COPY, SITE } from "@aihot/site";
@@ -44,7 +46,7 @@ async function loadRow(id: string): Promise<DetailRow | null> {
     SELECT ${ITEM_COLUMNS}, a.body_html, a.body_text, a.body_status, tr.body_html AS tr_html, tr.complete AS tr_complete,
       ${topicMembership()} AS topics
     ${ITEM_FROM}
-    WHERE p.article_id = ${id}`;
+    WHERE p.article_id = ${id} AND ${(await currentPublicationCondition()).condition}`;
   return row ?? null;
 }
 
@@ -80,7 +82,12 @@ export async function loadItemDetail(id: string, language: "zh" | "original" = "
   const row = await loadRow(id);
   if (!row || !hasItemPage({ visibility: row.visibility, sourceMode: row.source_mode })) return { kind: "not_found" };
 
-  const summary = toItemSummary(row);
+  const moduleDetails: Record<string, unknown> = {};
+  for (const module of serverModules()) {
+    const detail = await module.publication?.itemDetails?.(id);
+    if (detail != null) moduleDetails[module.name] = detail;
+  }
+  const summary = { ...toItemSummary(row), ...(Object.keys(moduleDetails).length ? { moduleDetails } : {}) };
   if (row.visibility === "summary-only") {
     const item: SiteItemDetail = {
       ...summary,
@@ -135,7 +142,7 @@ export async function loadItemDetail(id: string, language: "zh" | "original" = "
     const [g] = await sql<{ public_id: string; reports: number; sources: number }[]>`
       SELECT f.public_id, count(p.article_id) AS reports, count(DISTINCT p.source_id) AS sources
       FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-      WHERE f.id = ${row.fact_id} AND ${evidenceCondition()} AND ${listedCondition(now)}
+      WHERE f.id = ${row.fact_id} AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
       GROUP BY f.public_id`;
     if (g) {
       group = {

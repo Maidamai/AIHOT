@@ -1,5 +1,5 @@
 import { sql } from "@aihot/backend/db";
-import { itemAvailability } from "@aihot/backend/publication/availability";
+import { sourceArticleAvailability } from "./source-availability.ts";
 import { createHash } from "node:crypto";
 import { readSourceBody } from "./source-body.ts";
 import { documentHistory, listDocuments, listSources, NotFound, sourceAttributionOf } from "./store.ts";
@@ -27,7 +27,7 @@ function rowOf(d: Record<string, any>, source: MaterialSource, latest: MaterialO
 
 export async function workbench(query: { page?: number; q?: string; scope?: string; state?: string } = {}): Promise<Workbench> {
   const [docs, registered] = await Promise.all([listDocuments(), sources()]);
-  const availability = await itemAvailability(docs.flatMap(d => d.article_id ? [d.article_id] : []));
+  const availability = await sourceArticleAvailability(docs.flatMap(d => d.article_id ? [d.article_id] : []));
   const all = docs.map(d => rowOf(d, registered.find(s => s.id === d.source_id)!,
     d.revision ? observationOf(d) : null, d.decision ? reviewOf({ ...d, revision: d.reviewed_revision, source_revision: d.reviewed_source_revision, actor: d.reviewer }) : null,
     d.article_id ? availability[d.article_id]?.status : undefined));
@@ -51,7 +51,7 @@ export async function materialDetail(id: string): Promise<MaterialDetail> {
   if (!source) throw new NotFound("Source profile not found");
   const observations = history.observations.map(observationOf), reviews = history.reviews.map(reviewOf);
   const latest = observations.at(-1) ?? null, review = reviews.at(-1) ?? null, d = history.document;
-  const linkedStatus = d.article_id ? (await itemAvailability([d.article_id]))[d.article_id]?.status : undefined;
+  const linkedStatus = d.article_id ? (await sourceArticleAvailability([d.article_id]))[d.article_id]?.status : undefined;
   // Only this document's privately archived evidence. Never render upstream HTML or expose its raw JSON.
   const [stored] = await sql<{ body_text: string | null; mode: string | null }[]>`SELECT body_text, raw->>'mode' AS mode FROM articles
     WHERE source_id = ${d.source_id} AND ((id = ${d.article_id} AND ${d.article_id}::text IS NOT NULL) OR raw->>'fisheryDocumentId' = ${id}) LIMIT 1`;

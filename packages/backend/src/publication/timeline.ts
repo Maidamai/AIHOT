@@ -1,3 +1,4 @@
+import { hasPublicationReadGuard } from "../modules.ts";
 // Selected news timeline: ordinary reports fold by fact; standalone and independent-source articles
 // keep their own cards. Each ordinary fact stays at its first appearance.
 import type { GroupInfo, TimelineCard, TimelineFilters, TimelineResponse } from "@aihot/contracts/site";
@@ -41,7 +42,7 @@ async function groupPool(q: TimelineQuery, now: Date, factIds: number[]) {
     SELECT DISTINCT f.id AS fact_id, p.article_id, p.source_id
     FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
     WHERE f.id IN ${sql(factIds)}
-      AND ${evidenceCondition()} AND ${listedCondition(now)} ${filterSql(q)}`;
+      AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition} ${filterSql(q)}`;
 }
 
 /**
@@ -58,7 +59,7 @@ async function queryGroupedAnchors(q: TimelineQuery, now: Date) {
         SELECT p.sort_at, CASE WHEN p.fact_id IS NOT NULL AND ${ownFactEvidenceCondition()} AND ${foldableSelectionCondition()}
           THEN 'f' || p.fact_id::text ELSE 'a' || p.article_id END AS gk
         FROM publications p
-        WHERE ${selectedCondition(now)} ${filterSql(q)}
+        WHERE ${(await selectedCondition(now)).condition} ${filterSql(q)}
       )
       SELECT gk, min(sort_at) AS anchor_at FROM base GROUP BY gk ORDER BY anchor_at DESC, gk COLLATE "C" DESC`
   ).map((r) => ({ gk: r.gk, anchor: r.anchor_at.getTime() }));
@@ -97,7 +98,7 @@ export async function loadTimeline(q: TimelineQuery): Promise<Omit<TimelineRespo
   }
 
   // A given clock (tests, replays) reads afresh.
-  const grouped = q.now ? await queryGroupedAnchors(q, now) : await groupedAnchors(q);
+  const grouped = q.now || hasPublicationReadGuard() ? await queryGroupedAnchors(q, now) : await groupedAnchors(q);
   const start = after ? grouped.findIndex((g) => g.anchor < after!.a || (g.anchor === after!.a && g.gk < after!.g)) : 0;
   const groups: GroupRow[] = (start < 0 ? [] : grouped.slice(start, start + limit + 1)).map((g) => ({ gk: g.gk, anchor_at: new Date(g.anchor) }));
 
@@ -114,7 +115,7 @@ export async function loadTimeline(q: TimelineQuery): Promise<Omit<TimelineRespo
         SELECT p.fact_id, p.article_id AS id, p.body_mode, p.score, p.timeline_at, ${REPRESENTATIVE_COLUMNS}
         FROM publications p JOIN sources s ON s.id = p.source_id LEFT JOIN facts f ON f.id = p.fact_id
         WHERE p.fact_id IN ${sql(factIds)}
-          AND ${selectedCondition(now)} AND ${ownFactEvidenceCondition()} AND ${foldableSelectionCondition()} ${filterSql(q)}`
+          AND ${(await selectedCondition(now)).condition} AND ${ownFactEvidenceCondition()} AND ${foldableSelectionCondition()} ${filterSql(q)}`
       : Promise.resolve([] as Member[]),
     groupPool(q, now, factIds),
   ]);
@@ -147,7 +148,7 @@ export async function loadTimeline(q: TimelineQuery): Promise<Omit<TimelineRespo
   // Recheck scope when hydrating: a withdrawal may commit after the narrow representative read.
   const rows = new Map(planned.length ? (await sql<ItemRow[]>`
     SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id IN ${sql(planned.map((p) => p.id))}
-      AND ${selectedCondition(now)} ${filterSql(q)}`).map((row) => [row.id, row]) : []);
+      AND ${(await selectedCondition(now)).condition} ${filterSql(q)}`).map((row) => [row.id, row]) : []);
   const cards: TimelineCard[] = planned.flatMap(({ id, key, anchorAt, group }) => {
     const row = rows.get(id);
     if (!row) return [];

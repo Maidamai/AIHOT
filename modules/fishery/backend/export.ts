@@ -2,7 +2,7 @@
 import { sql } from "@aihot/backend/db";
 import { config } from "@aihot/backend/config";
 import { audit, Conflict } from "@aihot/backend/audit";
-import { itemAvailability } from "@aihot/backend/publication/availability";
+import { sourceArticleAvailability } from "./source-availability.ts";
 import { publicSourceName } from "@aihot/backend/publication/rules";
 import { effectiveState, canExportSummary, type Observation, type SourceProfile } from "../contracts.ts";
 import { hash, lockDocument, sourceAttributionOf } from "./store.ts";
@@ -59,7 +59,7 @@ export async function exportMaterial(id: string, revision: number, actor: string
       SELECT * FROM fishery_observations WHERE document_id = ${id} ORDER BY revision DESC LIMIT 1`;
     const [review] = await tx<{ revision: number; source_revision: number; decision: string; applicability_reviewed: boolean; actor: string; reviewed_at: Date }[]>`SELECT * FROM fishery_reviews WHERE document_id = ${id} ORDER BY id DESC LIMIT 1`;
     const p = source.profile;
-    const linkedStatus = doc.article_id ? (await itemAvailability([doc.article_id]))[doc.article_id]?.status : undefined;
+    const linkedStatus = doc.article_id ? (await sourceArticleAvailability([doc.article_id]))[doc.article_id]?.status : undefined;
     const blocked = exportBlockers({ withdrawn_reason: doc.withdrawn_reason, article_id: doc.article_id }, source, observation ?? null, review ?? null, linkedStatus, now, revision)[0];
     const errors: Record<string, string> = { rights: "Current rights or withdrawal prevent export", withdrawn: "Current rights or withdrawal prevent export",
       review: "Only the latest observation approved against current rights can be exported", linked: "Linked article is no longer publicly available",

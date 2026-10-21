@@ -248,7 +248,7 @@ async function missedFacts(start: Date, end: Date): Promise<Array<{ key: string;
     WITH active AS (
       SELECT DISTINCT fa.fact_id FROM fact_articles fa
       JOIN publications p ON p.article_id = fa.article_id JOIN sources s ON s.id = p.source_id
-      WHERE ${evidenceCondition()} AND ${listedCondition(end)} AND s.participation_mode = 'editorial' AND NOT p.backfill
+      WHERE ${evidenceCondition()} AND ${(await listedCondition(end)).condition} AND s.participation_mode = 'editorial' AND NOT p.backfill
         AND p.timeline_at >= ${start} AND p.timeline_at < ${end}
     )
     SELECT fa.fact_id
@@ -265,7 +265,7 @@ async function missedFacts(start: Date, end: Date): Promise<Array<{ key: string;
     SELECT ${REPORT_FIELDS}
     FROM fact_articles fa JOIN publications p ON p.article_id = fa.article_id JOIN sources s ON s.id = p.source_id
     JOIN facts f ON f.id = fa.fact_id LEFT JOIN stories st ON st.id = f.story_id
-    WHERE fa.fact_id = ANY(${found.map((f) => f.fact_id)}::bigint[]) AND ${evidenceCondition()} AND ${listedCondition(end)}
+    WHERE fa.fact_id = ANY(${found.map((f) => f.fact_id)}::bigint[]) AND ${evidenceCondition()} AND ${(await listedCondition(end)).condition}
       AND s.participation_mode = 'editorial' AND s.tier <> 'EXCLUDE_MP' AND NOT p.backfill AND p.timeline_at < ${end}`;
   return [...groupBy(rows, factKeyOf)]
     .filter(([, members]) => members.some((r) => representativePriority(r) < 3))
@@ -276,7 +276,7 @@ async function missedFacts(start: Date, end: Date): Promise<Array<{ key: string;
 async function judgedReports(start: Date, end: Date): Promise<number> {
   const [row] = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n FROM publications p
-    WHERE ${listedCondition(end)} AND p.score IS NOT NULL AND NOT p.backfill AND p.timeline_at >= ${start} AND p.timeline_at < ${end}`;
+    WHERE ${(await listedCondition(end)).condition} AND p.score IS NOT NULL AND NOT p.backfill AND p.timeline_at >= ${start} AND p.timeline_at < ${end}`;
   return row!.n;
 }
 

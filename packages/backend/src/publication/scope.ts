@@ -1,8 +1,10 @@
+import type postgres from "postgres";
 // Public scope at read time. Every query that decides whether a report is public now,
 // listed, selected, or evidence of its fact uses these predicates over `publications p` (and, for
 // evidence, `fact_articles fa`); no other module spells visibility, the release time or the composite
 // rule in SQL, and grouping takes the composite rule from here too. What a publication holds is
 // derived once, at publish time, by publish.ts and rules.ts.
+import { serverModules } from "../modules.ts";
 import { sql } from "../db.ts";
 import { independentSelectedSources } from './rules.ts';
 
@@ -19,27 +21,33 @@ export function releasedCondition(now: Date) {
   return sql`(NOT p.selected OR p.visible_after <= ${now})`;
 }
 
+/** Re-evaluated for each query: module approval is never a durable public permission. */
+export async function currentPublicationCondition(now = new Date()): Promise<{ condition: postgres.PendingQuery<postgres.Row[]> }> {
+  const conditions = await Promise.all(serverModules().flatMap(m => m.publication ? [m.publication.readCondition(now)] : []));
+  return { condition: conditions.reduce((condition, next) => sql`${condition} AND (${next.condition})`, sql`true`) };
+}
+
 /** Listed on public surfaces at `now`: public, pool eligible, and released by then. */
-export function listedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND p.eligible AND ${releasedCondition(now)}`;
+export async function listedCondition(now: Date) {
+  return { condition: sql`${(await currentPublicationCondition(now)).condition} AND p.visibility = 'public' AND p.eligible AND ${releasedCondition(now)}` };
 }
 
 /** Story reports include older editorial material outside the pool, but never withdrawn or not yet released content. */
-export function storyReportCondition(now: Date) {
-  return sql`p.visibility = 'public' AND s.participation_mode = 'editorial' AND ${releasedCondition(now)}`;
+export async function storyReportCondition(now: Date) {
+  return { condition: sql`${(await currentPublicationCondition(now)).condition} AND p.visibility = 'public' AND s.participation_mode = 'editorial' AND ${releasedCondition(now)}` };
 }
 
 /** Selected set as the website shows it (home timeline, reading groups, topics): every selected report. */
-export function selectedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND p.selected AND p.visible_after <= ${now}`;
+export async function selectedCondition(now: Date) {
+  return { condition: sql`${(await currentPublicationCondition(now)).condition} AND p.visibility = 'public' AND p.selected AND p.visible_after <= ${now}` };
 }
 
 /**
  * The selected set as machines receive it (v1, RSS, the sync ledger): the representative of ordinary
  * reports of each fact, plus any independently displayed selected articles (publish.ts settleSeats).
  */
-export function seatedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND p.selected AND p.seat AND p.visible_after <= ${now}`;
+export async function seatedCondition(now: Date) {
+  return { condition: sql`${(await currentPublicationCondition(now)).condition} AND p.visibility = 'public' AND p.selected AND p.seat AND p.visible_after <= ${now}` };
 }
 
 /** The report was published from a composite (multi-topic) analysis: it only mentions facts. */
@@ -53,7 +61,7 @@ export function compositeCondition() {
  * analysis, which `p.analysis_id` only points to once the publication is rebuilt from it, and recall
  * also meets reports without a publication. Missing scope is unknown, never composite.
  */
-export function latestCompositeCondition(article: ReturnType<typeof sql>) {
+export function latestCompositeCondition(article: postgres.PendingQuery<postgres.Row[]>) {
   return sql`(SELECT scope_analysis.output->>'scope' = 'composite' FROM analyses scope_analysis
     WHERE scope_analysis.article_id = ${article}
     ORDER BY scope_analysis.input_revision DESC, scope_analysis.id DESC LIMIT 1) IS TRUE`;
@@ -64,7 +72,7 @@ export function latestCompositeCondition(article: ReturnType<typeof sql>) {
  * A summary-only report or one awaiting publication keeps its existing eligibility.
  * Historical memberships and judgements are retained independently of this predicate.
  */
-export function groupingEvidenceCondition(article: ReturnType<typeof sql>) {
+export function groupingEvidenceCondition(article: postgres.PendingQuery<postgres.Row[]>) {
   return sql`NOT ${latestCompositeCondition(article)} AND NOT EXISTS (
     SELECT 1 FROM publications grouping_publication
     WHERE grouping_publication.article_id = ${article} AND grouping_publication.visibility = 'withdrawn')`;

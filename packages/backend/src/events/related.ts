@@ -1,15 +1,16 @@
+import type postgres from "postgres";
 // Saved bridge judgements remain evidence after the recall window; an explicit change to the
 // judgement, publication or fact membership can invalidate them without deleting the link history.
 // A judgement counts for the story its fact is in now, as links are made, so a story merge carries it along.
 // Which judgement ties a report to another story is written once here, for making links
 // (consolidate.ts linkRelatedStories) and for reading them.
 import { sql } from "../db.ts";
-import { latestCompositeCondition, storyReportCondition } from "../publication/scope.ts";
+import { latestCompositeCondition } from "../publication/scope.ts";
 import { TIE_MIN_CONFIDENCE, TIE_RELATIONS } from "./relate.ts";
 
 export const RELATED_MIN_REPORTS = 2;
 
-type Fragment = ReturnType<typeof sql>;
+type Fragment = postgres.PendingQuery<postgres.Row[]>;
 
 /**
  * Each report's latest grouping judgement, among the decisions `scope` (a condition on `d`) admits. A
@@ -27,7 +28,7 @@ export function firmTie(d: Fragment, c: Fragment) {
 }
 
 /** One row per known bridge report, with its current validity. Missing history proves no revocation. */
-export function relatedEvidence(story: Fragment, other: Fragment, now: Date) {
+export function relatedEvidence(story: Fragment, other: Fragment, current: Fragment) {
   return sql`(
     WITH judged AS (
       SELECT DISTINCT d.id, d.article_id, d.fact_id FROM facts own
@@ -39,7 +40,7 @@ export function relatedEvidence(story: Fragment, other: Fragment, now: Date) {
           OR (own.story_id = ${other} AND candidate.story_id = ${story}))),
     latest AS (${latestJudgements(sql`d.article_id IN (SELECT article_id FROM judged)`)})
     SELECT j.article_id, bool_or((j.id = latest.id
-      AND ${storyReportCondition(now)} AND NOT ${latestCompositeCondition(sql`j.article_id`)}
+      AND ${current} AND NOT ${latestCompositeCondition(sql`j.article_id`)}
       AND EXISTS (SELECT 1 FROM fact_articles fa WHERE fa.article_id = j.article_id
         AND fa.fact_id = j.fact_id AND fa.role IN ('primary', 'report'))) IS TRUE) AS valid
     FROM judged j JOIN latest ON latest.article_id = j.article_id

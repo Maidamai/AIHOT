@@ -15,7 +15,7 @@ import { sql } from "../db.ts";
 import { ENTITIES, entityNames } from "../editorial/vocabulary.ts";
 import { cached, type Cached } from "../lib/cache.ts";
 import { sha256, stableJson } from "../lib/ids.ts";
-import { serverModules } from "../modules.ts";
+import { hasPublicationReadGuard, serverModules } from "../modules.ts";
 import { ITEM_COLUMNS, ITEM_FROM, toFeedItemSummary, type ItemRow } from "./items.ts";
 import { evidenceCondition, listedCondition, ownFactEvidenceCondition, seatedCondition, selectedCondition, storyReportCondition } from "./scope.ts";
 
@@ -184,12 +184,12 @@ async function readSeats(now: Date, ids?: string[], topics: Topic[] = TOPICS): P
       LEFT JOIN facts f ON f.id = p.fact_id
       LEFT JOIN analyses a ON a.id = p.analysis_id
       LEFT JOIN stories st ON st.id = p.story_id AND st.merged_into IS NULL
-      WHERE ${seatedCondition(now)}
+      WHERE ${(await seatedCondition(now)).condition}
         ${ids ? sql`AND p.article_id = ANY(${[...new Set(ids)]}::text[])` : sql``}
     ), dates AS (
       SELECT p.fact_id, min(coalesce(p.published_at, p.timeline_at)) AS fact_published_at
       FROM publications p WHERE p.fact_id IN (SELECT fact_id FROM seats WHERE fact_id IS NOT NULL)
-        AND ${selectedCondition(now)} AND ${ownFactEvidenceCondition()}
+        AND ${(await selectedCondition(now)).condition} AND ${ownFactEvidenceCondition()}
       GROUP BY p.fact_id
     )
     SELECT seats.*, dates.fact_published_at FROM seats LEFT JOIN dates ON dates.fact_id = seats.fact_id
@@ -213,7 +213,7 @@ async function readIndex(now: Date): Promise<TopicIndex> {
 const indexCache = cached(() => readIndex(new Date()), { freshMs: 60_000, maxStaleMs: 60_000 });
 
 /** A given `now` reads afresh (tests, a clock other than this minute's). */
-const topicIndex = (now?: Date) => (now ? readIndex(now) : indexCache.get());
+const topicIndex = (now?: Date) => (now || hasPublicationReadGuard() ? readIndex(now ?? new Date()) : indexCache.get());
 
 const DAY = 86400_000;
 const RECENT_DAYS = 30;
@@ -309,8 +309,8 @@ const poolCounts = new Map<string, Cached<number>>();
 
 /** Every listed report of the topic, selected or not (收录). */
 function poolTotal(t: Topic, now?: Date): Promise<number> {
-  const read = async (at: Date) => (await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM publications p WHERE ${listedCondition(at)} AND ${inTopic(t)}`)[0]?.n ?? 0;
-  if (now) return read(now);
+  const read = async (at: Date) => (await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM publications p WHERE ${(await listedCondition(at)).condition} AND ${inTopic(t)}`)[0]?.n ?? 0;
+  if (now || hasPublicationReadGuard()) return read(now ?? new Date());
   let count = poolCounts.get(t.slug);
   if (!count) poolCounts.set(t.slug, (count = cached(() => read(new Date()), { freshMs: 60_000, maxStaleMs: 60_000 })));
   return count.get();
@@ -335,7 +335,7 @@ export async function loadTopicPage(slug: string, page: number, now?: Date): Pro
   for (const part of parts) recheck.push(...part.recheck);
   const [rows, pool, brands, live] = await Promise.all([
     ids.length
-      ? sql<ItemRow[]>`SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id = ANY(${ids}::text[]) AND ${seatedCondition(at)} AND ${inTopic(topic)}
+      ? sql<ItemRow[]>`SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id = ANY(${ids}::text[]) AND ${(await seatedCondition(at)).condition} AND ${inTopic(topic)}
           ORDER BY p.timeline_at DESC, p.article_id DESC`
       : [],
     poolTotal(topic, now),
@@ -361,7 +361,7 @@ export async function topicsOfStory(storyId: number, now = new Date()): Promise<
     SELECT DISTINCT ON (p.article_id) ${topicMembership()} AS topics
     FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
     JOIN sources s ON s.id = p.source_id
-    WHERE f.story_id = ${storyId} AND ${evidenceCondition()} AND ${storyReportCondition(now)}
+    WHERE f.story_id = ${storyId} AND ${evidenceCondition()} AND ${(await storyReportCondition(now)).condition}
     ORDER BY p.article_id`;
   const reports = new Map<string, number>();
   for (const r of rows) for (const slug of r.topics) reports.set(slug, (reports.get(slug) ?? 0) + 1);

@@ -208,7 +208,7 @@ export async function seatHolders(rows: ItemRow[], now: Date, db: Db = sql): Pro
   if (!yielding.length) return new Map();
   const holders = await db<{ fact_id: number; id: string; title: string }[]>`
     SELECT p.fact_id, p.article_id AS id, p.title FROM publications p
-    WHERE p.fact_id IN ${db([...new Set(yielding.map((r) => r.fact_id!))])} AND ${seatedCondition(now)} AND ${foldableSelectionCondition()}`;
+    WHERE p.fact_id IN ${db([...new Set(yielding.map((r) => r.fact_id!))])} AND ${(await seatedCondition(now)).condition} AND ${foldableSelectionCondition()}`;
   const byFact = new Map(holders.map((h) => [Number(h.fact_id), { id: h.id, title: h.title }]));
   return new Map(yielding.flatMap((r) => (byFact.has(Number(r.fact_id)) ? [[r.id, byFact.get(Number(r.fact_id))!] as const] : [])));
 }

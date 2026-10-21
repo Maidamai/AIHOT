@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
 import { audit, Conflict } from "@aihot/backend/audit";
-import { itemAvailability } from "@aihot/backend/publication/availability";
+import { sourceArticleAvailable } from "./source-availability.ts";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
 import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { businessGuidePayloadSchema, createBusinessGuideSchema, updateBusinessGuideSchema, decideBusinessGuideSchema,
@@ -31,8 +31,7 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
   if (!capture || capture.httpStatus !== 200 || capture.parseStatus !== "parsed" || !capture.bodySha256 || capture.conflicts.length)
     throw new Conflict("Parsed, complete source capture required");
   if (doc.article_id) {
-    const available = (await itemAvailability([doc.article_id]))[doc.article_id];
-    if (!available || !["public", "summary-only"].includes(available.status)) throw new Conflict("Linked article unavailable");
+    if (!await sourceArticleAvailable(doc.article_id, db)) throw new Conflict("Linked article unavailable");
   }
   let body: string | null;
   try { body = await readSourceBody(capture); }
@@ -214,7 +213,7 @@ export async function businessGuideHistory(id: string) {
   return sql`SELECT id,actor,action,reason,before,after,created_at FROM audit_log WHERE subject=${`business-guide:${id}`} ORDER BY id`;
 }
 
-async function readableItems(db: Db, now: Date): Promise<BusinessGuideReaderItem[]> {
+export async function eligibleBusinessGuideItems(db: Db, now: Date): Promise<BusinessGuideReaderItem[]> {
   const rows = await db`SELECT * FROM fishery_business_guides WHERE status='approved' ORDER BY updated_at DESC,id FOR SHARE`, items: BusinessGuideReaderItem[] = [];
   for (const row of rows) {
     let context: BusinessGuideContext;
@@ -231,12 +230,12 @@ async function readableItems(db: Db, now: Date): Promise<BusinessGuideReaderItem
 }
 export async function businessGuideReaderPage(query: { topicId?: string; kind?: string; page?: number } = {}, now = new Date()): Promise<BusinessGuideReaderPage> {
   return sql.begin(async tx => {
-    const all = await readableItems(tx, now), filtered = all.filter(i => (!query.topicId || i.payload.topicId === query.topicId) && (!query.kind || i.payload.kind === query.kind));
+    const all = await eligibleBusinessGuideItems(tx, now), filtered = all.filter(i => (!query.topicId || i.payload.topicId === query.topicId) && (!query.kind || i.payload.kind === query.kind));
     const limit = 20, page = Math.min(Math.max(1, query.page ?? 1), Math.max(1, Math.ceil(filtered.length / limit)));
     return { rows: filtered.slice((page - 1) * limit, page * limit), total: filtered.length, page, limit, internalOnly: true,
       topics: BUSINESS_TOPICS.map(t => { const count = all.filter(i => i.payload.topicId === t.id && (!query.kind || i.payload.kind === query.kind)).length; return { id: t.id, label: t.label, firstRelease: t.firstRelease, count, emptyMessage: count ? null : "待补充经人工审核的正式依据与适用信息" }; }) };
   });
 }
 export async function businessGuideReaderItem(id: string, now = new Date()) {
-  return sql.begin(async tx => { const item = (await readableItems(tx, now)).find(i => i.id === id); if (!item) throw new NotFound("No current approved business information"); return item; });
+  return sql.begin(async tx => { const item = (await eligibleBusinessGuideItems(tx, now)).find(i => i.id === id); if (!item) throw new NotFound("No current approved business information"); return item; });
 }

@@ -193,7 +193,7 @@ export async function computeHotRanking(at = new Date()): Promise<{ id: number; 
              f.id AS fact_id, ${REPRESENTATIVE_COLUMNS}, coalesce(p.published_at, p.discovered_at) AS at
       FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
       JOIN sources s ON s.id = p.source_id
-      WHERE f.story_id = ${r.story_id} AND ${evidenceCondition()} AND ${listedCondition(at)}
+      WHERE f.story_id = ${r.story_id} AND ${evidenceCondition()} AND ${(await listedCondition(at)).condition}
       ORDER BY p.article_id, (fa.role = 'primary') DESC, f.id`;
     if (reports.length === 0) continue;
     // The event is shown under its own title, linked to the fact most sources report: the launch,

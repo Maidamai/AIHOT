@@ -1,3 +1,5 @@
+import { syncFisheryPublications } from "../backend/publication-bridge.ts";
+import { loadItemDetail } from "@aihot/backend/publication/detail";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -729,9 +731,13 @@ test("private reader projects only the current real qualified set and never expo
   const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"safety");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
   assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"safety"},now)).rows.some(r=>r.id===f.id));
   assert.equal(one.verification.label,"摘要已完成内部核对");assert.equal(one.title,quote);assert.equal(one.source.originalTitle,"配额增100%（合成未核查原标题）");assert.ok(!one.title.includes("100%"));
+  const bridged=(await syncFisheryPublications("synthetic-reader-bridge",now)).rows.find(row=>row.kind==="article"&&row.itemId===f.id)!;
+  assert.ok(bridged);assert.equal((await loadItemDetail(bridged.articleId)).kind,"found");
+  assert.equal((await readerItem(f.id,now)).title,quote,"Summary bridge never shadows the private source-body fallback");
   const categoriesBefore=page.categories;
   await review(f.id,{revision:2,sourceRevision:1,decision:"rejected",applicabilityReviewed:false,note:"Synthetic current-version material rejection"},"fixture-admin");
   assert.equal((await flowDetail(task.id)).materialRejected,true);assert.equal((await flowDetail(task.id)).internalArticle,null);
+  assert.equal((await loadItemDetail(bridged.articleId)).kind,"not_found");
   await assert.rejects(readerItem(f.id,now),/No current/);assert.equal((await readerPage({},now)).total,baseline);
   assert.equal((await readerPage({},now)).categories.reduce((n,c)=>n+c.count,0),baseline);
   await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot bypass current material rejection"},"fixture-admin"),/must be approved/);

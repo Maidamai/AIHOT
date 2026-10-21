@@ -22,7 +22,7 @@ export async function loadStoryFollowups(storyPublicId: string, now = new Date()
     SELECT p.fact_id, f.public_id AS fact_public_id, p.article_id AS id, p.title, s.name AS source_name,
       p.body_mode, p.score, p.timeline_at, p.sort_at, ${REPRESENTATIVE_COLUMNS}
     FROM stories st JOIN publications p ON p.story_id = st.id JOIN sources s ON s.id = p.source_id JOIN facts f ON f.id = p.fact_id
-    WHERE st.public_id = ${storyPublicId} AND st.merged_into IS NULL AND ${selectedCondition(now)} AND ${ownFactEvidenceCondition()}`;
+    WHERE st.public_id = ${storyPublicId} AND st.merged_into IS NULL AND ${(await selectedCondition(now)).condition} AND ${ownFactEvidenceCondition()}`;
   const byFact = new Map<number, Member[]>();
   for (const m of members) byFact.set(m.fact_id, [...(byFact.get(m.fact_id) ?? []), m]);
   if (byFact.size === 0) return null;

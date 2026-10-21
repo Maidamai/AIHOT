@@ -593,3 +593,28 @@ test("a correction between snapshot pages arrives through changes after the fixe
     ({ op: change.op, id: change.item.id, title: change.item.title })), [{ op: 'upsert', id, title }],
   'the client applies the correction once after finishing the original snapshot');
 });
+
+test("live module approval gates original detail/list/share/sync and advances an existing client on withdrawal", async () => {
+  const { installModules, serverModules } = await import("@aihot/backend/modules");
+  const { selectedSnapshot, selectedChanges } = await import("@aihot/backend/publication/v1");
+  const { loadItemDetail } = await import("@aihot/backend/publication/detail");
+  const previous = serverModules();
+  const id = await article();
+  await publishArticle(id, released());
+  const initial = await selectedSnapshot({ limit: 500, page: null });
+  assert.ok(initial.items.some(item => item.id === id));
+  let admitted = true;
+  installModules([...previous, { name: "test-current-approval", publication: {
+    readCondition: async () => ({ condition: sql`p.article_id <> ${id} OR ${admitted}` }),
+  } }]);
+  try {
+    assert.equal((await loadItemDetail(id)).kind, "found");
+    admitted = false;
+    assert.equal((await loadItemDetail(id)).kind, "not_found");
+    assert.equal(await loadItemShare(id), null);
+    const current = await selectedSnapshot({ limit: 500, page: null });
+    assert.ok(!current.items.some(item => item.id === id));
+    const changes = await selectedChanges({ cursor: initial.cursor, limit: 500 });
+    assert.ok(changes.changes.some(change => change.id === id && change.op === "remove"));
+  } finally { installModules(previous); }
+});

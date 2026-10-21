@@ -23,7 +23,7 @@ export async function loadGroupReports(q: GroupReportsQuery, now = new Date()): 
     SELECT p.article_id AS id, p.title, p.timeline_at, p.url, s.name AS source_name
     FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
     JOIN sources s ON s.id = p.source_id
-    WHERE f.public_id = ${q.factPublicId} AND ${evidenceCondition()} AND ${listedCondition(now)}
+    WHERE f.public_id = ${q.factPublicId} AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
       ${channelCondition(q.channel)} ${categoryCondition(q.category)} ${tagCondition(q.tag)}
     ORDER BY p.timeline_at DESC, p.article_id ASC
     LIMIT ${MAX_REPORTS}`;

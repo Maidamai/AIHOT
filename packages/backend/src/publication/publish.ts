@@ -11,11 +11,11 @@ import { originalPostCopy } from "../content/posts.ts";
 import { itemUrl } from "./links.ts";
 import { pickRepresentative, REPRESENTATIVE_COLUMNS, type RepresentativeIdentity } from "./representative.ts";
 import { enqueue, QUEUES, shutdownSignal } from "../jobs/queue.ts";
-import { emit } from "../modules.ts";
+import { emit, hasPublicationReadGuard, serverModules } from "../modules.ts";
 import {
   bodyModeOf, channelOf, displayTags, isIndexable, isPoolEligible, isSelectable, isIndependentSelectedSource, mayRedistribute, publicSourceName, type SourceFacts,
 } from "./rules.ts";
-import { foldableSelectionCondition, latestCompositeCondition, ownFactEvidenceCondition } from "./scope.ts";
+import { currentPublicationCondition, foldableSelectionCondition, latestCompositeCondition, ownFactEvidenceCondition } from "./scope.ts";
 
 interface ArticleRow {
   id: string;
@@ -201,7 +201,8 @@ async function syncLedger(tx: Tx, articleId: string, now: Date): Promise<"upsert
     FROM publications p JOIN sources s ON s.id = p.source_id WHERE p.article_id = ${articleId}`;
   if (!p) return null;
   const [state] = await tx<{ in_set: boolean; payload_hash: string | null }[]>`SELECT in_set, payload_hash FROM selected_state WHERE article_id = ${articleId}`;
-  if (p.selected && p.visibility === "public" && p.seat) {
+  const current = !hasPublicationReadGuard() || (await tx`SELECT 1 FROM publications p WHERE p.article_id=${articleId} AND ${(await currentPublicationCondition(now)).condition}`).length > 0;
+  if (current && p.selected && p.visibility === "public" && p.seat) {
     const payload = v1Payload({
       articleId, title: p.title, originalTitle: p.original_title, summary: p.summary, sourceName: p.source_name, url: p.url,
       publishedAt: p.published_at, discoveredAt: p.discovered_at, category: p.category, score: p.score === null ? null : Number(p.score), selected: true, reason: p.reason,
@@ -284,7 +285,8 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   // An undated archive has a readable detail page, but its discovery is not a news timestamp.
   // Explicit imports can retain an editorial decision already published elsewhere.
   const eligible = isPoolEligible({ participationMode: source.participation_mode, relevance, title, summary, originalPost: !!original })
-    && (!article.backfill || article.published_at !== null || !!options.releasedAt);
+    && (!article.backfill || article.published_at !== null || !!options.releasedAt
+      || (await Promise.all(serverModules().map(m => m.publication?.allowUndatedArchive?.(articleId, tx) ?? false))).some(Boolean));
   const selectionCandidate = isSelectable(eligible, judgedSelected, source.tier);
   // Scoring nominates a report; a completed identity/value decision admits it to selection.
   // A historical import already has its public decision. Preserve that confirmed state on rebuild.
@@ -456,4 +458,19 @@ export async function republishSource(sourceId: string, onProgress?: (done: numb
     await onProgress?.(done, total);
   }
   return { total, changed, reduced };
+}
+
+/** A live module withdrawal also advances an already-synced client's watermark. */
+export async function reconcilePublicationLedger(now = new Date()): Promise<void> {
+  if (!hasPublicationReadGuard()) return;
+  const condition = (await currentPublicationCondition(now)).condition;
+  await sql.begin(async tx => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('selected_ledger'))`;
+    const stale = await tx`SELECT st.article_id FROM selected_state st JOIN publications p ON p.article_id=st.article_id
+      WHERE st.in_set AND NOT (${condition}) FOR UPDATE OF st`;
+    for (const row of stale) {
+      const seq = await appendLedger(tx, row.article_id, "remove", null, now);
+      await tx`UPDATE selected_state SET in_set=false,payload_hash=NULL,last_seq=${seq} WHERE article_id=${row.article_id}`;
+    }
+  });
 }

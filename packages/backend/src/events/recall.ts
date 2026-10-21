@@ -69,7 +69,7 @@ async function selectedReadingPool(candidateFacts: number[]): Promise<ReadingRow
     SELECT p.article_id, p.revision, p.fact_id, p.title, p.summary, s.name AS source, (s.tier = 'T1') AS "firstParty",
       p.published_at AS at, a.publication_time AS "publicationTime", an.output->>'scope' AS scope
     FROM publications p JOIN articles a ON a.id = p.article_id JOIN sources s ON s.id = p.source_id LEFT JOIN analyses an ON an.id = p.analysis_id
-    WHERE ${selectedCondition(new Date())} AND p.discovered_at > now() - make_interval(days => ${READING_DAYS})
+    WHERE ${(await selectedCondition(new Date())).condition} AND p.discovered_at > now() - make_interval(days => ${READING_DAYS})
       AND (p.fact_id IS NULL OR (p.discovered_at <= now() - make_interval(days => ${RECALL_DAYS}) AND NOT p.fact_id = ANY(${candidateFacts}::bigint[])))`;
 }
 
@@ -237,7 +237,7 @@ export async function candidateViews(recalled: Recalled[]): Promise<CandidateVie
         s.name AS source, (s.tier = 'T1') AS first_party, p.published_at AS at, a.publication_time AS "publicationTime",
         ${REPRESENTATIVE_COLUMNS}
       FROM publications p JOIN articles a ON a.id = p.article_id JOIN sources s ON s.id = p.source_id JOIN facts f ON f.id = p.fact_id
-      WHERE p.fact_id = ANY(${ids}) AND ${selectedCondition(new Date())} AND ${ownFactEvidenceCondition()}`,
+      WHERE p.fact_id = ANY(${ids}) AND ${(await selectedCondition(new Date())).condition} AND ${ownFactEvidenceCondition()}`,
   ]);
   const byFact = new Map(rows.map((r) => [Number(r.fact_id), r]));
   return recalled.flatMap((r) => {

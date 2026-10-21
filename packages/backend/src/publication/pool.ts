@@ -1,3 +1,4 @@
+import { hasPublicationReadGuard } from "../modules.ts";
 // Public pool (/all) with numeric pages, and search in its two orderings.
 import type { PoolResponse, TimelineFilters } from "@aihot/contracts/site";
 import { beijingDate, beijingMidnight } from "@aihot/contracts/time";
@@ -114,7 +115,7 @@ export function publicMatchCondition(terms: string[]) {
 /** The listed items under the filters, up to the pages the pool offers. */
 async function listedCount(f: TimelineFilters, now: Date): Promise<number> {
   return Number(one(await sql<{ n: number }[]>`
-    SELECT count(*) AS n FROM (SELECT 1 FROM publications p WHERE ${listedCondition(now)}
+    SELECT count(*) AS n FROM (SELECT 1 FROM publications p WHERE ${(await listedCondition(now)).condition}
       ${channelCondition(f.channel)} ${categoryCondition(f.category)} ${tagCondition(f.tag)} LIMIT ${POOL_MAX_PAGES * POOL_PAGE_SIZE}) t`).n);
 }
 
@@ -135,7 +136,7 @@ const searchPool = sharedSearch(
 );
 
 export function loadPool(query: PoolQuery): Promise<PoolResponse> {
-  return searchPool(query, query.now);
+  return hasPublicationReadGuard() ? queryPool(query, query.now ?? new Date()) : searchPool(query, query.now);
 }
 
 async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
@@ -157,12 +158,12 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
       // Page ids from the timeline index first, then the joins for those rows only.
       const rows = await db<ItemRow[]>`
         WITH page AS (
-          SELECT p.article_id FROM publications p WHERE ${listedCondition(now)} ${filters}
+          SELECT p.article_id FROM publications p WHERE ${(await listedCondition(now)).condition} ${filters}
           ORDER BY p.timeline_at DESC, p.article_id DESC LIMIT ${POOL_PAGE_SIZE} OFFSET ${offset})
         SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id IN (SELECT article_id FROM page)
         ORDER BY p.timeline_at DESC, p.article_id DESC`;
       // A fixed clock (tests, replays) never shares cached totals.
-      return { rows, total: query.now ? await listedCount(query, now) : await poolTotal(query) };
+      return { rows, total: query.now || hasPublicationReadGuard() ? await listedCount(query, now) : await poolTotal(query) };
     }
     if (tab === "relevance") {
       // Rank narrow rows first: no article bodies or translations enter the sort/count. The public
@@ -192,11 +193,11 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
           SELECT p.article_id, p.timeline_at, max(matches.part) + (${titleScore}) + (CASE WHEN p.tags @> ${[entityTag]}::text[] THEN 10 ELSE 0 END) AS rel, ${tie} AS tie
           FROM (SELECT article_id, part FROM matches UNION ALL SELECT article_id, 0 FROM publications WHERE tags @> ${[entityTag]}::text[]) matches
           JOIN publications p ON p.article_id = matches.article_id
-          WHERE ${listedCondition(now)} ${filters}
+          WHERE ${(await listedCondition(now)).condition} ${filters}
           GROUP BY p.article_id, p.timeline_at, p.title, p.tags, p.selected, p.seat, p.score` : sql`
           SELECT p.article_id, p.timeline_at, matches.part + (${titleScore}) AS rel, ${tie} AS tie
           FROM matches JOIN publications p ON p.article_id = matches.article_id JOIN sources s ON s.id = p.source_id
-          WHERE ${listedCondition(now)} ${filters}`;
+          WHERE ${(await listedCondition(now)).condition} ${filters}`;
       const result = await db<RankedRow[]>`
         WITH matches AS ${splitFields ? sql`MATERIALIZED` : sql`NOT MATERIALIZED`} (${matches}), scored AS MATERIALIZED (${scored}
         ), page AS MATERIALIZED (
@@ -213,14 +214,14 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
     // search rows, where one- and two-character terms scan a small table instead of every item.
     const rows = await db<ItemRow[]>`
       WITH page AS (
-        SELECT p.article_id FROM publications p WHERE ${listedCondition(now)} ${filters} ${matchOrSubject(directMatchCondition(terms))}
+        SELECT p.article_id FROM publications p WHERE ${(await listedCondition(now)).condition} ${filters} ${matchOrSubject(directMatchCondition(terms))}
         ORDER BY p.timeline_at DESC, p.article_id DESC LIMIT ${POOL_PAGE_SIZE} OFFSET ${offset})
       SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id IN (SELECT article_id FROM page)
       ORDER BY p.timeline_at DESC, p.article_id DESC`;
     const direct = terms.reduce((acc, t) => sql`${acc} AND ${like(sql`ps.direct`, t)}`, sql``);
     const { n } = one(await db<{ n: number }[]>`
       SELECT count(*) AS n FROM (SELECT 1 FROM pool_search ps JOIN publications p ON p.article_id = ps.article_id
-        WHERE ${listedCondition(now)} ${filters} ${matchOrSubject(direct)} LIMIT ${cap}) t`);
+        WHERE ${(await listedCondition(now)).condition} ${filters} ${matchOrSubject(direct)} LIMIT ${cap}) t`);
     return { rows, total: Number(n) };
   };
 
@@ -228,8 +229,8 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
   const today = beijingDate(now);
   const meta = one(await sql<{ today_count: number; updated_at: Date | null }[]>`
     SELECT (SELECT count(*) FROM publications p
-      WHERE ${listedCondition(now)} AND p.timeline_at >= ${beijingMidnight(today)} ${filters}) AS today_count,
-      (SELECT max(p.updated_at) FROM publications p WHERE p.eligible) AS updated_at`);
+      WHERE ${(await listedCondition(now)).condition} AND p.timeline_at >= ${beijingMidnight(today)} ${filters}) AS today_count,
+      (SELECT max(p.updated_at) FROM publications p WHERE ${(await listedCondition(now)).condition}) AS updated_at`);
 
   const holders = await seatHolders(rows, now);
   return {

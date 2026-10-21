@@ -20,12 +20,12 @@ export async function storyTexts(storyIds: number[], now = new Date()): Promise<
     SELECT st.id, st.digest, st.digest_updated_at, saved.article_ids, saved.inputs_hash,
       CASE WHEN EXISTS (
         SELECT 1 FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-        WHERE f.story_id = st.id AND p.summary = st.summary AND ${evidenceCondition()} AND ${listedCondition(now)}
+        WHERE f.story_id = st.id AND p.summary = st.summary AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
       ) THEN st.summary END AS summary,
       coalesce(st.digest = saved.digest, false) AND NOT EXISTS (
         SELECT 1 FROM unnest(saved.article_ids) AS input(article_id)
         WHERE NOT EXISTS (SELECT 1 FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-          WHERE f.story_id = st.id AND p.article_id = input.article_id AND ${evidenceCondition()} AND ${listedCondition(now)})
+          WHERE f.story_id = st.id AND p.article_id = input.article_id AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition})
       ) AS current,
       latest.id AS latest_id, latest.title AS latest_title, latest.at AS latest_at
     FROM stories st LEFT JOIN LATERAL (
@@ -33,7 +33,7 @@ export async function storyTexts(storyIds: number[], now = new Date()): Promise<
     ) saved ON true LEFT JOIN LATERAL (
       SELECT p.article_id AS id, p.title, coalesce(p.published_at, p.discovered_at) AS at
       FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${listedCondition(now)}
+      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${(await listedCondition(now)).condition}
       ORDER BY coalesce(p.published_at, p.discovered_at) DESC, p.article_id LIMIT 1
     ) latest ON true
     WHERE st.id = ANY(${storyIds}::bigint[])`;

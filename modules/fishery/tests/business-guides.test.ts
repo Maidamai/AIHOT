@@ -1,3 +1,10 @@
+import { installModules } from "@aihot/backend/modules";
+import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, syncFisheryPublications } from "../backend/publication-bridge.ts";
+import { loadPool } from "@aihot/backend/publication/pool";
+import { loadItemDetail } from "@aihot/backend/publication/detail";
+import { loadItemShare } from "@aihot/backend/publication/og";
+import { itemAvailability } from "@aihot/backend/publication/availability";
+import { itemFeed } from "@aihot/backend/publication/feeds";
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { mkdir, writeFile, rm } from "node:fs/promises";
@@ -305,4 +312,41 @@ test("new final decisions explicitly distinguish declared executor kinds without
     assert.doesNotMatch(JSON.stringify(item), /human_editorial-role-is-not-identity/);
     await assert.rejects(decideBusinessGuide(row.id, { ...decision(approved), executorKind: "admin" }, actor));
   }
+});
+
+
+test("reviewed guides use original publication pool/detail and immediately disappear when canonical review or body changes", async () => {
+  const f = await fixture(), created = await draft(f.id);
+  await finalApproval(created, "synthetic-reviewer");
+  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  try {
+    const before = (await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+    const sync = await syncFisheryPublications("synthetic-bridge");
+    const linked = sync.rows.find(row => row.itemId === created.id)!;
+    assert.ok(linked);
+    const id = linked.articleId;
+    const [publication] = await sql`SELECT p.*,a.publication_time,a.backfill,a.grouping_status FROM publications p JOIN articles a ON a.id=p.article_id WHERE p.article_id=${id}`;
+    assert.equal(publication!.selected, false); assert.equal(publication!.score, null);
+    assert.equal(publication!.published_at, null); assert.equal(publication!.publication_time, null); assert.equal(publication!.backfill, true);
+    assert.equal(publication!.grouping_status, "pending"); assert.equal(publication!.body_mode, "summary"); assert.equal(publication!.syndicate, false);
+    assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${id}`).length, 0);
+    const first = await loadPool({channel:"all",category:null,tag:null});
+    assert.ok(first.items.some(item => item.id === id));
+    const detail = await loadItemDetail(id);
+    assert.equal(detail.kind, "found");
+    if (detail.kind === "found") assert.ok("moduleDetails" in detail.item, "Original item endpoint carries current structured guide");
+    assert.ok(await loadItemShare(id));
+    assert.equal((await itemAvailability([id]))[id]!.status, "public");
+    assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n, before);
+    const again = await syncFisheryPublications("synthetic-bridge");
+    assert.equal(again.rows.find(row => row.itemId === created.id)!.articleId, id);
+    // No fixed clock: a cached pool count or search result must not retain a withdrawn reference.
+    await writeFile(f.filename, "SOURCE BODY CHANGED");
+    const hidden = await loadPool({channel:"all",category:null,tag:null});
+    assert.ok(!hidden.items.some(item => item.id === id)); assert.ok(hidden.total < first.total);
+    assert.equal((await loadItemDetail(id)).kind, "not_found"); assert.equal(await loadItemShare(id), null);
+    assert.equal((await itemAvailability([id]))[id]!.status, "unavailable");
+    assert.ok(!(await itemFeed("all", null)).includes(id));
+    assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n, before);
+  } finally { installModules([]); }
 });

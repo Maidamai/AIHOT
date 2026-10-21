@@ -36,7 +36,7 @@ async function availability(ids: string[]): Promise<Map<string, Availability>> {
   const out = new Map<string, Availability>();
   if (ids.length === 0) return out;
   const rows = await sql<{ id: string; available: boolean; summary: string | null; first_party: boolean; source_id: string; source_name: string | null; icon_url: string | null; at: Date | null }[]>`
-    SELECT p.article_id AS id, (${listedCondition(new Date())}) AS available, p.summary, (s.tier = 'T1') AS first_party, p.source_id, s.name AS source_name, s.icon_url,
+    SELECT p.article_id AS id, (${(await listedCondition(new Date())).condition}) AS available, p.summary, (s.tier = 'T1') AS first_party, p.source_id, s.name AS source_name, s.icon_url,
       coalesce(p.published_at, p.discovered_at) AS at
     FROM publications p LEFT JOIN sources s ON s.id = p.source_id
     WHERE p.article_id IN ${sql(ids)}`;
@@ -60,7 +60,7 @@ async function unavailableIds(ids: string[]): Promise<Set<string>> {
   if (!unique.length) return new Set();
   const rows = await sql<{ id: string }[]>`
     SELECT p.article_id AS id FROM publications p
-    WHERE p.article_id = ANY(${unique}::text[]) AND NOT (${listedCondition(new Date())})`;
+    WHERE p.article_id = ANY(${unique}::text[]) AND NOT (${(await listedCondition(new Date())).condition})`;
   return new Set(rows.map((r) => r.id));
 }
 
@@ -301,7 +301,7 @@ async function leadCover(itemId: string): Promise<{ url: string; srcSet?: string
       WHERE m->>'kind' = 'image' AND coalesce((m->>'width')::numeric, 800) >= 480 LIMIT 1
     ) img
     WHERE (p.article_id = ${itemId} OR p.story_id = (SELECT story_id FROM publications WHERE article_id = ${itemId}))
-      AND ${listedCondition(new Date())} AND p.body_mode <> 'summary'
+      AND ${(await listedCondition(new Date())).condition} AND p.body_mode <> 'summary'
     ORDER BY (p.article_id = ${itemId}) DESC, p.first_party DESC, coalesce(p.score, 0) DESC, p.article_id
     LIMIT 1`;
   if (!row) return null;

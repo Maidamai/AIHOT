@@ -1,3 +1,4 @@
+import { hasPublicationReadGuard } from "../modules.ts";
 // Sitemap from the same public metadata as pages. Process and HTTP caches share one five-minute
 // deadline; a saved copy may bridge a restart only for the remainder of that original lifetime.
 import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
@@ -36,16 +37,16 @@ export async function loadDiscoveryEntries(at = new Date(), limits?: { stories: 
   const entries: Entry[] = [];
   const [activity] = limits ? [] : await sql<{ selected: string | null; listed: string | null }[]>`
     SELECT md5(string_agg(p.article_id || ':' || p.revision::text, ',' ORDER BY p.timeline_at DESC, p.article_id)
-             FILTER (WHERE ${selectedCondition(at)})) AS selected,
+             FILTER (WHERE ${(await selectedCondition(at)).condition})) AS selected,
            md5(string_agg(p.article_id || ':' || p.revision::text, ',' ORDER BY p.timeline_at DESC, p.article_id)
-             FILTER (WHERE ${listedCondition(at)})) AS listed
-    FROM publications p WHERE ${listedCondition(at)}`;
+             FILTER (WHERE ${(await listedCondition(at)).condition})) AS listed
+    FROM publications p WHERE ${(await listedCondition(at)).condition}`;
   const reports = await sql<{ kind: string; key: string; t: Date | null; revision: string }[]>`
     SELECT r.kind, r.key,
       CASE WHEN citations.revision IS NULL THEN greatest(r.updated_at, r.generated_at) END AS t,
       md5(concat_ws('|', r.revision::text, r.updated_at::text, citations.revision)) AS revision
     FROM reports r LEFT JOIN LATERAL (
-      SELECT md5(string_agg(p.article_id || ':' || p.revision::text || ':' || (${listedCondition(at)})::text,
+      SELECT md5(string_agg(p.article_id || ':' || p.revision::text || ':' || (${(await listedCondition(at)).condition})::text,
           ',' ORDER BY p.article_id)) AS revision
       FROM publications p WHERE p.article_id IN (
         SELECT value #>> '{}' FROM jsonb_path_query(r.content, '$.**.itemId') AS cited(value))
@@ -83,11 +84,11 @@ export async function loadDiscoveryEntries(at = new Date(), limits?: { stories: 
         ',' ORDER BY p.article_id, f.id)) AS revision
       FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
       JOIN sources s ON s.id = p.source_id
-      WHERE f.story_id = st.id AND ${storyReportCondition(at)}
+      WHERE f.story_id = st.id AND ${(await storyReportCondition(at)).condition}
     ) members ON true
     WHERE st.merged_into IS NULL AND EXISTS (
       SELECT 1 FROM facts f JOIN fact_articles fa ON fa.fact_id = f.id JOIN publications p ON p.article_id = fa.article_id
-      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${listedCondition(at)})
+      WHERE f.story_id = st.id AND ${evidenceCondition()} AND ${(await listedCondition(at)).condition})
     ORDER BY st.latest_at DESC NULLS LAST, st.id DESC ${limits ? sql`LIMIT ${limits.stories}` : sql``}`;
   for (const s of stories) entries.push({ loc: `/story/${s.public_id}`, revision: s.revision, changefreq: "daily", priority: 0.5 });
   for (const m of serverModules()) if (m.sitemap?.entries) entries.push(...(await m.sitemap.entries()));
@@ -98,7 +99,7 @@ export async function loadDiscoveryEntries(at = new Date(), limits?: { stories: 
       md5(concat_ws('|', p.revision::text, a.content_hash, tr.title, tr.body_html, tr.body_text, tr.complete::text, qt.text_zh,
         s.name, s.icon_url, st.public_id::text, st.title)) AS revision
     ${ITEM_FROM}
-    WHERE ${storyReportCondition(at)} AND p.indexable
+    WHERE ${(await storyReportCondition(at)).condition} AND p.indexable
     ORDER BY p.timeline_at DESC, p.article_id DESC ${limits ? sql`LIMIT ${Math.max(0, limits.urls - entries.length)}` : sql``}`;
   for (const it of items) entries.push({ loc: `/items/${it.id}`, revision: it.revision, changefreq: "monthly", priority: 0.5 });
   return limits ? entries.slice(0, limits.urls) : entries;
@@ -122,6 +123,7 @@ async function build(at: Date): Promise<string> {
 const rebuilding = shared<void, SitemapDocument>(() => "sitemap", refreshSitemap);
 
 export function loadSitemap(): Promise<SitemapDocument> {
+  if (hasPublicationReadGuard()) return build(new Date()).then(xml => ({ xml, expiresAt: Date.now() }));
   if (lastGood && lastGood.expiresAt > Date.now()) return Promise.resolve(lastGood);
   return rebuilding();
 }

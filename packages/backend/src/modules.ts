@@ -1,3 +1,4 @@
+import type postgres from "postgres";
 // The backend's sockets for modules (modules/<name>/server.ts). The api and worker processes install the
 // site's list when they start (site/modules/server.ts); the engine reads the sockets when it needs them and
 // never imports a module, so it runs the same with none installed: the open-source edition, and the
@@ -184,6 +185,12 @@ export interface ServerModule {
   name: string;
   /** Sources whose selected articles keep independent cards/seats without changing admission or event identity (publication/rules.ts, scope.ts). */
   independentSelectedSources?: readonly string[];
+  /** Current read-time restrictions over publications alias `p`; missing approval must fail closed. */
+  publication?: {
+    itemDetails?: (articleId: string) => Promise<unknown | null>;
+    /** Reviewed reference archives may be listed without inventing a publication date. */
+    allowUndatedArchive?: (articleId: string, db: Db) => Promise<boolean>;
+    readCondition: (now: Date) => Promise<{ condition: postgres.PendingQuery<postgres.Row[]> }> };
   /** Its HTTP routes, and hooks on the app such as what to flush when it closes, registered before the engine's v1 fallbacks (apps/api/src/app.ts). */
   http?: (app: FastifyInstance) => void;
   agent?: {
@@ -290,4 +297,9 @@ export async function emit<K extends Exclude<keyof EngineHooks, "requestAnswered
     const handler = m.on?.[hook] as ((...a: Parameters<EngineHooks[K]>) => Promise<void>) | undefined;
     if (handler) await handler(...args);
   }
+}
+
+/** Live approval cannot be represented by a timed content cache. */
+export function hasPublicationReadGuard(): boolean {
+  return installed.some(m => !!m.publication);
 }
