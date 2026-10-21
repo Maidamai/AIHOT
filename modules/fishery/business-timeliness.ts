@@ -1,8 +1,8 @@
 // A current-time date comparison, never an application entitlement or legal-validity decision.
+import { beijingDate, BEIJING_TIMEZONE } from "@aihot/contracts/time";
 import type { BusinessDateBoundary, BusinessGuidePayload, BusinessTimeliness } from "./business-contracts.ts";
 
 type SourceDate = BusinessGuidePayload["dates"]["deadline"]["value"];
-const beijingDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
 
 function lastDate(date: SourceDate): string | null {
   if (date.precision === "unknown" || !date.value) return null;
@@ -21,13 +21,12 @@ export function projectBusinessTimeliness(
   dates: Pick<BusinessGuidePayload["dates"], "deadline" | "expiresAt">,
   now = new Date(),
 ): BusinessTimeliness {
-  const checkedAt = now.toISOString(), parts = beijingDay.formatToParts(now);
-  const today = ["year", "month", "day"].map(type => parts.find(p => p.type === type)!.value).join("-");
+  const checkedAt = now.toISOString(), today = beijingDate(now);
   const boundary = (date: SourceDate): BusinessDateBoundary => {
     const end = lastDate(date);
     return { state: end === null ? "unknown" : end < today ? "elapsed" : "date_not_elapsed", lastDate: end };
   };
   const deadline = boundary(dates.deadline.value), expiry = boundary(dates.expiresAt.value);
   const notices = [expiry.state === "elapsed" ? "已过文载失效日期" : null, deadline.state === "elapsed" ? "已截止（按原文日期）" : null].filter(Boolean);
-  return { checkedAt, timeZone: "Asia/Shanghai", deadline, expiry, label: [...notices, "可申请状态未知/待核实"].join("；") };
+  return { checkedAt, timeZone: BEIJING_TIMEZONE, deadline, expiry, label: [...notices, "可申请状态未知/待核实"].join("；") };
 }

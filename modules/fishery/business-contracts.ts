@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BEIJING_TIMEZONE } from "@aihot/contracts/time";
 import { BUSINESS_TOPICS } from "./business-topics.ts";
 import { dateSchema, idSchema, linkSchema } from "./contracts.ts";
 import type { EvidenceCatalog } from "./backend/evidence.ts";
@@ -64,7 +65,7 @@ export interface BusinessDateBoundary {
 }
 export interface BusinessTimeliness {
   checkedAt: string;
-  timeZone: "Asia/Shanghai";
+  timeZone: typeof BEIJING_TIMEZONE;
   deadline: BusinessDateBoundary;
   expiry: BusinessDateBoundary;
   label: string;
