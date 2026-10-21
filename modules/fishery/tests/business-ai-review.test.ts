@@ -10,9 +10,10 @@ import { buildEvidenceCatalog } from "../backend/evidence.ts";
 import { observationFixture } from "./fixtures.ts";
 import { businessGuideContext, createBusinessGuide, updateBusinessGuide } from "../backend/business-guides.ts";
 import type { BusinessGuideContext, BusinessGuidePayload } from "../business-contracts.ts";
-import { assessGuideAIResult, buildGuideAIReviewRequest, guideAIClaims, createGuideAIReview, getCurrentGuideAIReview, processGuideAIReview, resumeGuideAIReview, preflightGuideAIReview, guideAIResultToWire, guideAIOutputEnvelopeBytes, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
+import { assessGuideAIResult, buildGuideAIReviewRequest, guideAIClaims, createGuideAIReview, getCurrentGuideAIReview, processGuideAIReview, resumeGuideAIReview, resumeUnsentGuideAIReview, preflightGuideAIReview, guideAIResultToWire, guideAIOutputEnvelopeBytes, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
 import { acquireProcessingLease } from "../backend/processing-lease.ts";
 import { trialCapacity, TRIAL } from "../backend/trial-transport.ts";
+import { authorizationKey } from "../backend/authorization.ts";
 import { chatJson } from "@aihot/backend/providers/llm";
 
 after(closeDb);
@@ -247,4 +248,49 @@ test("chatJson replays its original cached raw response without a transport requ
     config.modelCallsEnabled = before;
     for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) { if (envBefore[key] === undefined) delete process.env[key]; else process.env[key] = envBefore[key]; }
   }
+});
+
+async function unsentFixture() {
+  const f = await guide(), task = await request(f.g);
+  await sql`UPDATE fishery_business_ai_reviews SET status='failed',error=${sql.json({reason:"Budget for llm exhausted (day)",noAutomaticRetry:true})} WHERE id=${task.id}`;
+  return {...f,task};
+}
+async function seedUnsentLedger(state = "received", full = false) {
+  assert.match(new URL(config.databaseUrl).pathname,/_(test|ci)$/);
+  const entries = Array.from({length:full?25:1},(_,i)=>({id:i+1,state,reservedMicroCny:TRIAL.reserveMicroCny}));
+  await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,maxRequests:null,policy:"amount-only/v1",maxReservedMicroCny:TRIAL.maxReservedMicroCny,entries})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
+}
+test("unsent recovery requires lease, exact day refusal, unchanged binding/intent and no receipt of any state",async()=>{
+  await seedUnsentLedger(); const first=await unsentFixture();
+  await assert.rejects(resumeUnsentGuideAIReview(first.task.id,"operator","Stopped old executor"),/lease/);
+  const lease=await acquireProcessingLease();
+  try { await lease.run(async()=>{
+    await assert.rejects(resumeGuideAIReview(first.task.id,"operator"),/received cached response/);
+    for(const status of ["pending","unknown","failed","received","completed"]) {
+      const f=await unsentFixture(); await receipt(f.task,status);
+      await assert.rejects(resumeUnsentGuideAIReview(f.task.id,"operator","Stopped old executor"),/existing receipt/);
+    }
+    for(const error of ["Budget for llm exhausted (hour)","Budget for llm exhausted (minute)","Provider unavailable","Budget for llm exhausted (day) extra"]) {
+      const f=await unsentFixture();await sql`UPDATE fishery_business_ai_reviews SET error=${sql.json({reason:error,noAutomaticRetry:true})} WHERE id=${f.task.id}`;
+      await assert.rejects(resumeUnsentGuideAIReview(f.task.id,"operator","Stopped old executor"),/day-budget/);
+    }
+    for(const change of ["state","binding","intent"]) {
+      const f=await unsentFixture();
+      if(change==="state") await sql`UPDATE fishery_business_ai_reviews SET status='running' WHERE id=${f.task.id}`;
+      if(change==="binding") await sql`UPDATE fishery_business_ai_reviews SET binding_hash=${"0".repeat(64)} WHERE id=${f.task.id}`;
+      if(change==="intent") await sql`UPDATE fishery_business_ai_reviews SET request_intent=request_intent||${sql.json({fingerprint:"changed"})} WHERE id=${f.task.id}`;
+      await assert.rejects(resumeUnsentGuideAIReview(f.task.id,"operator","Stopped old executor"),/unsent|changed/);
+    }
+    await seedUnsentLedger("unknown");await assert.rejects(resumeUnsentGuideAIReview(first.task.id,"operator","Stopped old executor"),/unknown/);
+    await seedUnsentLedger("received",true);await assert.rejects(resumeUnsentGuideAIReview(first.task.id,"operator","Stopped old executor"),/limit/);
+    await seedUnsentLedger();
+    const [before]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+    const recovered=await resumeUnsentGuideAIReview(first.task.id,"operator","Old executor stopped, receipt absence reconciled");
+    assert.equal(recovered.id,first.task.id);assert.equal(recovered.reservationDelta,0);assert.equal(recovered.requiresExplicitExecute,true);
+    const [after]=await sql`SELECT t.*,s.value AS ledger FROM fishery_business_ai_reviews t CROSS JOIN settings s WHERE t.id=${first.task.id} AND s.key=${authorizationKey}`;
+    assert.equal(after!.status,"queued");assert.deepEqual(after!.request_intent,first.task.request_intent);assert.equal(after!.identity,first.task.identity);assert.deepEqual(after!.ledger,before!.value);
+    const [audit]=await sql`SELECT before,after,reason FROM audit_log WHERE action='fishery.business.ai.resume_unsent' AND after->>'id'=${first.task.id}`;
+    assert.equal(audit!.before.error.reason,"Budget for llm exhausted (day)");assert.equal(audit!.after.reservationDelta,0);assert.match(audit!.reason,/executor stopped/);
+    await assert.rejects(resumeUnsentGuideAIReview(first.task.id,"operator","Again"),/failed unsent/);
+  }); }finally{await lease.release();}
 });

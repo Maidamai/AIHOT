@@ -1,18 +1,19 @@
 // Explicit one-shot runner: no queue consumer, schedules, final human decision or automatic retry.
 import { parseArgs } from "node:util";
 
-export interface GuideReviewCLIOptions { mode: "preflight" | "execute" | "resume-cache" | "upgrade-budget"; ids: string[]; actor: string; reason: string }
+export interface GuideReviewCLIOptions { mode: "preflight" | "execute" | "resume-cache" | "resume-unsent" | "upgrade-budget"; ids: string[]; actor: string; reason: string }
 export function parseGuideReviewCLI(argv: string[]): GuideReviewCLIOptions {
-  const { values } = parseArgs({ args: argv, options: { id: { type: "string", multiple: true }, execute: { type: "boolean" }, "resume-cache": { type: "boolean" }, "upgrade-budget": { type: "boolean" }, actor: { type: "string" }, reason: { type: "string" } } });
-  const modes = [values.execute, values["resume-cache"], values["upgrade-budget"]].filter(Boolean).length;
-  if (modes > 1) throw new Error("Execution, cache recovery and budget upgrade are separate invocations");
-  const mode = values.execute ? "execute" : values["resume-cache"] ? "resume-cache" : values["upgrade-budget"] ? "upgrade-budget" : "preflight";
+  const { values } = parseArgs({ args: argv, options: { id: { type: "string", multiple: true }, execute: { type: "boolean" }, "resume-cache": { type: "boolean" }, "resume-unsent": { type: "boolean" }, "upgrade-budget": { type: "boolean" }, actor: { type: "string" }, reason: { type: "string" } } });
+  const modes = [values.execute, values["resume-cache"], values["resume-unsent"], values["upgrade-budget"]].filter(Boolean).length;
+  if (modes > 1) throw new Error("Execution, cache recovery, unsent recovery and budget upgrade are separate invocations");
+  const mode = values.execute ? "execute" : values["resume-cache"] ? "resume-cache" : values["resume-unsent"] ? "resume-unsent" : values["upgrade-budget"] ? "upgrade-budget" : "preflight";
   const ids = values.id ?? [], actor = values.actor?.trim() ?? "", reason = values.reason?.trim() ?? "";
   if (ids.length > 8 || new Set(ids).size !== ids.length || ids.some(id => !/^[a-zA-Z0-9_-]{1,80}$/.test(id))) throw new Error("Use at most eight unique explicit guide IDs");
   if (mode === "upgrade-budget" ? ids.length !== 0 : ids.length === 0) throw new Error("Guide IDs are required except for a separate budget upgrade");
   if (mode !== "preflight" && (!actor || actor.length > 200)) throw new Error("Explicit operator actor is required");
-  if (mode === "upgrade-budget" && (!reason || reason.length > 2000)) throw new Error("Budget upgrade requires an explicit audit reason");
-  if (mode !== "upgrade-budget" && reason) throw new Error("Reason is only accepted for a separate budget upgrade");
+  if ((mode === "upgrade-budget" || mode === "resume-unsent") && (!reason || reason.length > 2000)) throw new Error("Budget upgrade or unsent recovery requires an explicit audit reason");
+  if (mode !== "upgrade-budget" && mode !== "resume-unsent" && reason) throw new Error("Reason is only accepted for a separate budget upgrade or unsent recovery");
+  if (mode === "resume-unsent" && ids.length !== 1) throw new Error("Unsent recovery requires exactly one guide ID");
   return { mode, ids, actor, reason };
 }
 interface Lease { assertHeld(): Promise<void>; run<T>(fn: () => Promise<T>): Promise<T>; watch(fn: (error: Error) => void): () => void; release(): Promise<void> }
@@ -24,7 +25,7 @@ export interface GuideReviewCLIDeps {
   guideVersion(id: string): Promise<{ revision: number; payloadHash: string; snapshotHash: string }>;
   create(id: string, data: unknown, actor: string): Promise<{ id: string; status: string }>;
   current(id: string): Promise<{ id?: string; current: boolean; pass: boolean; status: string; [key: string]: unknown }>;
-  process(id: string): Promise<unknown>; resume(id: string, actor: string): Promise<unknown>; upgrade(actor: string, reason: string): Promise<unknown>;
+  resumeUnsent(id: string, actor: string, reason: string): Promise<unknown>; process(id: string): Promise<unknown>; resume(id: string, actor: string): Promise<unknown>; upgrade(actor: string, reason: string): Promise<unknown>;
 }
 export async function runGuideReviewCLI(options: GuideReviewCLIOptions, deps: GuideReviewCLIDeps, emit: (value: unknown) => void, isStopped = () => false) {
   let lease: Lease | undefined, stopWatch = () => {}, lost = false;
@@ -45,6 +46,13 @@ export async function runGuideReviewCLI(options: GuideReviewCLIOptions, deps: Gu
     for (const id of options.ids) { await check(); emit({ event: "preflight", metrics: await deps.preflight(id) }); }
     const budget = await deps.budget(); emit({ event: "budget_before", budget });
     if (options.mode === "preflight") return;
+    if (options.mode === "resume-unsent") {
+      settled(budget); lease = await deps.acquire(); stopWatch = lease.watch(() => { lost = true; emit({ event: "lease_lost", noAutomaticRetry: true }); });
+      await lease.run(async () => { await check(); const current = await deps.current(options.ids[0]!);
+        if (!current.current || !current.id) throw new Error("Current failed review required for unsent recovery");
+        await check(); emit({ event: "unsent_requeued", result: await deps.resumeUnsent(current.id, options.actor, options.reason), requiresExplicitExecute: true }); });
+      return;
+    }
     if (!deps.modelCallsEnabled) throw new Error("Explicit model-call valve is required even for cached chatJson recovery");
     settled(budget);
     lease = await deps.acquire(); stopWatch = lease.watch(() => { lost = true; emit({ event: "lease_lost", noAutomaticRetry: true }); });
@@ -83,7 +91,7 @@ async function productionDeps(): Promise<GuideReviewCLIDeps> {
     }, guideVersion: async id => {
       const [row] = await sql`SELECT revision,payload_hash,snapshot_hash FROM fishery_business_guides WHERE id=${id}`;
       if (!row) throw new Error("Guide not found"); return { revision: row.revision, payloadHash: row.payload_hash, snapshotHash: row.snapshot_hash };
-    }, create: core.createGuideAIReview as GuideReviewCLIDeps["create"], current: core.getCurrentGuideAIReview, process: core.processGuideAIReview, resume: core.resumeGuideAIReview, upgrade: auth.upgradeExistingTrialToAmountOnly };
+    }, create: core.createGuideAIReview as GuideReviewCLIDeps["create"], current: core.getCurrentGuideAIReview, process: core.processGuideAIReview, resume: core.resumeGuideAIReview, resumeUnsent: core.resumeUnsentGuideAIReview, upgrade: auth.upgradeExistingTrialToAmountOnly };
 }
 if (import.meta.main) {
   let stopping = false;

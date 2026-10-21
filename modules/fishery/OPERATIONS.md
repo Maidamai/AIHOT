@@ -2,6 +2,8 @@
 
 ## 业务指南单次隔离核查
 
+若任务严格因发送前框架 `Budget for llm exhausted (day)` 失败，须先停止旧executor并核对没有该请求的任何receipt/attempt及累计账本未决费用。可单独执行 `node modules/fishery/scripts/review-business-guides.ts --resume-unsent --id <guide-id> --actor <operator> --reason <stop-and-reconciliation-reason>`。此模式只接受一个指南，模型开关可关闭；它在全局processing lease下锁原failed任务，校验原绑定和完整请求意图、无receipt/result、精确day预算错误及原累计金额容量，审计旧error、操作者理由和未发送证据后，只把原id改为queued。不会增加预留、修改账本、换identity、调用模型或自动审批。随后仍须另行显式 `--execute` 才可能发出首次请求。任何receipt（包括failed/unknown/received）、其他错误或绑定变化均拒绝；无receipt也不能借 `--resume-cache` 重发。
+
 `node modules/fishery/scripts/review-business-guides.ts --id <guide-id>` 默认只读取完整归档、校验当前指南绑定并打印请求/输出包络及原累计预算，不创建任务、不调用模型。可重复 `--id`，每批必须明确给出1至8个唯一指南ID；8项只是单批安全边界，不是累计调用授权上限。旧4份指南各需至少1次核查，新6份候选各需至少1次；预检通过不代表AI或人工批准。
 
 真实处理由操作者先停止既有手动consumer，核对未决任务、回执及同一累计账本，再仅为此oneshot进程启用既有模型配置和凭据：`node modules/fishery/scripts/review-business-guides.ts --execute --id <guide-id> --actor <operator>`。所有指定指南先完整预检，之后在既有全局processing lease内串行创建/复用任务并核查；不启动第二consumer、pg-boss调度或常驻API模型开关。SIGTERM/SIGINT或失锁后等待在途落账，不处理下一指南，不自动重试。最终人工批准仍须正常后台操作。

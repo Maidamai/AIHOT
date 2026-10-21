@@ -9,7 +9,7 @@ function fixture() {
     modelCallsEnabled: true, acquire: async () => { calls.push("acquire"); return { assertHeld: async () => { calls.push("held"); }, run: async fn => fn(), watch: fn => { lost = () => fn(new Error("lost")); return () => { calls.push("unwatch"); }; }, release: async () => { calls.push("release"); } }; },
     close: async () => { calls.push("close"); }, preflight: async id => { calls.push(`preflight:${id}`); return metrics(id); }, budget: async () => ({ states: ["received"], entryCount: 18 }), legacyBudget: async () => ({ states: ["received"], entryCount: 18 }),
     guideVersion: async () => ({ revision: 1, payloadHash: "p", snapshotHash: "s" }), create: async (id, data) => { calls.push(`create:${id}`); assert.match((data as { identity: string }).identity, /^cli-b+$/); return { id: `task-${id}`, status: "queued" }; },
-    current: async id => ({ id: `task-${id}`, current: true, pass: false, status: "failed" }), process: async id => { calls.push(`process:${id}`); return { status: "needs_final_human", pass: true, source: "PRIVATE_SOURCE", actor: "PRIVATE_ACTOR", reason: "PRIVATE_REASON" }; }, resume: async id => { calls.push(`resume:${id}`); }, upgrade: async () => { calls.push("upgrade"); return { maxRequests: null }; },
+    current: async id => ({ id: `task-${id}`, current: true, pass: false, status: "failed" }), process: async id => { calls.push(`process:${id}`); return { status: "needs_final_human", pass: true, source: "PRIVATE_SOURCE", actor: "PRIVATE_ACTOR", reason: "PRIVATE_REASON" }; }, resume: async id => { calls.push(`resume:${id}`); }, resumeUnsent: async id => { calls.push(`unsent:${id}`); return {id,status:"queued",reservationDelta:0}; }, upgrade: async () => { calls.push("upgrade"); return { maxRequests: null }; },
   };
   return { deps, calls, events, lose: () => lost?.(), emit: (v: unknown) => events.push(v) };
 }
@@ -57,4 +57,12 @@ test("failed review is never silently resumed by execute; stopping before execut
   const options = parseGuideReviewCLI(["--execute", "--id", "a", "--actor", "operator"]), f = fixture(); f.deps.create = async () => ({ id: "task-a", status: "failed" });
   await assert.rejects(runGuideReviewCLI(options, f.deps, f.emit), /reconciliation/); assert.equal(f.calls.some(c => c.startsWith("process") || c.startsWith("resume")), false);
   const stopped = fixture(); await assert.rejects(runGuideReviewCLI(options, stopped.deps, stopped.emit, () => true), /stopped/); assert.deepEqual(stopped.calls, ["close"]);
+});
+
+test("unsent CLI is a separate one-guide reasoned zero-call requeue, even with model valve disabled",async()=>{
+  for(const args of [["--resume-unsent","--id","a","--actor","op"],["--resume-unsent","--id","a","--id","b","--actor","op","--reason","Stopped"],["--resume-unsent","--execute","--id","a","--actor","op","--reason","Stopped"]]) assert.throws(()=>parseGuideReviewCLI(args));
+  const f=fixture();f.deps.modelCallsEnabled=false;
+  await runGuideReviewCLI(parseGuideReviewCLI(["--resume-unsent","--id","a","--actor","op","--reason","Old executor stopped, reconciled"]),f.deps,f.emit);
+  assert.deepEqual(f.calls.filter(c=>/^(unsent|resume|create|process)/.test(c)),["unsent:task-a"]);
+  assert.deepEqual(f.calls.slice(-3),["unwatch","release","close"]);
 });

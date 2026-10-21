@@ -13,8 +13,8 @@ import { FISHERY_RULES_VERSION } from "./ai-draft.ts";
 import { fisheryWireBytes } from "./ai-review.ts";
 import { readSourceBody } from "./source-body.ts";
 import { hash, NotFound } from "./store.ts";
-import { TRIAL, trialUsage } from "./trial-transport.ts";
-import { assertFisheryCapacity, withFisheryAuthorization } from "./authorization.ts";
+import { TRIAL, trialUsage, validateTrialLedger, trialCapacity } from "./trial-transport.ts";
+import { assertFisheryCapacity, withFisheryAuthorization, authorizationKey } from "./authorization.ts";
 import { assertProcessingLease } from "./processing-lease.ts";
 
 export const GUIDE_AI_RULES_VERSION = "fishery-business-ai/3";
@@ -197,6 +197,27 @@ export async function resumeGuideAIReview(id: string, actor: string) {
   });
 }
 export type GuideAIInvoke = <S extends z.ZodType>(options: ChatJsonOptions<S>) => Promise<ChatJsonResult<z.infer<S>>>;
+// Separate, explicit recovery for a proven pre-send framework day-budget refusal. Never sends.
+export async function resumeUnsentGuideAIReview(id: string, actor: string, reason: string) {
+  z.string().trim().min(1).max(200).parse(actor); z.string().trim().min(1).max(2000).parse(reason);
+  await assertProcessingLease();
+  return sql.begin(async tx => {
+    const [row] = await tx`SELECT * FROM fishery_business_ai_reviews WHERE id=${id} FOR UPDATE`;
+    if (!row || row.status !== "failed" || row.receipt_id !== null || row.result !== null) throw new Conflict("Only a failed unsent review without receipt/result may be requeued");
+    if (row.error?.reason !== "Budget for llm exhausted (day)" || row.error?.noAutomaticRetry !== true) throw new Conflict("Exact pre-send framework day-budget refusal required");
+    const current = await prepare(row.guide_id, tx);
+    if (current.bindingHash !== row.binding_hash || hash(row.binding) !== row.binding_hash || hash(current.intent) !== hash(row.request_intent)) throw new Conflict("Review binding or request intent changed");
+    const [receipt] = await tx`SELECT r.id FROM receipts r LEFT JOIN receipt_attempts a ON a.receipt_id=r.id WHERE r.subject=${current.intent.subject} AND r.purpose=${current.intent.purpose} LIMIT 1`;
+    if (receipt) throw new Conflict("Any existing receipt or attempt blocks unsent recovery");
+    const [ledger] = await tx`SELECT value FROM settings WHERE key=${authorizationKey} FOR UPDATE`;
+    validateTrialLedger(ledger?.value); trialCapacity(ledger.value.entries, 1);
+    await assertProcessingLease();
+    const evidence = { bindingHash: current.bindingHash, requestIntent: current.intent, ledgerHash: hash(ledger.value), receiptCount: 0, attemptCount: 0, processingLeaseHeld: true, reservationDelta: 0 };
+    await tx`UPDATE fishery_business_ai_reviews SET status='queued',error=NULL,updated_at=now() WHERE id=${id}`;
+    await audit(actor, "fishery.business.ai.resume_unsent", `fishery-guide:${row.guide_id}`, reason, { id, status: row.status, error: row.error, receiptId: row.receipt_id }, { id, status: "queued", ...evidence }, { db: tx });
+    return { id, status: "queued", bindingHash: current.bindingHash, intentFingerprint: current.intent.fingerprint, reservationDelta: 0, requiresExplicitExecute: true };
+  });
+}
 export async function processGuideAIReview(id: string, invoke: GuideAIInvoke = chatJson) {
   if (invoke === chatJson) await assertProcessingLease();
   const [claimed] = await sql`UPDATE fishery_business_ai_reviews SET status='running',updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
