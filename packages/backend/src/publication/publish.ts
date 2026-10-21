@@ -201,7 +201,7 @@ async function syncLedger(tx: Tx, articleId: string, now: Date): Promise<"upsert
     FROM publications p JOIN sources s ON s.id = p.source_id WHERE p.article_id = ${articleId}`;
   if (!p) return null;
   const [state] = await tx<{ in_set: boolean; payload_hash: string | null }[]>`SELECT in_set, payload_hash FROM selected_state WHERE article_id = ${articleId}`;
-  const current = !hasPublicationReadGuard() || (await tx`SELECT 1 FROM publications p WHERE p.article_id=${articleId} AND ${(await currentPublicationCondition(now)).condition}`).length > 0;
+  const current = !(p.selected && p.visibility === "public" && p.seat) || !hasPublicationReadGuard() || (await tx`SELECT 1 FROM publications p WHERE p.article_id=${articleId} AND ${(await currentPublicationCondition(now, tx)).condition}`).length > 0;
   if (current && p.selected && p.visibility === "public" && p.seat) {
     const payload = v1Payload({
       articleId, title: p.title, originalTitle: p.original_title, summary: p.summary, sourceName: p.source_name, url: p.url,

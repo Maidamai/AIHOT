@@ -1,3 +1,4 @@
+import { publicationQueue } from "../backend/publication-queue.ts";
 import { syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadItemDetail } from "@aihot/backend/publication/detail";
 import assert from "node:assert/strict";
@@ -625,7 +626,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     await boss.updateQueue(flowQueue.name,{retryLimit:0,expireInSeconds:600});
     release=await registerManualFlowConsumer(boss,jobs=>runQueuedFlows(jobs,invoke));
     await assert.rejects(registerManualFlowConsumer(boss),/already running/);
-    assert.deepEqual(boss.getWipData().map(w=>w.name),[flowQueue.name]);
+    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name].sort());
     assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.schedule`)[0]!.n,0);
     assert.equal(calls,0,"idle startup performs no model calls");
     config.modelCallsEnabled=false;
@@ -731,8 +732,19 @@ test("private reader projects only the current real qualified set and never expo
   const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"safety");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
   assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"safety"},now)).rows.some(r=>r.id===f.id));
   assert.equal(one.verification.label,"摘要已完成内部核对");assert.equal(one.title,quote);assert.equal(one.source.originalTitle,"配额增100%（合成未核查原标题）");assert.ok(!one.title.includes("100%"));
-  const bridged=(await syncFisheryPublications("synthetic-reader-bridge",now)).rows.find(row=>row.kind==="article"&&row.itemId===f.id)!;
-  assert.ok(bridged);assert.equal((await loadItemDetail(bridged.articleId)).kind,"found");
+  const automatic=await registerManualFlowConsumer(await getBoss({schedule:false,supervise:false}),async()=>{});
+  let articleId:string|undefined;
+  try {
+    const deadline=Date.now()+15000;
+    while(Date.now()<deadline) {
+      const [binding]=await sql`SELECT article_id FROM fishery_publication_bindings WHERE kind='article' AND item_id=${f.id}`;
+      if(binding) {articleId=String(binding.article_id);break;}
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    assert.ok(articleId,"Normal article final qualification automatically reaches original publication through its durable job");
+  } finally {await automatic();}
+  const bridged={articleId:articleId!};
+  assert.equal((await loadItemDetail(bridged.articleId)).kind,"found");
   assert.equal((await readerItem(f.id,now)).title,quote,"Summary bridge never shadows the private source-body fallback");
   const categoriesBefore=page.categories;
   await review(f.id,{revision:2,sourceRevision:1,decision:"rejected",applicabilityReviewed:false,note:"Synthetic current-version material rejection"},"fixture-admin");

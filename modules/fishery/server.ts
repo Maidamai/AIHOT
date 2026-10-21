@@ -1,3 +1,4 @@
+import { publicationQueue } from "./backend/publication-queue.ts";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails } from "./backend/publication-bridge.ts";
 import { defineServerModule } from "@aihot/backend/modules";
 import { adminHandler, type AdminHandler } from "@aihot/api/routes/admin-auth";
@@ -29,7 +30,7 @@ const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin
 const param = (req: { params: unknown }) => idSchema.parse((req.params as Record<string, string>).id);
 
 export default defineServerModule({
-  name: "fishery", sourceHealth, queues:[flowQueue],
+  name: "fishery", sourceHealth, queues:[flowQueue,publicationQueue],
   publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
   http(app) {
     installManualSourceRoutes(app);

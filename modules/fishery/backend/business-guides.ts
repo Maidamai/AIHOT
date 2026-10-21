@@ -1,3 +1,4 @@
+import { enqueuePublication, publicationDecisionHash } from "./publication-queue.ts";
 // Human editorial authorship with independent AI comparison and explicit final human approval.
 import { randomUUID } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
@@ -59,8 +60,8 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
     published: observation.payload.dates.published, publishedAt: capture.publishedAt ?? null, publicationLiteral: capture.publicationLiteral ?? null, capturedAt: capture.capturedAt } };
 }
 
-export async function businessGuideContext(documentId: string) {
-  return sql.begin(tx => contextFor(documentId, tx));
+export async function businessGuideContext(documentId: string, db: Db = sql) {
+  return db === sql ? sql.begin(tx => contextFor(documentId, tx)) : contextFor(documentId, db);
 }
 
 function evidenceIds(value: unknown): string[] {
@@ -119,9 +120,9 @@ function editorialRevision(row: Record<string, any>): number {
   return row.status === "approved" && human?.mode === "final" && human.revision === row.revision && Number.isInteger(human.aiEditorialRevision)
     ? human.aiEditorialRevision : row.revision;
 }
-async function currentAIReview(row: Record<string, any>): Promise<BusinessGuideAIReview> {
+async function currentAIReview(row: Record<string, any>, db: Db = sql): Promise<BusinessGuideAIReview> {
   try {
-    const ai = await getCurrentGuideAIReview(row.id, { payloadHash: row.payload_hash, snapshotHash: row.snapshot_hash, editorialRevision: editorialRevision(row) });
+    const ai = await getCurrentGuideAIReview(row.id, { payloadHash: row.payload_hash, snapshotHash: row.snapshot_hash, editorialRevision: editorialRevision(row) }, db);
     return { current: ai.current, pass: ai.pass, status: ai.status, reviewHash: ai.reviewHash, receiptId: ai.receiptId ?? null, guideRevision: ai.guideRevision ?? null, confirmedConflict: ai.confirmedConflict };
   } catch { return { current: false, pass: false, status: "unavailable", reviewHash: null, receiptId: null, guideRevision: null, confirmedConflict: false }; }
 }
@@ -132,14 +133,14 @@ async function currentReadable(row: Record<string, any>, db: Db, aiReview?: Busi
   const context = await contextFor(row.document_id, db);
   if (context.snapshotHash !== row.snapshot_hash) throw new Conflict("Source evidence or ordinary material review changed; business approval is stale");
   validateBusinessGuidePayload(row.payload, context);
-  const ai = aiReview ?? await currentAIReview(row), human = row.human_decision;
+  const ai = aiReview ?? await currentAIReview(row, db), human = row.human_decision;
   if (!ai.current || !ai.pass || !ai.reviewHash || human.mode !== "final" || human.aiReviewHash !== ai.reviewHash || human.aiEditorialRevision !== ai.guideRevision)
     throw new Conflict("Current AI comparison and matching final human approval required");
   return context;
 }
 async function adminRecord(row: Record<string, any>, db: Db): Promise<BusinessGuideAdminRecord> {
   let blockedReason: string | null = null;
-  const aiReview = await currentAIReview(row);
+  const aiReview = await currentAIReview(row, db);
   try { await currentReadable(row, db, aiReview); } catch (error) { blockedReason = (error as Error).message; }
   return { id: row.id, documentId: row.document_id, revision: row.revision, status: row.status, snapshot: row.snapshot, snapshotHash: row.snapshot_hash,
     payload: row.payload, payloadHash: row.payload_hash, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), verifiedAt: row.verified_at ? iso(row.verified_at) : null,
@@ -191,13 +192,14 @@ export async function decideBusinessGuide(id: string, input: unknown, actor: str
       if (context.snapshotHash !== before.snapshot_hash) throw new Conflict("Source or material review changed; save a new draft first");
       validateBusinessGuidePayload(before.payload, context);
       if (!data.aiReviewHash) throw new Conflict("Final approval requires the current AI review hash");
-      ai = await currentAIReview(before);
+      ai = await currentAIReview(before, tx);
       if (!ai.current || !ai.pass || !ai.reviewHash || ai.reviewHash !== data.aiReviewHash || ai.guideRevision !== editorialRevision(before))
         throw new Conflict("Current passing AI comparison required before final human approval");
     }
     const at = new Date().toISOString(), decision = { decision: data.decision, executorKind: data.executorKind, actor, at, reason: data.reason, revision: before.revision + 1, payloadHash: before.payload_hash, snapshotHash: before.snapshot_hash, ...(ai ? { mode: data.approvalMode, aiReviewHash: ai.reviewHash!, aiEditorialRevision: ai.guideRevision! } : {}) };
     const [row] = await tx`UPDATE fishery_business_guides SET revision=revision+1,status=${data.decision},human_decision=${tx.json(decision)},
       verified_at=${data.decision === "approved" ? at : null},actor=${actor},updated_at=now() WHERE id=${id} RETURNING *`;
+    if (data.decision === "approved") await enqueuePublication({ kind: "business_guide", itemId: id, decisionId: id, decisionHash: publicationDecisionHash(decision, row!.revision), actor }, tx);
     await audit(actor, "fishery.business.decision", `business-guide:${id}`, data.reason, before, row!, { db: tx });
     return adminRecord(row!, tx);
   });
@@ -213,8 +215,8 @@ export async function businessGuideHistory(id: string) {
   return sql`SELECT id,actor,action,reason,before,after,created_at FROM audit_log WHERE subject=${`business-guide:${id}`} ORDER BY id`;
 }
 
-export async function eligibleBusinessGuideItems(db: Db, now: Date): Promise<BusinessGuideReaderItem[]> {
-  const rows = await db`SELECT * FROM fishery_business_guides WHERE status='approved' ORDER BY updated_at DESC,id FOR SHARE`, items: BusinessGuideReaderItem[] = [];
+export async function eligibleBusinessGuideItems(db: Db, now: Date, onlyId: string | null = null): Promise<BusinessGuideReaderItem[]> {
+  const rows = await db`SELECT * FROM fishery_business_guides WHERE status='approved' AND (${onlyId}::text IS NULL OR id=${onlyId}) ORDER BY updated_at DESC,id FOR SHARE`, items: BusinessGuideReaderItem[] = [];
   for (const row of rows) {
     let context: BusinessGuideContext;
     try { context = await currentReadable(row, db); } catch (error) { if (error instanceof Conflict || error instanceof NotFound) continue; throw error; }

@@ -1,3 +1,4 @@
+import { enqueuePublication, publicationDecisionHash } from "./publication-queue.ts";
 import { randomUUID } from "node:crypto";
 import type { FlowTimeline, FlowReconciliation } from "../ui-contracts.ts";
 import { z } from "zod";
@@ -415,6 +416,7 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
     }
     const human={decision:data.decision,note:data.note,actor,snapshotHash:hash(row.snapshot),at:new Date().toISOString(),internalOnly:true};
     await tx`UPDATE fishery_flow_tasks SET status=${data.decision},human_decision=${tx.json(human)},updated_at=now() WHERE id=${id}`;
+    if(data.decision==="qualified") await enqueuePublication({kind:"article",itemId:row.document_id,decisionId:id,decisionHash:publicationDecisionHash(human),actor},tx);
     await audit(actor,"fishery.flow.decision",`fishery:${row.document_id}`,data.note,null,{id,...human},{db:tx});return {id,...human,published:false};
   });
 }

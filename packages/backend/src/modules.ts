@@ -190,7 +190,7 @@ export interface ServerModule {
     itemDetails?: (articleId: string) => Promise<unknown | null>;
     /** Reviewed reference archives may be listed without inventing a publication date. */
     allowUndatedArchive?: (articleId: string, db: Db) => Promise<boolean>;
-    readCondition: (now: Date) => Promise<{ condition: postgres.PendingQuery<postgres.Row[]> }> };
+    readCondition: (now: Date, db: Db) => Promise<{ condition: postgres.PendingQuery<postgres.Row[]> }> };
   /** Its HTTP routes, and hooks on the app such as what to flush when it closes, registered before the engine's v1 fallbacks (apps/api/src/app.ts). */
   http?: (app: FastifyInstance) => void;
   agent?: {

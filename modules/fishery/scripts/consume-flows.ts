@@ -1,4 +1,4 @@
-// Dedicated manual queue consumer. No general worker, schedules, recovery sweeps or automatic retries.
+// Dedicated manual queue consumer. No general worker or schedules; only publication continuation has bounded non-paid recovery.
 import { closeDb } from "@aihot/backend/db";
 import { getBoss, stopBoss } from "@aihot/backend/jobs/queue";
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
@@ -18,7 +18,7 @@ try {
   release=await registerManualFlowConsumer(boss,undefined,{onLeaseLost:()=>{process.exitCode=1;requestStop();}});
   ready=true;
   if(stopRequested) await shutdown();
-  else console.log(JSON.stringify({level:"info",msg:"fishery manual processor started",queue:"fishery.flow",concurrency:1,schedules:false,automaticRetry:false}));
+  else console.log(JSON.stringify({level:"info",msg:"fishery manual processor started",queue:"fishery.flow",publicationQueue:"fishery.publication",concurrency:1,schedules:false,automaticPaidRetry:false}));
 } catch(error) {
   console.error(JSON.stringify({status:"stopped",message:(error as Error).message,noAutomaticRetry:true}));
   process.exitCode=1;

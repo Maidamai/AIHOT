@@ -5,7 +5,7 @@ import type postgres from "postgres";
 // rule in SQL, and grouping takes the composite rule from here too. What a publication holds is
 // derived once, at publish time, by publish.ts and rules.ts.
 import { serverModules } from "../modules.ts";
-import { sql } from "../db.ts";
+import { sql, type Db } from "../db.ts";
 import { independentSelectedSources } from './rules.ts';
 
 /** These reports share their fact's display slot; independent sources keep their own selected card. */
@@ -22,8 +22,8 @@ export function releasedCondition(now: Date) {
 }
 
 /** Re-evaluated for each query: module approval is never a durable public permission. */
-export async function currentPublicationCondition(now = new Date()): Promise<{ condition: postgres.PendingQuery<postgres.Row[]> }> {
-  const conditions = await Promise.all(serverModules().flatMap(m => m.publication ? [m.publication.readCondition(now)] : []));
+export async function currentPublicationCondition(now = new Date(), db: Db = sql): Promise<{ condition: postgres.PendingQuery<postgres.Row[]> }> {
+  const conditions = await Promise.all(serverModules().flatMap(m => m.publication ? [m.publication.readCondition(now, db)] : []));
   return { condition: conditions.reduce((condition, next) => sql`${condition} AND (${next.condition})`, sql`true`) };
 }
 

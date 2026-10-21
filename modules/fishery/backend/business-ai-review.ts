@@ -108,7 +108,7 @@ async function prepare(guideId: string, db: Db = sql) {
   const [guide] = db === sql ? await db`SELECT * FROM fishery_business_guides WHERE id=${guideId}` : await db`SELECT * FROM fishery_business_guides WHERE id=${guideId} FOR SHARE`;
   if (!guide) throw new NotFound("Guide not found");
   if (["withdrawn", "rejected"].includes(guide.status)) throw new Conflict("Closed guide cannot request AI review");
-  const context = await businessGuideContext(guide.document_id);
+  const context = await businessGuideContext(guide.document_id, db);
   if (hash(guide.payload) !== guide.payload_hash || hash(guide.snapshot) !== guide.snapshot_hash || context.snapshotHash !== guide.snapshot_hash) throw new Conflict("Guide or source snapshot changed");
   const [observation] = await db`SELECT payload FROM fishery_observations WHERE document_id=${guide.document_id} AND revision=${context.snapshot.observationRevision}`;
   const capture = observation?.payload.sourceCapture;
@@ -162,15 +162,15 @@ export async function createGuideAIReview(guideId: string, raw: unknown, actor: 
     return row!;
   });
 }
-export async function getCurrentGuideAIReview(guideId: string, expected?: { payloadHash: string; snapshotHash: string; editorialRevision?: number }) {
-  const [row] = await sql`SELECT * FROM fishery_business_ai_reviews WHERE guide_id=${guideId} ORDER BY created_at DESC,id DESC LIMIT 1`;
+export async function getCurrentGuideAIReview(guideId: string, expected?: { payloadHash: string; snapshotHash: string; editorialRevision?: number }, db: Db = sql) {
+  const [row] = await db`SELECT * FROM fishery_business_ai_reviews WHERE guide_id=${guideId} ORDER BY created_at DESC,id DESC LIMIT 1`;
   if (!row) return { current: false, pass: false, status: "not_requested", reviewHash: null, confirmedConflict: false };
   try {
-    const current = await prepare(guideId);
+    const current = await prepare(guideId, db);
     if (row.binding_hash !== current.bindingHash || expected && (expected.payloadHash !== current.binding.payloadHash || expected.snapshotHash !== current.binding.snapshotHash || expected.editorialRevision !== undefined && expected.editorialRevision !== current.binding.editorialRevision)) throw new Conflict("AI review binding changed");
     const assessed = row.result ? assessGuideAIResult(current.input, current.payload, row.result) : null;
     if (assessed) {
-      const [receipt] = await sql`SELECT status,purpose,subject,response FROM receipts WHERE id=${row.receipt_id}`;
+      const [receipt] = await db`SELECT status,purpose,subject,response FROM receipts WHERE id=${row.receipt_id}`;
       if (!receipt || !["received", "completed"].includes(receipt.status) || receipt.subject !== current.intent.subject || receipt.purpose !== current.intent.purpose) throw new Conflict("Review receipt no longer matches completed request");
       if (receipt.response?.choices?.[0]?.finish_reason !== "stop") throw new Conflict("Incomplete review response cannot qualify");
       trialUsage(receipt.response.usage);

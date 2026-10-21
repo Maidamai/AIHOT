@@ -1,3 +1,8 @@
+import { setVisibility } from "@aihot/backend/admin/content";
+import { publicationQueue, enqueuePublication, type PublicationJob } from "../backend/publication-queue.ts";
+import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
+import { flowQueue } from "../backend/flow.ts";
+import { getBoss, stopBoss, enqueueOn } from "@aihot/backend/jobs/queue";
 import { loadTopicPage } from "@aihot/backend/publication/topics";
 import { installModules } from "@aihot/backend/modules";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, syncFisheryPublications } from "../backend/publication-bridge.ts";
@@ -29,7 +34,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error("Offline guide gate tests forbid external/model requests"); };
 after(() => { globalThis.fetch = originalFetch; });
 const app = Fastify(); registerBusinessGuideRoutes(app);
-after(async () => { await app.close(); await closeDb(); });
+after(async () => { await app.close(); await stopBoss(); await closeDb(); });
 let sequence = 0;
 const body = "本合成测试通知为正式文件，2026年10月21日发布。\n本合成测试仅适用远洋渔业企业，申请材料包括申请表。\n2026年11月1日截止。\n办理入口：https://example.org/service。\n本合成测试修改2020年第2号规定，并不废止整份规定。";
 const unknown = () => ({ state: "unknown" as const, value: null, evidence: [] as [] });
@@ -394,4 +399,88 @@ test("reviewed business topics reuse the original tag-filtered pool and disappea
     assert.equal((await loadTopicPage("crew", 1))!.topic.poolTotal, 0);
     assert.equal((await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"})).total, 0);
   } finally { installModules([]); }
+});
+
+
+test("normal final approval durably schedules non-paid publication with bounded recovery and version-safe replay", async () => {
+  const f = await fixture(), created = await draft(f.id);
+  const boss = await getBoss({ schedule: false, supervise: false });
+  const old = await sql`SELECT id FROM pgboss.job WHERE name=${publicationQueue.name} AND state IN ('created','retry')`;
+  if (old.length) await boss.cancel(publicationQueue.name, old.map(row => row.id));
+  const approved = await finalApproval(created, "synthetic-auto-publisher");
+  const [job] = await sql`SELECT id,data FROM pgboss.job WHERE name=${publicationQueue.name} AND data->>'itemId'=${created.id} ORDER BY created_on DESC LIMIT 1`;
+  assert.ok(job, "Final decision and durable continuation commit together");
+  assert.equal((await sql`SELECT 1 FROM fishery_publication_bindings WHERE item_id=${created.id}`).length, 0);
+  const receipts = (await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+  let attempts = 0;
+  installModules([{ name: "fishery", publication: { readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  const release = await registerManualFlowConsumer(boss, async () => {}, { publicationMaintenanceMs: 100, publicationRun: async jobs => {
+    if (++attempts === 1) throw new Error("Synthetic transient non-paid publication failure");
+    return publicationQueue.run(jobs);
+  } });
+  const wait = async (id: string) => {
+    const end = Date.now() + 25000;
+    while (Date.now() < end) {
+      const [row] = await sql`SELECT state,retry_count FROM pgboss.job WHERE name=${publicationQueue.name} AND id=${id}`;
+      if (row?.state === "completed") return row;
+      if (row?.state === "failed") assert.fail("Non-paid publication exhausted recovery");
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.fail("Timed out waiting for durable publication");
+  };
+  try {
+    const protectedPaid = await sql.begin(async tx => {
+      const id = await enqueueOn(flowQueue,{id:"synthetic-active-paid-protection"},{},tx);
+      await tx`UPDATE pgboss.job SET state='active',started_on=now()-interval '1 hour' WHERE name=${flowQueue.name} AND id=${id}`;
+      return id!;
+    });
+    const crashedPublication = await sql.begin(async tx => {
+      const id = await boss.send(publicationQueue.name,job!.data as PublicationJob,{db:{executeSql:async(text:string,values?:unknown[])=>({rows:await tx.unsafe(text,(values??[]) as never[])})}});
+      await tx`UPDATE pgboss.job SET state='active',started_on=now()-interval '1 hour' WHERE name=${publicationQueue.name} AND id=${id}`;
+      await tx`UPDATE pgboss.queue SET monitor_claim_on=NULL,monitor_on=NULL WHERE name=${publicationQueue.name}`;
+      return id!;
+    });
+    const completed = await wait(job!.id);
+    await wait(crashedPublication);
+    const [paid] = await sql`SELECT state FROM pgboss.job WHERE name=${flowQueue.name} AND id=${protectedPaid}`;
+    assert.equal(paid!.state,"active","Scoped publication maintenance never recovers an expired paid flow");
+    await boss.cancel(flowQueue.name,protectedPaid);
+    assert.equal(completed.retry_count, 1); assert.ok(attempts >= 2);
+    const [binding] = await sql`SELECT * FROM fishery_publication_bindings WHERE item_id=${created.id}`;
+    const articleId = String(binding!.article_id);
+    assert.equal((await loadItemDetail(articleId)).kind, "found");
+    assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n, receipts);
+    const duplicate = await boss.send(publicationQueue.name, job!.data as PublicationJob);
+    await wait(duplicate!);
+    assert.equal((await sql`SELECT 1 FROM articles WHERE id=${articleId}`).length, 1);
+    assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n, receipts);
+    const [controls] = await sql`SELECT version FROM editorial_overrides WHERE article_id=${articleId}`;
+    await setVisibility(articleId,{visibility:"withdrawn",version:controls!.version,reason:"Synthetic core withdrawal"},"synthetic-editor");
+    const retryWithdrawn=await boss.send(publicationQueue.name,job!.data as PublicationJob);await wait(retryWithdrawn!);
+    assert.equal((await loadItemDetail(articleId)).kind,"not_found","Non-paid replay preserves the original core withdrawal");
+    const [withdrawn] = await sql`SELECT version,visibility FROM editorial_overrides WHERE article_id=${articleId}`;
+    assert.equal(withdrawn!.visibility,"withdrawn");
+    await setVisibility(articleId,{visibility:"public",version:withdrawn!.version,reason:"Synthetic explicit core restoration"},"synthetic-editor");
+    assert.equal((await loadItemDetail(articleId)).kind,"found");
+    const activeOldDecision = await sql.begin(async tx => {
+      const id = await enqueuePublication(job!.data as PublicationJob,tx);
+      await tx`UPDATE pgboss.job SET state='active',started_on=now() WHERE name=${publicationQueue.name} AND id=${id}`;
+      return id!;
+    });
+    const revisedPayload = structuredClone(approved.payload); revisedPayload.title.value = "合成通知修订参考";
+    const revised = await updateBusinessGuide(created.id, { expectedRevision: approved.revision, snapshotHash: approved.snapshotHash, payload: revisedPayload, reason: "Synthetic reviewed revision" }, "synthetic-editor");
+    assert.equal((await loadItemDetail(articleId)).kind, "not_found");
+    await finalApproval(revised, "synthetic-auto-publisher");
+    const [next] = await sql`SELECT id,data FROM pgboss.job WHERE name=${publicationQueue.name} AND data->>'itemId'=${created.id} AND id<>${job!.id} AND data->>'decisionHash'<>${job!.data.decisionHash} ORDER BY created_on DESC LIMIT 1`;
+    assert.ok(next); assert.notEqual(next!.id,activeOldDecision,"A new decision is not swallowed by an active older singleton"); await wait(next!.id);
+    await boss.cancel(publicationQueue.name,activeOldDecision);
+    const latest = await loadItemDetail(articleId);
+    assert.equal(latest.kind, "found"); if (latest.kind === "found") assert.equal(latest.item.title, revisedPayload.title.value);
+    const late = await boss.send(publicationQueue.name, job!.data as PublicationJob); await wait(late!);
+    const [current] = await sql`SELECT article_id,title FROM fishery_publication_bindings WHERE item_id=${created.id}`;
+    assert.equal(current!.article_id, articleId); assert.equal(current!.title, revisedPayload.title.value);
+    await withdraw(f.id, { expectedRevision: 1, reason: "Synthetic terminal withdrawal" }, "synthetic-reviewer");
+    const stale = await boss.send(publicationQueue.name, next!.data as PublicationJob); await wait(stale!);
+    assert.equal((await loadItemDetail(articleId)).kind, "not_found");
+  } finally { await release(); installModules([]); }
 });
