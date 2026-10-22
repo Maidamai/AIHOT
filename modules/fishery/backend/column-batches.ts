@@ -9,11 +9,12 @@ import { COLUMNS, columnIdSchema, columnPageIndex, discoverColumn, discoverColum
 import { archiveReceiptSchema, sha256, type PdfText } from "./source-adapters.ts";
 import { assertIotcRobots, discoverIotc, iotcAttachment, prepareIotc } from "./iotc-columns.ts";
 import { extractPdf } from "./pdf-text.ts";
+import {assertNpfcRobots,discoverNpfc,npfcAttachment,prepareNpfc} from './npfc-columns.ts';
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
-export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc>;
+export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc> | ReturnType<typeof prepareNpfc>;
 export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
@@ -94,6 +95,15 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     const attachment = await readArchive(root, `${item.archiveId}-pdf`, 10 * 1024 * 1024);
     result = prepareIotc(candidate, receipt, raw, { receipt: attachment.receipt, bytes: attachment.body, parsed: await (options.parsePdf??extractPdf)(attachment.body) },replay?"archive_replay":"live_capture");
     result.evidence.push({ url: listingUrl, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
+  } else if(item.column==='npfc'){
+    const robots=await readArchive(root,'npfc-robots',256*1024);assertNpfcRobots(robots.receipt,robots.body);
+    const listing=await readArchive(root,'npfc-list',6*1024*1024),listingUrl=item.listingUrl??COLUMNS.npfc.url;columnPageIndex('npfc',listingUrl);
+    if(listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl||listing.receipt.status!==200)throw new Error('Invalid NPFC listing receipt');
+    const candidate=discoverNpfc(new TextDecoder('utf8',{fatal:true}).decode(listing.body)).candidates.find(c=>c.url===item.url);
+    if(!candidate)throw new Error('NPFC measure absent from archived current listing');
+    const attachment=await readArchive(root,`${item.archiveId}-pdf`,10*1024*1024);
+    result=prepareNpfc(candidate,receipt,raw,{receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)});
+    result.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
   } else result = prepareColumnArticle(item.column, receipt, raw);
   result.sourceCapture.archiveId = item.archiveId;
   if(replay) {
@@ -253,11 +263,12 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       const robots = await get(new URL("/robots.txt", config.url).href, `${column}-robots`);
       // Inspected sources currently return 404. Any new policy or denial needs operator inspection.
       if (column === "iotc") assertIotcRobots(robots.receipt, robots.body);
+      else if(column==='npfc')assertNpfcRobots(robots.receipt,robots.body);
       else if (robots.receipt.status !== 404) throw new Error(`Robots status ${robots.receipt.status}; stop for policy inspection`);
-      const delay = column === "iotc" ? 10_000 : 1200;
+      const delay = column === "iotc"||column==='npfc' ? 10_000 : 1200;
       await wait(delay);
       const listingUrl=options.page?.url??config.url,listing = await get(listingUrl, `${column}-list`);
-      if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || (column === "iotc" && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
+      if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || ((column === "iotc"||column==='npfc') && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
       if(options.page&&listing.receipt.finalUrl!==listingUrl) throw new Error("Incremental listing redirected to a different page");
       const html=new TextDecoder("utf8", { fatal: true }).decode(listing.body),discovered = discoverColumn(column, html);
       if(options.page) source.pagination=discoverColumnPagination(column,html,listingUrl);
@@ -294,6 +305,11 @@ export async function collectColumns(options: { id: string; dataDir: string; col
             }
             prepared = prepareIotc(iotcCandidates.find(c => c.url === candidate.url)!, article.receipt, article.body, pdf);
             prepared.evidence.push({ url: listingUrl, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
+          } else if(column==='npfc'){
+            let pdf:Parameters<typeof prepareNpfc>[3];
+            if(article.receipt.status===200){const url=npfcAttachment(article.body,article.receipt.finalUrl);await wait(delay);const attachment=await get(url,`${archiveId}-pdf`);pdf={receipt:attachment.receipt,bytes:attachment.body,parsed:await extractPdf(attachment.body)};}
+            prepared=prepareNpfc(discoverNpfc(html).candidates.find(c=>c.url===candidate.url)!,article.receipt,article.body,pdf);
+            prepared.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
           } else prepared = prepareColumnArticle(column, article.receipt, article.body);
           prepared.sourceCapture.archiveId = archiveId;
           const { body, ...metadata } = prepared;

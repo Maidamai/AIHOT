@@ -30,7 +30,7 @@ export function exportBlockers(doc: { withdrawn_reason: string | null; article_i
     const c = observation.payload.sourceCapture;
     if (c && (c.httpStatus !== 200 || c.parseStatus !== "parsed" || !c.bodySha256 || c.conflicts.length))
       add("capture", c.httpStatus !== 200 ? `原文 HTTP ${c.httpStatus}，没有可核验正文` : c.conflicts.length ? `来源字段冲突：${c.conflicts.join("；")}` : `正文解析为 ${c.parseStatus}，缺少已核验文本`);
-    if (c?.adapter === "iotc" && (c.attachmentHttpStatus !== 200 || !c.attachmentSha256 || !c.attachmentUrl || !c.attachmentPages)) add("pdf", "IOTC附件获取或PDF页码证据不完整");
+    if ((c?.adapter === "iotc"||c?.adapter==='npfc') && (c.attachmentHttpStatus !== 200 || !c.attachmentSha256 || !c.attachmentUrl || !c.attachmentPages)) add("pdf", "监管措施附件获取或PDF页码证据不完整");
     if (observation.payload.policyContext?.entryIntoForce === "pending" && observation.payload.dates.effectiveFrom.precision !== "unknown") add("date", "Pending异议截止日不能写成生效日");
   }
   return out;
@@ -41,7 +41,7 @@ export function assertCaptureExportable(o: Observation) {
   const c = o.sourceCapture;
   if (c && (c.httpStatus !== 200 || c.parseStatus !== "parsed" || !c.bodySha256 || c.conflicts.length))
     throw new Conflict("Capture failed, unverified, missing body or conflicting fields prevent export");
-  if (c?.adapter === "iotc" && (c.attachmentHttpStatus !== 200 || !c.attachmentSha256 || !c.attachmentUrl || !c.attachmentPages))
+  if ((c?.adapter === "iotc"||c?.adapter==='npfc') && (c.attachmentHttpStatus !== 200 || !c.attachmentSha256 || !c.attachmentUrl || !c.attachmentPages))
     throw new Conflict("Missing or failed PDF evidence prevents export");
   if (o.policyContext?.entryIntoForce === "pending" && o.dates.effectiveFrom.precision !== "unknown")
     throw new Conflict("Pending entry into force cannot be exported as an effective date");

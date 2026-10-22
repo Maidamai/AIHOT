@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { prepareOfficial, sha256, type ArchiveReceipt } from "../backend/source-adapters.ts";
 import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
-import { observationFixture, sourceFixture, unknownDate } from "./fixtures.ts";
+import { observationFixture, sourceFixture, unknownDate,npfcRobotsFixture } from "./fixtures.ts";
 import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
 import { readFile, access, chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +18,52 @@ import { evidenceIdentity } from "../backend/store.ts";
 import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, validateFisheryDraft, fisheryDraftWireSchema,parseFisheryManualRevision } from "../backend/ai-draft.ts";
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage,validateTrialWire } from "../backend/trial-transport.ts";
 import {runFisherySelection,newSelection} from '../backend/selection.ts';
+import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backend/npfc-columns.ts';
+
+test('NPFC measure discovery binds the visible version, not an older URL slug or an effective-date assumption',()=>{
+ const title='CMM 2026-07 For Chub Mackerel (Effective date: 1 June 2026)',url='https://www.npfc.int/cmm-2025-07-chub-mackerel';
+ const html=`<main><a href="${url}">${title}</a><a href="${url}">${title}</a><a href="https://evil.example/cmm-2026-01-other">CMM 2026-01 Other</a><a href="/taxonomy/term/58">Most recent CMMs</a></main>`;
+ const discovered=discoverNpfc(html);assert.equal(discovered.listed,1);assert.equal(discovered.rejected,1);assert.equal(discovered.candidates[0].number,'2026-07');
+ assert.throws(()=>discoverNpfc(html.replace(`>${title}</a><a href="${url}">${title}`,`>${title}</a><a href="${url}">${title.replace('2026-07','2025-07')}`)),/Conflicting/);
+ assert.throws(()=>discoverNpfc(html.replace(`>${title}</a><a href="${url}">${title}`,`>${title}</a><a href="${url}">${title.replace('1 June','2 June')}`)),/Conflicting/);
+ assert.deepEqual(discoverColumn('npfc',html),discovered);assert.equal(discoverColumnPagination('npfc',html).scope,'current_page_only');
+ assert.throws(()=>discoverColumnPagination('npfc',html,'https://www.npfc.int/cmms-pdf?page=1'),/query/);
+ const raw=Buffer.from(`<main><h1>${title}</h1><span class="file-link"><a href="/system/files/2026-04/current.pdf">Official PDF</a></span></main>`),pdf=Buffer.from('%PDF-synthetic-test-only');
+ const text='--- Page 1 ---\nCMM 2026-07\n(Entered into force 1 June 2026)\nSynthetic Convention Area requirements, not real operational guidance.';
+ const attachment={receipt:receipt(pdf,'https://www.npfc.int/system/files/2026-04/current.pdf'),bytes:pdf,parsed:{status:'parsed' as const,rawSha256:sha256(pdf),parser:'synthetic/v1',pages:1,text}};
+ const candidate=discovered.candidates[0],result=prepareNpfc(candidate,receipt(raw,url),raw,attachment);
+ assert.equal(result.readyForReview,true);assert.equal(result.body,text);assert.equal(result.sourceCapture.attachmentPages,1);assert.equal(result.sourceCapture.regulatoryListing?.measureNumber,'2026-07');
+ assert.equal(result.policyContext.entryIntoForce,'unknown');assert.equal(result.dates.published.precision,'unknown');assert.equal(result.dates.effectiveFrom.precision,'unknown');assert.equal(result.sourceCapture.regulatoryListing?.applicableSea,'unknown');
+ assert.equal(prepareNpfc(candidate,receipt(raw,url),raw).readyForReview,false);
+ for(const altered of [text.replace('2026-07','2025-07'),text.replace('1 June','2 June')]){const bad=prepareNpfc(candidate,receipt(raw,url),raw,{...attachment,parsed:{...attachment.parsed,text:altered}});assert.equal(bad.body,null);assert.equal(bad.sourceCapture.parseStatus,'unverified');}
+ const failed=prepareNpfc(candidate,receipt(raw,url),raw,{...attachment,parsed:{...attachment.parsed,status:'failed',error:'Synthetic full PDF parse failed'}});assert.equal(failed.readyForReview,false);assert.match(failed.warnings.join(';'),/parse failed/);
+ for(const changed of [raw.toString().replace('current.pdf','current.pdf?download=1'),raw.toString().replace('https://','https://evil.example/'),raw.toString().replace('</main>','<span class="file-link"><a href="/system/files/other.pdf">Other PDF</a></span></main>')]){
+  if(changed===raw.toString())continue;assert.throws(()=>npfcAttachment(Buffer.from(changed),url),/unambiguous/);
+ }
+ const changedRobots=Buffer.from('User-agent: *\nDisallow: /\n');assert.throws(()=>assertNpfcRobots(receipt(changedRobots,'https://www.npfc.int/robots.txt'),changedRobots),/robots changed/);
+ const observation=observationSchema.parse({...observationFixture,rawSha256:result.sourceCapture.rawSha256,sourceCapture:result.sourceCapture});assert.doesNotThrow(()=>assertCaptureExportable(observation));
+ assert.throws(()=>assertCaptureExportable({...observation,sourceCapture:{...result.sourceCapture,attachmentPages:null}}),/PDF evidence/);
+});
+
+test('NPFC full-PDF batches reverify archived identities, preserve complete text and reject corrupted provenance',async()=>{
+ const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-archive-test-')),url='https://www.npfc.int/cmm-2026-01-synthetic-test';
+ const title='CMM 2026-01 Synthetic Test (Effective date: 23 July 2026)',pdfUrl='https://www.npfc.int/system/files/2026-04/test.pdf';
+ const raw=pdfFixture(false,false,'CMM 2026-01 Synthetic test.');
+ const listing=`<main><a href="${url}">${title}</a></main>`,landing=`<main><h1>${title}</h1><span class="file-link"><a href="${pdfUrl}">Complete PDF</a></span></main>`;
+ try{
+  assert.doesNotThrow(()=>assertNpfcRobots(receipt(npfcRobotsFixture,'https://www.npfc.int/robots.txt'),npfcRobotsFixture));
+  let gets=0;const batch=await collectColumns({id:'npfc-complete-fixture',dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async input=>{gets++;return {url:input,status:200,headers:{get:()=>input===pdfUrl?'application/pdf':'text/html'},body:input.endsWith('/robots.txt')?npfcRobotsFixture:input===COLUMNS.npfc.url?Buffer.from(listing):input===url?Buffer.from(landing):raw};}});
+  assert.equal(gets,4);assert.equal(batch.items[0].state,'ready',JSON.stringify(batch.items));
+  const item=batch.items[0],body=await readCapturedText(dataDir,item.archiveId,item.prepared!.sourceCapture.bodySha256!);
+  const parsePdf=async(bytes:Buffer)=>({status:'parsed' as const,rawSha256:sha256(bytes),parser:'synthetic-reverify/v1',pages:1,text:body});
+  const verified=await verifyBatchItem(dataDir,batch,item,{parsePdf});assert.equal(verified.readyForReview,true);assert.match(verified.body!,/Synthetic test/);assert.equal(verified.sourceCapture.attachmentPages,1);
+  const again=await verifyBatchItem(dataDir,batch,item,{parsePdf});assert.equal(again.sourceCapture.bodySha256,verified.sourceCapture.bodySha256);assert.equal(gets,4,'archive verification performs no GET');
+  let redirectedGets=0;const redirected=await collectColumns({id:'npfc-redirect-fixture',dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async input=>{redirectedGets++;return {url:input===COLUMNS.npfc.url?'https://www.npfc.int/other-measures':input,status:200,headers:{get:()=> 'text/html'},body:input.endsWith('/robots.txt')?npfcRobotsFixture:Buffer.from(listing)};}});
+  assert.equal(redirectedGets,2);assert.equal(redirected.items.length,0);assert.match(redirected.sources[0].error!,/unexpected identity/);
+  const file=path.join(batchRoot(dataDir),batch.id,'raw','npfc-list.bin');await writeFile(file,listing.replace('2026-01','2025-01'));
+  await assert.rejects(verifyBatchItem(dataDir,batch,batch.items[0]),/raw hash mismatch/);
+ }finally{await rm(dataDir,{recursive:true,force:true});}
+});
 
 test('selection transport admits only the three bounded output sizes; missing usage retains full unknown reserve',async()=>{
  const request=(tokens:number)=>({method:'POST',body:JSON.stringify({model:TRIAL.model,messages:[{role:'system',content:'Synthetic prompt'},{role:'user',content:'Synthetic public test source'}],max_tokens:tokens,temperature:0,response_format:{type:'json_object'},thinking:{type:'disabled'}})});

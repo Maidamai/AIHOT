@@ -71,7 +71,7 @@ export async function columnTransaction<T>(column:ColumnId,run:(tx:Tx)=>Promise<
 }
 // Only archive import paths use this helper; other manual sources keep their original transaction.
 export async function capturedTransaction<T>(column:string,run:(tx:Tx)=>Promise<T>):Promise<T> {
-  if(column==='moa'||column==='fujian'||column==='iotc')return columnTransaction(column,run);
+  if(column==='moa'||column==='fujian'||column==='iotc'||column==='npfc')return columnTransaction(column,run);
   return await sql.begin(run) as T;
 }
 

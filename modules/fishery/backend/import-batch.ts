@@ -28,7 +28,7 @@ async function importBatchContents(id: string, actor: string) {
     if(confirmedBody) {
       const input={expectedRevision:0,originalTitle:r!.title,title:r!.title,
         summaryZh:outcome==="ready"?"待人工核对原文；尚未生成业务摘要，关键词命中仅是检索线索。":"最新归档正文未提供明确远洋渔业证据；仅保留变更证据，旧摘要不可继承，待人工核对。",
-        language:item.column === "iotc" ? "en" : "zh",rawSha256:capture!.rawSha256,dates:r!.dates,policyStatus:"unknown",sourceCapture:capture,
+        language:item.column === "iotc"||item.column==='npfc' ? "en" : "zh",rawSha256:capture!.rawSha256,dates:r!.dates,policyStatus:"unknown",sourceCapture:capture,
         ...("policyContext" in r! && r!.policyContext ? {policyContext:r!.policyContext} : {}),
         scope:{regions:[],species:[],flags:[],activities:[],unknownFields:["regions","species","flags","activities"]},
         evidence:"evidence" in r! ? r!.evidence : [{url:capture!.sourceUrl,sha256:capture!.rawSha256,page:null,section:"官方栏目正文；日期、地域及政策适用性待核"}],

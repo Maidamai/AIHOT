@@ -65,7 +65,8 @@ export const pdfTextEvidenceSchema=z.strictObject({
 });
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
-  adapter: z.enum(["jinjiang", "iotc", "fuzhou", "moa", "fujian", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
+  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
+  regulatoryListing:z.strictObject({measureNumber:z.string().regex(/^\d{4}-\d{2}$/),statedEffectiveDate:z.string().max(100).nullable(),membership:z.literal('listed_current_only'),applicableSea:z.literal('unknown'),effectiveStatus:z.literal('unknown')}).optional(),
   archiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   manualArchiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -78,6 +79,7 @@ export const captureSchema = z.strictObject({
   publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
   conflicts: z.array(text.max(300)).max(20),
 }).superRefine((c, ctx) => {
+  if((c.adapter==='npfc')!==!!c.regulatoryListing)ctx.addIssue({code:'custom',message:'NPFC captures require their bound unreviewed measure identity only'});
   if ((c.manualArchiveId && c.adapter !== "manual_official") || (c.adapter === "manual_official" && (!c.manualArchiveId || c.archiveId)))
     ctx.addIssue({code:"custom",message:"Manual official captures require their own manual archive only"});
 });

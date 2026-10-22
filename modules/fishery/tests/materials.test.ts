@@ -1438,6 +1438,25 @@ test('source bridge DB progress API reads core state rather than offline cursor'
 import {PgBoss} from 'pg-boss';
 import {ARCHIVE_KEY,ARCHIVE_TICK,ARCHIVE_QUEUE,archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker,assertArchiveSchedules} from '../backend/archive-worker.ts';
 import {acquireColumnLease,withColumnLease} from '../backend/column-lease.ts';
+test('NPFC reuses source leases, core health and version invalidation without activating paid processing',async()=>{
+ const id='fishery-column-npfc',url='https://www.npfc.int/cmm-2026-01-synthetic-integration';
+ const beforeCounts=await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications`;
+ const capture={adapter:'npfc',sourceUrl:url,capturedAt:'2026-10-22T00:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:'c'.repeat(64),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:'d'.repeat(64),attachmentUrl:'https://www.npfc.int/system/files/test.pdf',attachmentHttpStatus:200,attachmentCapturedAt:'2026-10-22T00:00:00Z',attachmentPages:1,conflicts:[],regulatoryListing:{measureNumber:'2026-01',statedEffectiveDate:'23 July 2026',membership:'listed_current_only',applicableSea:'unknown',effectiveStatus:'unknown'}};
+ const input={...observationFixture,policyStatus:'unknown',dates:{published:{precision:'unknown',value:null},adopted:{precision:'unknown',value:null},effectiveFrom:{precision:'unknown',value:null},effectiveUntil:{precision:'unknown',value:null}},sourceCapture:capture};
+ const first=await withColumnLease('npfc',()=>importCapturedMaterial({id:'npfc',...COLUMNS.npfc},url,input,'tester'));
+ assert.equal((await materialDetail(first.id)).state,'pending');assert.equal((await materialDetail(first.id)).source.enabled,false);
+ await approve(first.id);const duplicate=await withColumnLease('npfc',()=>importCapturedMaterial({id:'npfc',...COLUMNS.npfc},url,input,'tester'));assert.equal(duplicate.unchanged,true);
+ const revised=await withColumnLease('npfc',()=>importCapturedMaterial({id:'npfc',...COLUMNS.npfc},url,{...input,sourceCapture:{...capture,bodySha256:'e'.repeat(64)}},'tester'));assert.equal(revised.revision,2);assert.equal((await materialDetail(first.id)).state,'stale');
+ const start=initialColumnProgress('npfc'),failed={...start,revision:1,health:{outcome:'failure' as const,lastAttemptAt:'2026-10-22T00:00:00Z',lastSuccessAt:null,lastCaptureAt:null,reason:'Synthetic full PDF unavailable',pending:0,nextPageUrl:start.cursorUrl,coverage:'blocked' as const}};
+ await columnDbProgress.intent('npfc','npfc-health-failure',start);await columnDbProgress.finish('npfc','npfc-health-failure',start,failed,[],1);await columnDbProgress.finish('npfc','npfc-health-failure',start,failed,[],1);
+ assert.deepEqual(await columnDbProgress.load('npfc'),start);assert.equal((await sql`SELECT fail_count FROM sources WHERE id=${id}`)[0].fail_count,1);
+ const success={...start,revision:1,completedUrls:[url],health:{...failed.health,outcome:'success' as const,reason:null,lastSuccessAt:'2026-10-22T00:01:00Z',coverage:'current_page_only' as const}};
+ await columnDbProgress.intent('npfc','npfc-health-recovery',start);await columnDbProgress.finish('npfc','npfc-health-recovery',start,success,[],1);await columnDbProgress.finish('npfc','npfc-health-recovery',start,success,[],1);assert.deepEqual(await columnDbProgress.load('npfc'),success);assert.equal((await sql`SELECT fail_count FROM sources WHERE id=${id}`)[0].fail_count,0);
+ const lease=await acquireColumnLease('npfc');try{await assert.rejects(acquireColumnLease('npfc'),/lease unavailable/);}finally{await lease.release();}
+ await sql`UPDATE sources SET participation_mode='isolated' WHERE id=${id}`;
+ try{await assert.rejects(columnDbProgress.load('npfc'),/isolated/);await assert.rejects(withColumnLease('npfc',()=>importCapturedMaterial({id:'npfc',...COLUMNS.npfc},url,input,'tester')),/isolated/);}finally{await sql`UPDATE sources SET participation_mode='editorial' WHERE id=${id}`;}
+ assert.deepEqual(await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications`,beforeCounts);
+});
 const archiveUrl=(n:number)=>`https://yyj.moa.gov.cn/gzdt/202610/t20261021_${97000+n}.htm`;
 const archiveListing=(ids:number[])=>Buffer.from(`<ul class="sj_e_tonzhi_list">${ids.map(n=>`<li><a href="${archiveUrl(n)}">远洋渔业隔离归档${n}</a></li>`).join('')}</ul>`);
 const archiveBody=(n:number)=>Buffer.from(`<meta name="ArticleTitle" content="远洋渔业隔离归档${n}"><meta name="PubDate" content="2026-10-21"><div class="sj_arc_body"><div class="TRS_Editor"><p>ISOLATED TEST FIXTURE ${n} ${'远洋渔业公海履约完整合成上下文。'.repeat(12)}</p></div></div>`);

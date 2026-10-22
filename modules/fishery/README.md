@@ -130,6 +130,16 @@ node modules/fishery/scripts/automatic-flows.ts --enable --after 2026-10-21T07:1
 
 新队列仅有两次重试、五秒延迟、五分钟执行期限；既有消费者只对这个明确的非付费队列调用 pg-boss 维护以恢复过期任务，停止和租约丢失时清理维护定时器并停止取任务。不启用全局调度或监督，不恢复付费 `fishery.flow`，不启动采集或模型。重试耗尽保留失败状态；正常重新审核批准产生新的版本任务。原站 `editorial_overrides.visibility` 是独立控制列，关联任务不写它，后台正常撤下必须由正常可见性操作显式恢复。
 
+### NPFC 逐措施原件接入
+
+`collect-columns.ts --columns npfc --limit 1` 只从 `https://www.npfc.int/cmms-pdf` 的当前可见列表发现逐项措施，保存列表、措施页、唯一同源 PDF、HTTP 收据和完整逐页文本。所有请求至少间隔10秒，原件不超过10MiB、200页，正文解析复用现有 PDF 工具和上限。robots 采用2026-10-22实际核验指纹，变化即停，不绕过限制。当前仅这一列表页，不宣称完整历史措施库。
+
+导入重新核验原始列表身份、措施页标题、PDF文号/年份与声明日期；冲突、附件缺失和解析失败不进入待审正文。URL可能沿用旧年份，身份以列表、页面及PDF一致的文号为准。版本文号、声明日期保存在 `sourceCapture.regulatoryListing`；其适用海区和当前生效状态明确为unknown，原文发布、通过及生效日期也不从URL、文号年份或收录时间补造。列表标为current不等于适用于某公司、船旗、鱼种或作业地点。
+
+成功归档可经既有批次导入登记为未审核素材，转载权未知，不生成评分、摘要、审批或发布；普通读者不会因采集而看到新材料。NPFC后续明确的DB增量轮使用相同 `sources.cursor`、`fetch_runs`、独占来源租约和失败退避；同源正文变化使旧审核失效，失败不推进成功游标。源被隔离时禁止继续导入/采集。初版没有启用NPFC长期定时，农业农村部现有小时计划保持原样。
+
+福建通知公告的资金政策主要在附件，当前只完成页面和附件入口核验，尚未启用该新栏目；不能把公示、预算分配或已截止通知当作开放申报。JMA仍未启用，尚须验证载荷、订正/撤销和使用限制。
+
 ### 单 Moa 无付费归档 worker
 
 原 worker 默认 `WORKER_PROFILE=full` 不变。明确选择模块声明的 `WORKER_PROFILE=fishery-archive` 时，入口在任何核心内容、翻译、事件、报告、通知、恢复和模块付费消费者之前分流；要求 `MODEL_CALLS_ENABLED=false`、`COLLECT_ENABLED=false`。该模式只注册 `fishery.archive.moa.tick` 与 `fishery.archive.moa`，使用原 pg-boss；启动前读取全部既有 schedules，遇其他名称保留原表并拒绝启动，不调用会清理其他 cron 的原 `registerSchedules`。全局 supervise 关闭，仅监督这两个非付费队列以释放过期 active tick，均 retryLimit=0。

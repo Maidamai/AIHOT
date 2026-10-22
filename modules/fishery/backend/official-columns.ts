@@ -6,6 +6,7 @@ import { beijingDate } from "@aihot/contracts/time";
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { archiveReceiptSchema, sha256 } from "./source-adapters.ts";
 import { discoverIotc } from "./iotc-columns.ts";
+import {discoverNpfc,NPFC_LIST} from './npfc-columns.ts';
 
 export const COLUMNS = {
   moa: {
@@ -20,8 +21,9 @@ export const COLUMNS = {
     name: "IOTC · Current Conservation and Management Measures", url: "https://iotc.org/cmms/basic",
     list: "table.views-table tbody tr", body: "#content .node-cmm", issuer: "Indian Ocean Tuna Commission (IOTC)",
   },
+  npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',url:NPFC_LIST,list:'main a[href]',body:'main',issuer:'North Pacific Fisheries Commission (NPFC)'},
 } as const;
-export const columnIdSchema = z.enum(["moa", "fujian", "iotc"]);
+export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
 export interface ColumnPagination { pageUrl:string; pageIndex:number; nextUrl:string|null; totalPages:number|null; scope:"verified_pagination"|"current_page_only"|"pagination_unverified"; }
 export function columnPageIndex(id:ColumnId,input:string) {
@@ -48,6 +50,7 @@ export function discoverColumnPagination(id:ColumnId,html:string,pageUrl=COLUMNS
     return {...base,scope:"verified_pagination",totalPages:Number(count[1]),nextUrl:pageIndex+1<Number(count[1])?new URL(`index_${pageIndex+1}.htm`,COLUMNS.moa.url).href:null};
   }
   if(id==="fujian") return base; // The observed JS pagebar does not disclose a verified URL mechanism.
+  if(id==='npfc')return {...base,scope:'current_page_only'};
   const $=cheerio.load(html),links=$("ul.pager li.pager-next a[href]").toArray().map(a=>new URL($(a).attr("href")!,pageUrl).href);
   if(new Set(links).size>1) throw new Error("Conflicting IOTC next-page links");
   const nextUrl=links[0]??null;
@@ -75,6 +78,7 @@ export function titlePriority(title: string): Candidate["priority"] | null {
 
 export function discoverColumn(id: ColumnId, html: string): { candidates: Candidate[]; rejected: number; listed: number } {
   if (id === "iotc") return discoverIotc(html);
+  if (id === 'npfc')return discoverNpfc(html);
   const column = COLUMNS[id], base = new URL(column.url), $ = cheerio.load(html), seen = new Set<string>();
   const candidates: Candidate[] = []; let rejected = 0, listed = 0;
   for (const anchor of $(column.list).toArray()) {
@@ -100,7 +104,7 @@ export function relevanceEvidence(body: string): string[] {
   }).slice(0, 8);
 }
 
-export function prepareColumnArticle(id: Exclude<ColumnId, "iotc">, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
+export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc">, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
   const receipt = archiveReceiptSchema.parse(receiptInput), column = COLUMNS[id], origin = new URL(column.url).origin;
   const conflicts: string[] = [], warnings: string[] = [];
   if (sha256(raw) !== receipt.sha256) conflicts.push("Raw bytes differ from the HTTP receipt");
