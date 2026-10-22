@@ -326,6 +326,8 @@ test("archived batch imports through the guarded route and displays only its ver
     const response=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-route-batch/import",headers:{"x-csrf-token":"dev"},payload:{}});
     assert.equal(response.statusCode,200,response.body);assert.equal(response.headers["cache-control"],"no-store");
     const id=response.json().rows[0].id,detail=await materialDetail(id);
+    const [acquisition]=await sql`SELECT after FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'='synthetic-route-batch'`;
+    assert.equal(acquisition.after.outcome,"ready");assert.equal(acquisition.after.reason,"Verified source body; awaiting material review");
     assert.equal(detail.state,"pending");assert.equal(detail.reviews.length,0);assert.equal(detail.text?.body,body);assert.equal(detail.text?.hashMatches,true);
     assert.equal(detail.source.profile.rightsStatus,"unknown");assert.equal(detail.source.enabled,false);
     const again=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-route-batch/import",headers:{"x-csrf-token":"dev"},payload:{}});
@@ -1150,6 +1152,7 @@ test("a verified irrelevant recapture supersedes qualified evidence while 404 an
     assert.equal((await documentHistory(id)).observations.length,1);assert.equal((await flowDetail(task.id)).stale,false);assert.equal((await readerItem(id)).id,id);
     const [audit]=await sql`SELECT after,reason FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${unavailable.id}`;
     assert.equal(audit!.after.outcome,"unavailable");assert.match(audit!.reason,/no confirmed source-body change/);
+    assert.doesNotMatch(audit!.after.reason,/awaiting material review/);
     if(mode==="timeout") assert.match(audit!.after.reason,/timeout/);
   }
   const recaptured=await capture("recapture-current-irrelevant",url,"irrelevant");assert.equal(recaptured.items[0]!.state,"irrelevant");
@@ -1161,6 +1164,7 @@ test("a verified irrelevant recapture supersedes qualified evidence while 404 an
   const stale=await flowDetail(task.id);assert.equal(stale.stale,true);assert.equal(stale.internalArticle,null);await assert.rejects(readerItem(id),/No current/);
   const [trace]=await sql`SELECT after FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`;
   assert.equal(trace!.after.outcome,"irrelevant");assert.equal(trace!.after.relevance.decision,"not_proven");
+  assert.match(trace!.after.reason,/No explicit DWF evidence/);assert.doesNotMatch(trace!.after.reason,/No verified source body/);
   await importBatch(recaptured.id,"tester");assert.equal((await documentHistory(id)).observations.length,2);
   assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`)[0]!.n,1,"Reimporting the same archive does not fabricate another acquisition");
   const newIrrelevant=await capture("recapture-new-irrelevant",newUrl,"irrelevant");await importBatch(newIrrelevant.id,"tester");

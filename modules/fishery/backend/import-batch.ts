@@ -41,7 +41,8 @@ async function importBatchContents(id: string, actor: string) {
     }
     const acquisition=await recordCapturedAcquisition(item.column,item.url,{batchId:id,archiveId:item.archiveId,outcome,
       capture:capture?{capturedAt:capture.capturedAt,httpStatus:capture.httpStatus,rawSha256:capture.rawSha256,bodySha256:capture.bodySha256,parser:capture.parser,parseStatus:capture.parseStatus}:null,
-      relevance,reason:[item.error,error,...(r?.warnings??[])].filter(Boolean).join("; ").slice(0,1000)||"No verified source body"},actor);
+      relevance,reason:[item.error,error,...(r?.warnings??[])].filter(Boolean).join("; ").slice(0,1000)||
+        (outcome==="ready"?"Verified source body; awaiting material review":outcome==="irrelevant"?"Verified source body; no explicit DWF evidence":"No verified source body")},actor);
     if(acquisition) acquisitions.push(acquisition);
   }
   // Only ready imports can seed new processing tasks; irrelevant updates merely invalidate old evidence snapshots.
