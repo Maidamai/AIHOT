@@ -11,6 +11,7 @@ import { assertIotcRobots, discoverIotc, iotcAttachment, prepareIotc } from "./i
 import { extractPdf } from "./pdf-text.ts";
 import {assertNpfcRobots,discoverNpfc,npfcAttachment,prepareNpfc} from './npfc-columns.ts';
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
+import { captureNpfcPdf, verifyNpfcPdf, type ConditionalHeaders } from "./npfc-pdf-cache.ts";
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
@@ -102,6 +103,7 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     const candidate=discoverNpfc(new TextDecoder('utf8',{fatal:true}).decode(listing.body)).candidates.find(c=>c.url===item.url);
     if(!candidate)throw new Error('NPFC measure absent from archived current listing');
     const attachment=await readArchive(root,`${item.archiveId}-pdf`,10*1024*1024);
+    await verifyNpfcPdf(dataDir,batch,item.archiveId,npfcAttachment(raw,receipt.finalUrl),attachment);
     result=prepareNpfc(candidate,receipt,raw,{receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)});
     result.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
   } else result = prepareColumnArticle(item.column, receipt, raw);
@@ -222,10 +224,10 @@ export async function reparseArchivedIotc(options:{dataDir:string;sourceBatchId:
 }
 
 type Response = { url: string; status: number; body: Buffer; headers: { get(name: string): string | null } };
-export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal}) => Promise<Response>;
+export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal;headers?:ConditionalHeaders}) => Promise<Response>;
 type Fetcher=ColumnFetcher;
-const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8" } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]};guard?:()=>Promise<void>;signal?:AbortSignal }) {
+const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8", ...(options?.headers?.["if-none-match"]?{"if-none-match":options.headers["if-none-match"]}:{}), ...(options?.headers?.["if-modified-since"]?{"if-modified-since":options.headers["if-modified-since"]}:{}) } });
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
@@ -233,26 +235,32 @@ export async function collectColumns(options: { id: string; dataDir: string; col
   if(options.page) columnPageIndex(columns[0]!,options.page.url);
   if (options.iotcSelect?.length && (!columns.includes("iotc") || options.iotcSelect.length > limit)) throw new Error("IOTC selection needs the IOTC column and must fit the batch limit");
   const root = path.join(batchRoot(options.dataDir), id);
+  const check=async()=>{options.signal?.throwIfAborted();await options.guard?.();options.signal?.throwIfAborted();};
+  await check();
   await mkdir(batchRoot(options.dataDir), { recursive: true, mode: 0o700 });
+  await check();
   await mkdir(root, { mode: 0o700 }); // Exclusive: never mix captures or blindly retry a partial run.
+  await check();
   await mkdir(path.join(root, "raw"), { mode: 0o700 });
+  await check();
   await mkdir(path.join(root, "body"), { mode: 0o700 });
+  await check();
   const batch: ColumnBatch = { version: "fishery-column-batch/0.1", id, startedAt: new Date().toISOString(), finishedAt: null, status: "running", sources: [], items: [] };
-  const persist = async () => {await options.guard?.();return saveManifest(path.join(root,"manifest.json"),batch,options.guard);};
+  const persist = async () => {await check();await saveManifest(path.join(root,"manifest.json"),batch,check);await check();};
   await persist();
-  const fetch = options.fetch ?? defaultFetch, wait = async(ms:number)=>{await options.guard?.();if(options.wait)await options.wait(ms);else await sleep(ms,undefined,{signal:options.signal});await options.guard?.();}, deadline = Date.now() + 180_000;
-  async function get(url: string, name: string) {
+  const fetch = options.fetch ?? defaultFetch, wait = async(ms:number)=>{await check();if(options.wait)await options.wait(ms);else await sleep(ms,undefined,{signal:options.signal});await check();}, deadline = Date.now() + 180_000;
+  const pendingCache: (()=>Promise<void>)[]=[];
+  const writeRaw=async(name:string,bytes:Buffer)=>{await check();await writeFile(path.join(root,"raw",name),bytes,{mode:0o600,flag:"wx"});await check();};
+  async function get(url: string, name: string, headers?:ConditionalHeaders) {
     if (Date.now() > deadline) throw new Error("Manual batch time budget exhausted");
-    await options.guard?.();options.signal?.throwIfAborted();
-    const startedAt = new Date().toISOString(), response = await fetch(url,{signal:options.signal});
-    await options.guard?.();options.signal?.throwIfAborted();
-    const maxBytes = name.endsWith("-robots") ? 256 * 1024 : name.endsWith("-pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024;
+    await check();
+    const startedAt = new Date().toISOString(), response = await fetch(url,{signal:options.signal,...(headers?{headers}:{})});
+    await check();
+    const maxBytes = name.endsWith("-robots") ? 256 * 1024 : name.includes("-pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024;
     if (response.body.length > maxBytes) throw new Error("Captured response too large; full bytes required");
-    const receipt = { requestedUrl: url, finalUrl: response.url, status: response.status, startedAt, finishedAt: new Date().toISOString(), contentType: response.headers.get("content-type"), bytes: response.body.length, sha256: sha256(response.body) };
-    await options.guard?.();
-    await writeFile(path.join(root, "raw", `${name}.bin`), response.body, { mode: 0o600, flag: "wx" });
-    await options.guard?.();
-    await save(path.join(root, "raw", `${name}.receipt.json`), receipt);
+    const receipt = { requestedUrl: url, finalUrl: response.url, status: response.status, startedAt, finishedAt: new Date().toISOString(), contentType: response.headers.get("content-type"), bytes: response.body.length, sha256: sha256(response.body),etag:response.headers.get("etag"),lastModified:response.headers.get("last-modified"),...(headers?{requestHeaders:headers}:{}) };
+    await writeRaw(`${name}.bin`,response.body);
+    await writeRaw(`${name}.receipt.json`,Buffer.from(json(receipt)));
     return { receipt, body: response.body };
   }
   for (const column of columns) {
@@ -307,14 +315,16 @@ export async function collectColumns(options: { id: string; dataDir: string; col
             prepared.evidence.push({ url: listingUrl, sha256: sha256(listing.body), page: null, section: "Archived current CMM listing; discovery identity" });
           } else if(column==='npfc'){
             let pdf:Parameters<typeof prepareNpfc>[3];
-            if(article.receipt.status===200){const url=npfcAttachment(article.body,article.receipt.finalUrl);await wait(delay);const attachment=await get(url,`${archiveId}-pdf`);pdf={receipt:attachment.receipt,bytes:attachment.body,parsed:await extractPdf(attachment.body)};}
+            let attachment:Awaited<ReturnType<typeof captureNpfcPdf>>|undefined;
+            if(article.receipt.status===200){const url=npfcAttachment(article.body,article.receipt.finalUrl);await wait(delay);attachment=await captureNpfcPdf({dataDir:options.dataDir,batchId:id,archiveId,url,check,write:writeRaw,get,wait:()=>wait(delay)});await check();pdf={receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)};await check();}
             prepared=prepareNpfc(discoverNpfc(html).candidates.find(c=>c.url===candidate.url)!,article.receipt,article.body,pdf);
             prepared.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
+            if(prepared.readyForReview&&attachment)pendingCache.push(attachment.publish);
           } else prepared = prepareColumnArticle(column, article.receipt, article.body);
           prepared.sourceCapture.archiveId = archiveId;
           const { body, ...metadata } = prepared;
           item.prepared = metadata;
-          if (body) {await options.guard?.();await writeFile(path.join(root,"body",`${archiveId}.txt`),body,{mode:0o600,flag:"wx"});}
+          if (body) {await check();await writeFile(path.join(root,"body",`${archiveId}.txt`),body,{mode:0o600,flag:"wx"});await check();}
           item.state = prepared.readyForReview ? "ready" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
           if (item.state === "ready") ready++;
           if (item.state === "failed") item.error = [...prepared.sourceCapture.conflicts, ...prepared.warnings].join("; ") || "Article parse failed";
@@ -328,5 +338,6 @@ export async function collectColumns(options: { id: string; dataDir: string; col
     await persist();
   }
   batch.status = "complete"; batch.finishedAt = new Date().toISOString(); await persist();
+  if(batch.items.length&&batch.items.every(i=>i.state==="ready")&&batch.sources.every(s=>!s.error))for(const publish of pendingCache)await publish();
   return batch;
 }

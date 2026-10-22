@@ -19,6 +19,133 @@ import { buildFisheryDraftRequest, fisheryDraftSchema, prepareFisheryDraft, vali
 import { TRIAL, installTrialTransport, trialCapacity, trialUsage,validateTrialWire } from "../backend/trial-transport.ts";
 import {runFisherySelection,newSelection} from '../backend/selection.ts';
 import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backend/npfc-columns.ts';
+import type { ColumnFetcher } from '../backend/column-batches.ts';
+
+function npfcCacheFixture() {
+ const url='https://www.npfc.int/cmm-2026-01-cache-test',pdfUrl='https://www.npfc.int/system/files/2026-04/cache-test.pdf',title='CMM 2026-01 Synthetic cache test';
+ const listing=Buffer.from(`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`);
+ const landing=Buffer.from(`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="${pdfUrl}">Complete PDF</a></span></div></div>`);
+ const pdf=Buffer.from('%PDF-synthetic-cache-protocol-only'),modified='Wed, 21 Oct 2026 12:00:00 GMT';
+ const parsePdf=async(bytes:Buffer)=>({status:'parsed' as const,rawSha256:sha256(bytes),parser:'synthetic-cache/v1',pages:1,text:`--- Page 1 ---\nCMM 2026-01\nSynthetic complete material ${sha256(bytes)}`});
+ const fetch=(pdfFetch:ColumnFetcher):ColumnFetcher=>async(input,options)=>input===pdfUrl?pdfFetch(input,options):{url:input,status:200,body:input.endsWith('/robots.txt')?npfcRobotsFixture:input===COLUMNS.npfc.url?listing:landing,headers:{get:()=>null}};
+ const response=(status=200,body=pdf,etag:string|null='"synthetic-v1"',finalUrl=pdfUrl)=>({url:finalUrl,status,body,headers:{get:(name:string)=>name==='etag'?etag:name==='last-modified'?modified:name==='content-type'?'application/pdf':null}});
+ return {url,pdfUrl,pdf,modified,parsePdf,fetch,response};
+}
+
+test('NPFC conditional PDFs freeze original 200 evidence and verify 304 without mutable cache or origin files',async()=>{
+ const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-cache-')),f=npfcCacheFixture();
+ const run=(id:string,pdfFetch:ColumnFetcher)=>collectColumns({id,dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,fetch:f.fetch(pdfFetch)});
+ try {
+  let calls=0;const first=await run('cache-original',async(input,options)=>{calls++;assert.deepEqual(options?.headers,{});return f.response();});
+  assert.equal(first.items[0].state,'ready',JSON.stringify(first.items));
+  const second=await run('cache-revalidated',async(input,options)=>{calls++;assert.deepEqual(options?.headers,{'if-none-match':'"synthetic-v1"','if-modified-since':f.modified});return f.response(304,Buffer.alloc(0));});
+  assert.equal(calls,2);assert.equal(second.items[0].state,'ready',JSON.stringify(second.items));
+  const original=first.items[0].prepared!.sourceCapture,current=second.items[0].prepared!.sourceCapture;
+  assert.equal(current.attachmentCapturedAt,original.attachmentCapturedAt);
+  assert.equal(current.attachmentHttpStatus,200);assert.equal(current.attachmentSha256,original.attachmentSha256);
+  assert.equal(evidenceIdentity({...observationFixture,rawSha256:original.rawSha256,sourceCapture:original}),evidenceIdentity({...observationFixture,rawSha256:current.rawSha256,sourceCapture:current}),'A 304 adds no stable version fields');
+  const rawDir=path.join(batchRoot(dataDir),second.id,'raw'),prefix=path.join(rawDir,second.items[0].archiveId+'-pdf');
+  assert.equal(JSON.parse(await readFile(prefix+'-response.receipt.json','utf8')).status,304);
+  assert.equal(JSON.parse(await readFile(prefix+'.receipt.json','utf8')).finishedAt,original.attachmentCapturedAt);
+  await rm(path.join(dataDir,'fishery-npfc-pdf-cache'),{recursive:true});await rm(path.join(batchRoot(dataDir),first.id),{recursive:true});
+  assert.equal((await verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf})).readyForReview,true);
+  const proof=await readFile(prefix+'-revalidation.json'),value=JSON.parse(proof.toString());value.requestHeaders['if-none-match']='"tampered"';await writeFile(prefix+'-revalidation.json',JSON.stringify(value));
+  await assert.rejects(verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf}),/binding mismatch/);
+  await writeFile(prefix+'-revalidation.json',proof);
+  const origin=await readFile(prefix+'-origin-manifest.json');await writeFile(prefix+'-origin-manifest.json',Buffer.concat([origin,Buffer.from(' ')]));
+  await assert.rejects(verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf}),/origin manifest hash/);await writeFile(prefix+'-origin-manifest.json',origin);
+  const responseBytes=await readFile(prefix+'-response.receipt.json'),response=JSON.parse(responseBytes.toString());response.startedAt='2000-01-01T00:00:00.000Z';await writeFile(prefix+'-response.receipt.json',JSON.stringify(response));
+  await assert.rejects(verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf}),/304 response evidence/);
+  await writeFile(prefix+'-response.receipt.json',responseBytes);response.startedAt=JSON.parse(responseBytes.toString()).startedAt;response.requestHeaders={};await writeFile(prefix+'-response.receipt.json',JSON.stringify(response));
+  await assert.rejects(verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf}),/304 response evidence/);
+  await rm(prefix+'-revalidation.json');await assert.rejects(verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf}),/marker missing/);
+ } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test('NPFC PDFs without validators always GET fully, Last-Modified alone supports 304, and failed parsing publishes no cache',async()=>{
+ for(const mode of ['none','last-modified','parse-failed'] as const){
+  const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-cache-validators-')),f=npfcCacheFixture();let calls=0;
+  const fetch=f.fetch(async(input,options)=>{calls++;if(calls===2)assert.deepEqual(options?.headers,mode==='last-modified'?{'if-modified-since':f.modified}:{});const result=f.response(calls===2?304:200,calls===2?Buffer.alloc(0):f.pdf,null);if(mode==='none')result.headers={get:()=>null};return calls===3?f.response():result;});
+  const run=(id:string)=>collectColumns({id,dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch,parsePdf:mode==='parse-failed'?async bytes=>({...await f.parsePdf(bytes),status:'failed' as const,error:'Synthetic parser failure'}):f.parsePdf});
+  try {
+   const first=await run('validator-first');
+   if(mode==='parse-failed'){assert.equal(first.items[0].state,'failed');await assert.rejects(access(path.join(dataDir,'fishery-npfc-pdf-cache')),/ENOENT/);continue;}
+   const second=await run('validator-second');assert.equal(second.items[0].state,'ready');assert.equal(calls,mode==='none'?3:2);
+   assert.equal((await verifyBatchItem(dataDir,second,second.items[0],{parsePdf:f.parsePdf})).readyForReview,true);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+ }
+});
+
+test('NPFC cache publication I/O failure retains the ready archive and a diagnostic',async()=>{
+ const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-cache-optional-')),f=npfcCacheFixture();
+ try {
+  const batch=await collectColumns({id:'cache-optional-io',dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,fetch:f.fetch(async()=>{
+   await mkdir(path.join(dataDir,'fishery-npfc-pdf-cache',sha256(f.pdfUrl)+'.json'),{recursive:true});return f.response();
+  })});
+  assert.equal(batch.status,'complete');assert.equal(batch.items[0].state,'ready');
+  assert.match(await readFile(path.join(batchRoot(dataDir),batch.id,'raw',batch.items[0].archiveId+'-pdf-cache-publish-rejected.json'),'utf8'),/EISDIR|ENOTEMPTY/);
+  assert.equal((await verifyBatchItem(dataDir,batch,batch.items[0],{parsePdf:f.parsePdf})).readyForReview,true);
+ } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test('NPFC untrusted 304 uses at most one unconditional retry and never creates a fake successful body',async()=>{
+ for(const fallback of ['200','304','redirect','damaged'] as const){
+  const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-cache-fallback-')),f=npfcCacheFixture();let calls=0;
+  try {
+   const batch=await collectColumns({id:'untrusted-'+fallback,dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,fetch:f.fetch(async(input,options)=>{
+    calls++;assert.ok(!options?.headers||Object.keys(options.headers).length===0);
+    return calls===1?f.response(304,Buffer.alloc(0)):fallback==='200'?f.response():fallback==='304'?f.response(304,Buffer.alloc(0)):fallback==='redirect'?f.response(200,f.pdf,'"synthetic-v1"','https://www.npfc.int/system/files/other.pdf'):f.response(200,Buffer.from('not a PDF'));
+   })});
+   assert.equal(calls,2);assert.equal(batch.items[0].state,fallback==='200'?'ready':'failed');
+   const root=path.join(batchRoot(dataDir),batch.id,'raw'),name=batch.items[0].archiveId+'-pdf';
+   assert.equal(JSON.parse(await readFile(path.join(root,name+'-response.receipt.json'),'utf8')).status,304);
+   if(fallback!=='200'){await assert.rejects(access(path.join(root,name+'.bin')),/ENOENT/);await assert.rejects(access(path.join(dataDir,'fishery-npfc-pdf-cache')),/ENOENT/);}
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+ }
+});
+
+test('NPFC damaged caches remain evidence, same-URL new bytes change identity, and source validators stay isolated',async()=>{
+ const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-cache-damage-')),f=npfcCacheFixture();
+ const run=(id:string,pdfFetch:ColumnFetcher)=>collectColumns({id,dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,fetch:f.fetch(pdfFetch)});
+ try {
+  const original=await run('cache-damage-original',async()=>f.response());
+  const indexFile=path.join(dataDir,'fishery-npfc-pdf-cache',sha256(f.pdfUrl)+'.json'),originalIndex=await readFile(indexFile);
+  const pdfFile=path.join(batchRoot(dataDir),original.id,'raw',original.items[0].archiveId+'-pdf.bin');await writeFile(pdfFile,'preserved damaged bytes');
+  let calls=0;const recovered=await run('cache-damage-fallback',async(input,options)=>{calls++;assert.ok(!options?.headers||Object.keys(options.headers).length===0);return calls===1?f.response(304,Buffer.alloc(0)):f.response();});
+  assert.equal(calls,2);assert.equal(recovered.items[0].state,'ready');assert.equal(await readFile(pdfFile,'utf8'),'preserved damaged bytes');
+  assert.match(await readFile(path.join(batchRoot(dataDir),recovered.id,'raw',recovered.items[0].archiveId+'-pdf-cache-rejected.json'),'utf8'),/Invalid NPFC cached PDF/);
+  const changed=await run('cache-new-bytes',async(input,options)=>{assert.equal(options?.headers?.['if-none-match'],'"synthetic-v1"');return f.response(200,Buffer.from('%PDF-synthetic-updated'),'"synthetic-v2"');});
+  assert.notEqual(changed.items[0].prepared!.sourceCapture.attachmentSha256,recovered.items[0].prepared!.sourceCapture.attachmentSha256);
+  assert.notEqual(evidenceIdentity({...observationFixture,rawSha256:changed.items[0].prepared!.sourceCapture.rawSha256,sourceCapture:changed.items[0].prepared!.sourceCapture}),evidenceIdentity({...observationFixture,rawSha256:recovered.items[0].prepared!.sourceCapture.rawSha256,sourceCapture:recovered.items[0].prepared!.sourceCapture}));
+  const wrong=JSON.parse(originalIndex.toString());wrong.url='https://iotc.org/other.pdf';await writeFile(indexFile,JSON.stringify(wrong));
+  const isolated=await run('cache-source-isolated',async(input,options)=>{assert.deepEqual(options?.headers,{});return f.response();});assert.equal(isolated.items[0].state,'ready');
+  const raw=path.join(batchRoot(dataDir),changed.id,'raw'),name=changed.items[0].archiveId+'-pdf';
+  await rm(path.join(raw,name+'-response.receipt.json'));await rm(path.join(raw,name+'-response.bin'));
+  assert.equal((await verifyBatchItem(dataDir,changed,changed.items[0],{parsePdf:f.parsePdf})).readyForReview,true,'Legacy batches with their actual in-period 200 need no sidecar');
+  const old=JSON.parse(await readFile(path.join(raw,name+'.receipt.json'),'utf8'));old.finishedAt='2000-01-01T00:00:00.000Z';await writeFile(path.join(raw,name+'.receipt.json'),JSON.stringify(old));
+  await assert.rejects(verifyBatchItem(dataDir,changed,changed.items[0],{parsePdf:f.parsePdf}),/outside batch acquisition/);
+ } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test('NPFC cached PDF reads and writes obey lost-lease and abort guards before cache publication',async()=>{
+ const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-cache-guard-')),f=npfcCacheFixture();
+ try {
+  const original=await collectColumns({id:'cache-guard-original',dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,fetch:f.fetch(async()=>f.response())});
+  const index=path.join(dataDir,'fishery-npfc-pdf-cache',sha256(f.pdfUrl)+'.json'),before=await readFile(index);
+  let lost=false;await assert.rejects(collectColumns({id:'cache-guard-lost',dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,guard:async()=>{if(lost)throw new Error('Synthetic lost source lease');},fetch:f.fetch(async()=>{lost=true;return f.response(304,Buffer.alloc(0));})}),/lost source lease/);
+  assert.deepEqual(await readFile(index),before);
+  const root=path.join(batchRoot(dataDir),'cache-guard-lost','raw'),files=await readdir(root);assert.ok(!files.some(name=>name.includes('-pdf')),'A lease lost in GET prevents response and cache writes');
+  const controller=new AbortController();controller.abort();let gets=0;
+  await assert.rejects(collectColumns({id:'cache-aborted',dataDir,columns:['npfc'],limit:1,signal:controller.signal,fetch:async()=>{gets++;return f.response();}}),/abort/i);assert.equal(gets,0);
+  await assert.rejects(access(path.join(batchRoot(dataDir),'cache-aborted')),/ENOENT/);
+  await assert.rejects(collectColumns({id:'cache-publication-lost',dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:f.parsePdf,guard:async()=>{
+   if((await readdir(path.dirname(index))).some(name=>name.endsWith('.tmp')))throw new Error('Synthetic lost publication lease');
+  },fetch:f.fetch(async()=>f.response())}),/lost publication lease/);
+  assert.deepEqual(await readFile(index),before,'The cache I/O catch must never swallow a failed publication guard');
+  assert.equal((await readBatch(dataDir,'cache-publication-lost')).status,'complete');
+  assert.equal(original.items[0].state,'ready');
+ } finally {await rm(dataDir,{recursive:true,force:true});}
+});
 
 test('NPFC measure discovery binds the visible version, not an older URL slug or an effective-date assumption',()=>{
  const title='CMM 2026-07 For Chub Mackerel (Effective date: 1 June 2026)',url='https://www.npfc.int/cmm-2025-07-chub-mackerel';
