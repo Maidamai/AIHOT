@@ -13,7 +13,7 @@ export function assertNpfcRobots(input:unknown,raw:Buffer){
 }
 export function discoverNpfc(html:string){
  const $=cheerio.load(html),seen=new Map<string,string>(),candidates:NpfcCandidate[]=[];let rejected=0;
- for(const a of $('main a[href]').toArray()){
+ for(const a of $('.region-content .view-document-list td.views-field-title > a[href]').toArray()){
   const title=collapse($(a).text()),number=/^CMM (\d{4}-\d{2})\b/.exec(title)?.[1];if(!number)continue;
   let url:URL;try{url=new URL($(a).attr('href')!,NPFC_LIST);}catch{continue;}
   if(url.origin!==new URL(NPFC_LIST).origin||!/^\/cmm-[a-z0-9-]+$/.test(url.pathname)||url.search||url.hash||!linkSchema.safeParse(url.href).success){rejected++;continue;}
@@ -24,7 +24,7 @@ export function discoverNpfc(html:string){
 }
 export function npfcAttachment(raw:Buffer,pageUrl:string){
  const $=cheerio.load(new TextDecoder('utf8',{fatal:true}).decode(raw));
- const urls=new Set($('main .file-link a[href]').toArray().map(a=>new URL($(a).attr('href')!,pageUrl).href).filter(url=>/^https:\/\/www\.npfc\.int\/system\/files\/[^?#]+\.pdf$/i.test(url)&&linkSchema.safeParse(url).success));
+ const urls=new Set($('.region-content .field--name-field-file .file-link a[href]').toArray().map(a=>new URL($(a).attr('href')!,pageUrl).href).filter(url=>/^https:\/\/www\.npfc\.int\/system\/files\/[^?#]+\.pdf$/i.test(url)&&linkSchema.safeParse(url).success));
  if(urls.size!==1)throw new Error('NPFC measure requires one unambiguous same-origin full PDF');return [...urls][0]!;
 }
 export function prepareNpfc(candidate:NpfcCandidate,input:unknown,raw:Buffer,pdf?:{receipt:unknown;bytes:Buffer;parsed:PdfText}){

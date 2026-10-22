@@ -22,13 +22,13 @@ import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backe
 
 test('NPFC measure discovery binds the visible version, not an older URL slug or an effective-date assumption',()=>{
  const title='CMM 2026-07 For Chub Mackerel (Effective date: 1 June 2026)',url='https://www.npfc.int/cmm-2025-07-chub-mackerel';
- const html=`<main><a href="${url}">${title}</a><a href="${url}">${title}</a><a href="https://evil.example/cmm-2026-01-other">CMM 2026-01 Other</a><a href="/taxonomy/term/58">Most recent CMMs</a></main>`;
+ const html=`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a><a href="${url}">${title}</a><a href="https://evil.example/cmm-2026-01-other">CMM 2026-01 Other</a><a href="/taxonomy/term/58">Most recent CMMs</a></td></tr></table></div></div>`;
  const discovered=discoverNpfc(html);assert.equal(discovered.listed,1);assert.equal(discovered.rejected,1);assert.equal(discovered.candidates[0].number,'2026-07');
  assert.throws(()=>discoverNpfc(html.replace(`>${title}</a><a href="${url}">${title}`,`>${title}</a><a href="${url}">${title.replace('2026-07','2025-07')}`)),/Conflicting/);
  assert.throws(()=>discoverNpfc(html.replace(`>${title}</a><a href="${url}">${title}`,`>${title}</a><a href="${url}">${title.replace('1 June','2 June')}`)),/Conflicting/);
  assert.deepEqual(discoverColumn('npfc',html),discovered);assert.equal(discoverColumnPagination('npfc',html).scope,'current_page_only');
  assert.throws(()=>discoverColumnPagination('npfc',html,'https://www.npfc.int/cmms-pdf?page=1'),/query/);
- const raw=Buffer.from(`<main><h1>${title}</h1><span class="file-link"><a href="/system/files/2026-04/current.pdf">Official PDF</a></span></main>`),pdf=Buffer.from('%PDF-synthetic-test-only');
+ const raw=Buffer.from(`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="/system/files/2026-04/current.pdf">Official PDF</a></span></div></div>`),pdf=Buffer.from('%PDF-synthetic-test-only');
  const text='--- Page 1 ---\nCMM 2026-07\n(Entered into force 1 June 2026)\nSynthetic Convention Area requirements, not real operational guidance.';
  const attachment={receipt:receipt(pdf,'https://www.npfc.int/system/files/2026-04/current.pdf'),bytes:pdf,parsed:{status:'parsed' as const,rawSha256:sha256(pdf),parser:'synthetic/v1',pages:1,text}};
  const candidate=discovered.candidates[0],result=prepareNpfc(candidate,receipt(raw,url),raw,attachment);
@@ -37,7 +37,7 @@ test('NPFC measure discovery binds the visible version, not an older URL slug or
  assert.equal(prepareNpfc(candidate,receipt(raw,url),raw).readyForReview,false);
  for(const altered of [text.replace('2026-07','2025-07'),text.replace('1 June','2 June')]){const bad=prepareNpfc(candidate,receipt(raw,url),raw,{...attachment,parsed:{...attachment.parsed,text:altered}});assert.equal(bad.body,null);assert.equal(bad.sourceCapture.parseStatus,'unverified');}
  const failed=prepareNpfc(candidate,receipt(raw,url),raw,{...attachment,parsed:{...attachment.parsed,status:'failed',error:'Synthetic full PDF parse failed'}});assert.equal(failed.readyForReview,false);assert.match(failed.warnings.join(';'),/parse failed/);
- for(const changed of [raw.toString().replace('current.pdf','current.pdf?download=1'),raw.toString().replace('https://','https://evil.example/'),raw.toString().replace('</main>','<span class="file-link"><a href="/system/files/other.pdf">Other PDF</a></span></main>')]){
+ for(const changed of [raw.toString().replace('current.pdf','current.pdf?download=1'),raw.toString().replace('href="/system','href="https://evil.example/system'),raw.toString().replace('</span>','<a href="/system/files/other.pdf">Other PDF</a></span>')]){
   if(changed===raw.toString())continue;assert.throws(()=>npfcAttachment(Buffer.from(changed),url),/unambiguous/);
  }
  const changedRobots=Buffer.from('User-agent: *\nDisallow: /\n');assert.throws(()=>assertNpfcRobots(receipt(changedRobots,'https://www.npfc.int/robots.txt'),changedRobots),/robots changed/);
@@ -49,7 +49,7 @@ test('NPFC full-PDF batches reverify archived identities, preserve complete text
  const dataDir=await mkdtemp(path.join(tmpdir(),'npfc-archive-test-')),url='https://www.npfc.int/cmm-2026-01-synthetic-test';
  const title='CMM 2026-01 Synthetic Test (Effective date: 23 July 2026)',pdfUrl='https://www.npfc.int/system/files/2026-04/test.pdf';
  const raw=pdfFixture(false,false,'CMM 2026-01 Synthetic test.');
- const listing=`<main><a href="${url}">${title}</a></main>`,landing=`<main><h1>${title}</h1><span class="file-link"><a href="${pdfUrl}">Complete PDF</a></span></main>`;
+ const listing=`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`,landing=`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="${pdfUrl}">Complete PDF</a></span></div></div>`;
  try{
   assert.doesNotThrow(()=>assertNpfcRobots(receipt(npfcRobotsFixture,'https://www.npfc.int/robots.txt'),npfcRobotsFixture));
   let gets=0;const batch=await collectColumns({id:'npfc-complete-fixture',dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async input=>{gets++;return {url:input,status:200,headers:{get:()=>input===pdfUrl?'application/pdf':'text/html'},body:input.endsWith('/robots.txt')?npfcRobotsFixture:input===COLUMNS.npfc.url?Buffer.from(listing):input===url?Buffer.from(landing):raw};}});

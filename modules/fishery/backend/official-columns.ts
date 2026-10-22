@@ -21,7 +21,7 @@ export const COLUMNS = {
     name: "IOTC · Current Conservation and Management Measures", url: "https://iotc.org/cmms/basic",
     list: "table.views-table tbody tr", body: "#content .node-cmm", issuer: "Indian Ocean Tuna Commission (IOTC)",
   },
-  npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',url:NPFC_LIST,list:'main a[href]',body:'main',issuer:'North Pacific Fisheries Commission (NPFC)'},
+  npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',url:NPFC_LIST,list:'.region-content .view-document-list td.views-field-title > a[href]',body:'.region-content',issuer:'North Pacific Fisheries Commission (NPFC)'},
 } as const;
 export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
