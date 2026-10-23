@@ -65,5 +65,5 @@ export const columnDbProgress:ColumnProgressStore={
   }
 };
 export async function columnDbStatus() {
-  return await sql`SELECT id,enabled,health,fail_count,last_fetch_at,last_ok_at,last_error,next_fetch_at,cursor FROM sources WHERE id IN ('fishery-column-moa','fishery-column-fujian','fishery-column-iotc','fishery-column-npfc','fishery-column-fujian-notices') ORDER BY id`;
+  return await sql`SELECT id,enabled,health,fail_count,last_fetch_at,last_ok_at,last_error,next_fetch_at,cursor FROM sources WHERE id IN ('fishery-column-moa','fishery-column-fujian','fishery-column-iotc','fishery-column-npfc','fishery-column-fujian-notices','fishery-column-jfa-press') ORDER BY id`;
 }

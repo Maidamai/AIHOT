@@ -246,7 +246,7 @@ export async function storeCapturedNews(columnId:string,documentId:string,body:s
     if(bound)return {articleId:String(bound.article_id),existingPublication:true};
     const publicationTime=capture.publishedAt??(payload.dates.published.precision==='day'?payload.dates.published.value:null);
     const title=collapseWhitespace(payload.originalTitle??payload.title).slice(0,1000)||doc.canonical_url;
-    const publishedAt=publicationTime?publicationTime.length===10?beijingAt(publicationTime,'00:00'):new Date(publicationTime):null;
+    const publishedAt=publicationTime?publicationTime.length===10?(columnId==='jfa-press'?new Date(publicationTime+'T00:00:00+09:00'):beijingAt(publicationTime,'00:00')):new Date(publicationTime):null;
     const material=await upsertMaterial({sourceId:doc.source_id,url:doc.canonical_url,title,
       language:payload.language,bodyText:body,bodyStatus:'ok',publicationTime,
       publishedAt,

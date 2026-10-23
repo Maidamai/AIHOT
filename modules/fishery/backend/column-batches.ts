@@ -13,7 +13,7 @@ import {assertNpfcRobots,discoverNpfc,npfcAttachment,prepareNpfc} from './npfc-c
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { captureNpfcPdf, verifyNpfcPdf, type ConditionalHeaders } from "./npfc-pdf-cache.ts";
 import {noticePage,attachmentFormat,prepareNotice,type NoticeAttachment} from './fujian-notices.ts';
-import {assertJfaRobots,discoverJfaPress,jfaPage,prepareJfaPress,type JfaAttachment} from './jfa-press.ts';
+import {assertJfaRobots,discoverJfaPress,jfaPage,prepareJfaPress,jfaCapacityNeedsReview,type JfaAttachment} from './jfa-press.ts';
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
@@ -123,7 +123,8 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     columnPageIndex(item.column,listingUrl);
     if(listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl||listing.receipt.status!==200||!discoverJfaPress(listing.body.toString('utf8')).candidates.some(c=>c.url===item.url))throw new Error('JFA release absent from archived official listing');
     const files:JfaAttachment[]=[];
-    if(receipt.status===200)for(const [i] of jfaPage(raw,receipt.finalUrl).attachments.slice(0,6).entries()){
+    const page=receipt.status===200?jfaPage(raw,receipt.finalUrl):null;
+    if(page&&page.attachments.length<=6)for(const [i] of page.attachments.entries()){
       const name=`${item.archiveId}-attachment-${i}`;
       const exists=await stat(path.join(root,`${name}.receipt.json`)).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
       if(!exists)break;
@@ -150,7 +151,7 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     if(!bound||result.sourceCapture.parser!==bound.newParser||result.sourceCapture.bodySha256!==bound.newBodySha256) throw new Error("Reparse parser/body provenance mismatch");
   }
   if (result.body && await readCapturedText(dataDir, item.archiveId, result.sourceCapture.bodySha256!) !== result.body) throw new Error("Prepared body differs from archived body");
-  if(item.state==="needs_review"&&!noticeNeedsReview(result))throw new Error("Manual-review state requires complete verified Office attachment acquisition");
+  if(item.state==="needs_review"&&!noticeNeedsReview(result)&&!jfaCapacityNeedsReview(result))throw new Error("Manual-review state requires a verified source acquisition capability boundary");
   return result;
 }
 
@@ -399,7 +400,8 @@ export async function collectColumns(options: { id: string; dataDir: string; col
             if(prepared.readyForReview&&attachment)pendingCache.push(attachment.publish);
           } else if(column==='jfa-press'){
             const files:JfaAttachment[]=[];
-            if(article.receipt.status===200)for(const [i,a] of jfaPage(article.body,article.receipt.finalUrl).attachments.slice(0,6).entries()){
+            const page=article.receipt.status===200?jfaPage(article.body,article.receipt.finalUrl):null;
+            if(page&&page.attachments.length<=6)for(const [i,a] of page.attachments.entries()){
               try{
                 await wait(delay);const file=await get(a.url,`${archiveId}-attachment-${i}`);
                 files.push({receipt:file.receipt,bytes:file.body,...(file.receipt.status===200&&attachmentFormat(file.body)==='pdf'?{parsed:await(options.parsePdf??extractPdf)(file.body)}:{})});await check();
@@ -421,7 +423,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           const { body, ...metadata } = prepared;
           item.prepared = metadata;
           if (body) {await check();await writeFile(path.join(root,"body",`${archiveId}.txt`),body,{mode:0o600,flag:"wx"});await check();}
-          item.state = prepared.readyForReview ? "ready" : noticeNeedsReview(prepared) ? "needs_review" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
+          item.state = prepared.readyForReview ? "ready" : noticeNeedsReview(prepared)||jfaCapacityNeedsReview(prepared) ? "needs_review" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
           if (item.state === "ready") ready++;
           if (item.state === "failed"||item.state === "needs_review") item.error = [item.error,...prepared.sourceCapture.conflicts, ...prepared.warnings].filter(Boolean).join("; ") || "Article parse failed";
         } catch (error) { item.error = String((error as Error).message).slice(0, 500); }

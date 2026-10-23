@@ -1759,7 +1759,7 @@ test('Fujian archive controllers stay disabled until configured and use hourly f
    await sql`DELETE FROM settings WHERE key=${controller.key}`;
    const sourcesBefore=await sql`SELECT count(*) AS n FROM sources`;
    const initial=(await archiveSourceStatuses()).find(s=>s.sourceId===sourceId)!;
-   assert.equal(initial.enabled,false);assert.equal(initial.mode,null);assert.equal(initial.maxArticles,5);assert.equal(await controller.read(),null);
+   assert.equal(initial.enabled,false);assert.equal(initial.mode,null);assert.equal(initial.maxArticles,5);assert.equal(await controller.read(),null);assert.equal(initial.adapted,true);assert.equal(initial.normalCycleVerified,false);
    assert.deepEqual(await sql`SELECT count(*) AS n FROM sources`,sourcesBefore,'Status never registers a missing source');
    await sql`INSERT INTO sources(id,name,kind,enabled,cursor) VALUES(${sourceId},${'Synthetic '+column+' archive'},'external',false,'{}') ON CONFLICT(id) DO UPDATE SET kind='external',enabled=false,participation_mode='editorial',cursor='{}',fail_count=0,last_error=NULL,last_fetch_at=NULL,last_ok_at=NULL,next_fetch_at=NULL`;
    await sql`DELETE FROM fetch_runs WHERE source_id=${sourceId} AND detail ? 'fisheryColumnRound'`;
@@ -1775,7 +1775,7 @@ test('Fujian archive controllers stay disabled until configured and use hourly f
     return {url,status:url.endsWith('/robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('/robots.txt')?Buffer.from('missing'):url===COLUMNS[column].url?listing:Buffer.from(`<meta name="ArticleTitle" content="合成远洋渔业隔离归档"><meta name="PubDate" content="2026-10-23 10:00"><div id="detailCont"><div class="TRS_Editor"><p>ISOLATED TEST FIXTURE ${'远洋渔业公海履约完整合成上下文。'.repeat(12)}</p></div></div>`)};
    }});
    assert.equal(result.outcome,'success');assert.equal(result.modelCalls,0);assert.equal(requests.filter(url=>urls.includes(url)).length,5);assert.ok(!requests.includes(urls[5]));
-   const status=await controller.archiveStatus();assert.equal(status.mode,'hourly');assert.equal(status.maxArticles,5);assert.equal(status.pendingCandidates,1);assert.equal(status.coreSourceEnabled,false);assert.ok(Date.parse(status.nextRunAt!)>Date.now()+3500_000);
+   const status=await controller.archiveStatus();assert.equal(status.registered,true);assert.equal(status.normalCycleVerified,true);assert.equal(status.latestPending,1);assert.equal(status.historyDeferred,0);assert.equal(status.mode,'hourly');assert.equal(status.maxArticles,5);assert.equal(status.pendingCandidates,1);assert.equal(status.coreSourceEnabled,false);assert.ok(Date.parse(status.nextRunAt!)>Date.now()+3500_000);
    const docs=await sql`SELECT d.id,r.id AS review FROM fishery_documents d LEFT JOIN fishery_reviews r ON r.document_id=d.id WHERE d.source_id=${sourceId} AND d.canonical_url=ANY(${urls}::text[])`;
    assert.equal(docs.length,5);assert.ok(docs.every(d=>d.review===null));assert.equal((await materialDetail(docs[0].id)).state,'pending');
    await controller.configureArchive({enabled:false,mode:'hourly',runId:c.runId});assert.equal((await controller.archiveStatus()).enabled,false);

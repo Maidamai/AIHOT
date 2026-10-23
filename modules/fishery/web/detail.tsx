@@ -75,7 +75,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
   const o = d.latest?.payload, c = o?.sourceCapture, { run, busy } = useAdminAction(), fresh = useFreshMaterial();
   const me = (useRouteLoaderData("admin-layout") as { me: AdminMe }).me;
   const [flowIdentity,setFlowIdentity]=useState("");
-  const newsSource=['moa','fujian','fujian-notices'].includes(c?.adapter??'');
+  const newsSource=['moa','fujian','fujian-notices','jfa-press'].includes(c?.adapter??'');
   const [selection,setSelection]=useState(newsSource);
   const [command, setCommand] = useState<Command | null>(null), [ack, setAck] = useState(false), [downloading, setDownloading] = useState(false), [error, setError] = useState<string | null>(null);
   const base = `/api/admin/fishery/documents/${d.id}`, frozen = busy || downloading, terminal = !!d.withdrawnReason || !d.latest;
