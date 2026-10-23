@@ -106,7 +106,9 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     // A verified landing can confirm a changed required URL even when its new PDF is unavailable.
     // Reconstruct that identity independently; never recover it from the editable manifest.
     result=prepareNpfc(candidate,receipt,raw);
-    if(result.sourceCapture.httpStatus===200&&!result.sourceCapture.conflicts.length){
+    // Heading/version claims may disagree without negating the captured response identity.
+    // Prove acquisition separately so a new verified PDF can invalidate the old dependency.
+    if(receipt.status===200&&receipt.requestedUrl===candidate.url&&receipt.finalUrl===candidate.url&&receipt.sha256===sha256(raw)){
       const attachment=await readArchive(root,`${item.archiveId}-pdf`,10*1024*1024).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
       if(attachment){
         await verifyNpfcPdf(dataDir,batch,item.archiveId,result.sourceCapture.attachmentUrl!,attachment);
