@@ -66,7 +66,12 @@ export async function cachedJmaGet(directory: string, inputUrl: string, options:
       for (;;) {
         const { value, done } = await reader.read(); if (done) break;
         size += value.length;
-        if (size > limit) { await reader.cancel(); throw new Error("JMA response cap exceeded"); }
+        if (size > limit) {
+          // A stream chunk may cross the cap; charge bytes already received before stopping.
+          state.usage[day] += size - limit;
+          await reader.cancel(); await save();
+          throw new Error("JMA response cap exceeded");
+        }
         chunks.push(value);
       }
     } finally { reader.releaseLock(); }

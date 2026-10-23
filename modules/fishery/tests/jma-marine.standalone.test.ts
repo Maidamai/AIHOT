@@ -147,3 +147,9 @@ test("HTTP error, redirect error, oversized and corrupt checkpoints fail closed"
     assert.equal(calls, 0);
   });
 });
+test("an oversized stream charges the received chunk beyond its reservation before stopping", async () => temporary(async dir => {
+  await assert.rejects(cachedJmaGet(dir, url, { now, transport: async () => new Response("x".repeat(2_000_001)) }), /cap exceeded/);
+  const checkpoint = JSON.parse(await readFile(join(dir, "checkpoint.json"), "utf8"));
+  assert.equal(checkpoint.usage["2026-10-23"], 2_000_001);
+  assert.equal(checkpoint.entries[url].state, "pending");
+}));
