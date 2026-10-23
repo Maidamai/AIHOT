@@ -14,8 +14,10 @@ test('Fujian required attachment updates invalidate approval, but unavailable un
  const missing=await capture('notice-db-missing','404');await importBatch(missing.id,'tester');assert.equal((await documentHistory(id)).observations.length,1);assert.equal((await materialDetail(id)).state,'approved');
  const changed=await capture('notice-db-scan','scan');assert.equal(changed.items[0].state,'failed');const update=await importBatch(changed.id,'tester');assert.equal(update.rows.length,0);assert.equal(update.evidenceUpdates.length,1);
  const history=await documentHistory(id);assert.equal(history.observations.length,2);assert.equal(history.observations[1].payload.sourceCapture.parseStatus,'unverified');assert.equal(history.reviews.length,1);assert.notEqual((await materialDetail(id)).state,'approved');
+ const oldUnavailable=await importBatch(missing.id,'tester');assert.equal(oldUnavailable.evidenceUpdates.length,0);assert.equal((await documentHistory(id)).observations.length,2,'A previously ignored dependency capture remains a no-op after newer evidence');
  await importBatch(changed.id,'tester');assert.equal((await documentHistory(id)).observations.length,2,'Identical failed attachment evidence is idempotent');
  const pageChange=await capture('notice-db-page-change','page-change');await importBatch(pageChange.id,'tester');assert.equal((await documentHistory(id)).observations.length,3,'Changed verified landing body is evidence even with a 404 attachment');
+ await importBatch(changed.id,'tester');assert.equal((await documentHistory(id)).observations.length,3,'Replaying an older required-attachment change never restores its superseded evidence');
  assert.equal((await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${id}`).length,0,'Pending source material never starts a paid flow');
  const [source]=await sql`SELECT enabled,participation_mode FROM sources WHERE id='fishery-column-fujian-notices'`;assert.equal(source.enabled,false);assert.equal(source.participation_mode,'editorial');
 });
@@ -354,6 +356,68 @@ test("archived batch imports through the guarded route and displays only its ver
     assert.equal(again.statusCode,200,again.body);assert.equal(again.json().rows[0].unchanged,true);
     assert.equal((await documentHistory(id)).observations.length,1);
   } finally {config.devAdmin=null;}
+});
+
+async function frozenCapture(id:string,url:string,version:string){
+  const body=`远洋渔业公海履约资料版本${version}。本材料仅用于离线归档重放回归，全部内容均为合成测试数据。`.repeat(3);
+  return collectColumns({id,dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>({url:request,status:request.endsWith("robots.txt")?404:200,headers:{get:()=>"text/html"},body:Buffer.from(request.endsWith("robots.txt")?"missing":request===COLUMNS.moa.url?`<ul class="sj_e_tonzhi_list"><li><a href="${url}">远洋渔业归档测试</a></li></ul>`:`<meta name="ArticleTitle" content="远洋渔业归档测试"><meta name="PubDate" content="2026-10-20"><div class="sj_arc_body"><div class="TRS_Editor"><p>${body}</p></div></div>`)})});
+}
+test("frozen archive replay preserves approved B, including an earlier no-op capture; a new A capture is revision 3",async()=>{
+  const url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_99701.htm";
+  const a=await frozenCapture("frozen-replay-a",url,"A"),first=await importBatch(a.id,"tester"),id=first.rows[0].id;
+  const duplicate=await frozenCapture("frozen-replay-a-duplicate",url,"A");
+  assert.equal((await importBatch(duplicate.id,"tester")).rows[0].unchanged,true);
+  const legacyDuplicate=await frozenCapture("frozen-replay-a-legacy-duplicate",url,"A");await importBatch(legacyDuplicate.id,"tester");
+  await sql`DELETE FROM audit_log WHERE action='fishery.capture_import' AND subject=${`fishery-capture:${legacyDuplicate.items[0].archiveId}`}`;
+  const b=await frozenCapture("frozen-replay-b",url,"B");assert.equal((await importBatch(b.id,"tester")).rows[0].revision,2);
+  const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+  await approve(id,2,source.revision);
+  const current=(await materialDetail(id)).text?.body;
+  for(const batch of [a,duplicate]){
+    const replay=await importBatch(batch.id,"tester");assert.equal(replay.rows[0].unchanged,true);assert.equal(replay.rows[0].revision,2);
+    assert.equal((await materialDetail(id)).state,"approved");assert.equal((await materialDetail(id)).text?.body,current);
+  }
+  const concurrent=await withColumnLease("moa",()=>Promise.all([importBatch(a.id,"tester"),importBatch(duplicate.id,"tester")]));
+  assert.ok(concurrent.every(result=>result.rows[0].unchanged&&result.rows[0].revision===2));
+  assert.equal((await documentHistory(id)).observations.length,2);
+  await assert.rejects(importBatch(legacyDuplicate.id,"tester"),/incomplete source proof; explicit recovery required/);
+  assert.equal((await materialDetail(id)).state,"approved");
+  const old=(await documentHistory(id)).observations[0].payload;
+  await assert.rejects(importCapturedMaterial({id:"moa",...COLUMNS.moa},url,{...old,expectedRevision:0,sourceCapture:{...old.sourceCapture,bodySha256:"f".repeat(64)}},"tester"),/conflicting source proof/);
+  assert.equal((await documentHistory(id)).observations.length,2);
+  const fresh=await frozenCapture("frozen-replay-a-new",url,"A"),changed=await importBatch(fresh.id,"tester");
+  assert.equal(changed.rows[0].revision,3);assert.equal(changed.rows[0].unchanged,false);assert.notEqual((await materialDetail(id)).state,"approved");
+});
+test("concurrent frozen archive replays commit one import receipt and never append old A after B",async()=>{
+  const column={id:"synthetic-frozen-replay",name:"Synthetic replay",issuer:"Synthetic attribution"},url="https://example.org/frozen-concurrent";
+  const input=(batchId:string,bodyHash:string)=>({...observationFixture,sourceCapture:{adapter:"moa",sourceUrl:url,capturedAt:"2026-10-20T00:00:00Z",archiveId:`${batchId}_${sha256(column.id+url).slice(0,16)}`,httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:bodyHash,parser:"synthetic/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}});
+  const a=input("frozen-concurrent-a","a".repeat(64)),b=input("frozen-concurrent-b","b".repeat(64));
+  const imported=await Promise.all(Array.from({length:4},()=>importCapturedMaterial(column,url,a,"tester")));
+  const id=imported[0].id;assert.equal(imported.filter(row=>!row.unchanged).length,1);
+  await importCapturedMaterial(column,url,b,"tester");await approve(id,2,1);
+  const replays=await Promise.all(Array.from({length:4},()=>importCapturedMaterial(column,url,a,"tester")));
+  assert.ok(replays.every(row=>row.unchanged&&row.revision===2));assert.equal((await materialDetail(id)).state,"approved");
+  assert.equal((await documentHistory(id)).observations.length,2);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.capture_import' AND subject=${`fishery-capture:${a.sourceCapture.archiveId}`}`)[0].n,1);
+});
+test("frozen archive receipt survives an acquisition-audit crash and recovers legacy observation proof",async()=>{
+  for(const legacy of [false,true]){
+    const suffix=legacy?"legacy":"current",url=`https://yyj.moa.gov.cn/gzdt/202610/t20261020_${legacy?99703:99702}.htm`;
+    const a=await frozenCapture(`frozen-crash-${suffix}-a`,url,"A");
+    await sql.unsafe("CREATE FUNCTION frozen_acquisition_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='fishery.acquisition' THEN RAISE EXCEPTION 'Synthetic acquisition audit outage'; END IF; RETURN NEW; END $$");
+    await sql.unsafe("CREATE TRIGGER frozen_acquisition_fault BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION frozen_acquisition_fault()");
+    try{await assert.rejects(importBatch(a.id,"tester"),/Synthetic acquisition audit outage/);}
+    finally{await sql.unsafe("DROP TRIGGER frozen_acquisition_fault ON audit_log");await sql.unsafe("DROP FUNCTION frozen_acquisition_fault()");}
+    const [doc]=await sql`SELECT id FROM fishery_documents WHERE canonical_url=${url}`;
+    assert.equal((await documentHistory(doc.id)).observations.length,1);
+    assert.equal((await sql`SELECT 1 FROM audit_log WHERE action='fishery.capture_import' AND subject=${`fishery-capture:${a.items[0].archiveId}`}`).length,1);
+    assert.equal((await sql`SELECT 1 FROM audit_log WHERE action='fishery.acquisition' AND subject=${`fishery:${doc.id}`}`).length,0);
+    if(legacy)await sql`DELETE FROM audit_log WHERE action='fishery.capture_import' AND subject=${`fishery-capture:${a.items[0].archiveId}`}`;
+    const b=await frozenCapture(`frozen-crash-${suffix}-b`,url,"B");await importBatch(b.id,"tester");
+    const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(doc.id,2,source.revision);
+    assert.equal((await importBatch(a.id,"tester")).rows[0].unchanged,true);
+    assert.equal((await documentHistory(doc.id)).observations.length,2);assert.equal((await materialDetail(doc.id)).state,"approved");
+  }
 });
 
 test("captured imports are unreviewed, unchanged captures deduplicate and A→B→A invalidates review",async()=>{

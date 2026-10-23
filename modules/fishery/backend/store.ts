@@ -111,7 +111,7 @@ export async function listDocuments() {
   return rows.map(row => (Object.assign({}, row, sourceAttributionOf(row.issuer))));
 }
 
-// Idempotency compares the latest evidence, not any historic hash (A → B → A is a new version).
+// New captures compare the latest evidence (a genuinely new A → B → A capture is a new version).
 export function evidenceIdentity(input: unknown) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const capture = payload.sourceCapture;
@@ -125,13 +125,48 @@ export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,
 export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean;changedRequiredEvidenceOnly?:boolean}={}) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const sourceId = `fishery-column-${column.id}`;
+  const archiveId=payload.sourceCapture?.archiveId;
+  const batchId=archiveId?.match(/^([a-zA-Z0-9-]{1,64})_[a-f0-9]{16}$/)?.[1];
+  if(archiveId&&(!batchId||archiveId!==`${batchId}_${createHash("sha256").update(column.id+canonicalUrl).digest("hex").slice(0,16)}`))
+    throw new Conflict("Captured archive identity does not match its batch, column and URL");
+  const proofHash=hash(payload),receiptSubject=`fishery-capture:${archiveId}`;
+  // Persist even no-op imports in the same transaction: acquisition auditing happens afterwards.
+  const remember=async(tx:Db,result:CapturedImport|null)=>{
+    if(archiveId)await audit(actor,"fishery.capture_import",receiptSubject,"Verified archive import committed",null,
+      {batchId,archiveId,sourceId,canonicalUrl,proofHash,result},{db:tx});
+    return result;
+  };
+  const replay=async(tx:Db,documentId:string|null,revision:number)=>{
+    if(!archiveId)return {seen:false,result:null};
+    const [receipt]=await tx`SELECT after FROM audit_log WHERE subject=${receiptSubject} AND action='fishery.capture_import' ORDER BY id LIMIT 1`;
+    if(receipt){
+      const prior=receipt.after;
+      if(prior.batchId!==batchId||prior.archiveId!==archiveId||prior.sourceId!==sourceId||prior.canonicalUrl!==canonicalUrl||prior.proofHash!==proofHash)
+        throw new Conflict("Captured archive identity was already imported with conflicting source proof");
+      return {seen:true,result:prior.result&&documentId?{id:documentId,revision,unchanged:true}:null};
+    }
+    if(documentId){
+      // Older imports already retain their complete proof in observations, including a crash before acquisition audit.
+      const [legacy]=await tx`SELECT payload FROM fishery_observations WHERE document_id=${documentId} AND payload->'sourceCapture'->>'archiveId'=${archiveId} ORDER BY revision LIMIT 1`;
+      if(legacy){
+        if(hash(legacy.payload)!==proofHash)throw new Conflict("Captured archive identity was already imported with conflicting source proof");
+        return {seen:true,result:await remember(tx,{id:documentId,revision,unchanged:true})};
+      }
+      if((await tx`SELECT 1 FROM audit_log WHERE subject=${`fishery:${documentId}`} AND action='fishery.acquisition' AND after->>'batchId'=${batchId!} AND after->>'archiveId'=${archiveId} LIMIT 1`).length)
+        throw new Conflict("Legacy archive import has incomplete source proof; explicit recovery required");
+    }
+    return {seen:false,result:null};
+  };
   // A configured column owner is attribution only; do not infer a page publisher or policy issuer.
   const sourceAttribution = column.issuer;
   return capturedTransaction(column.id,async tx => {
     // Take the same source -> document lock order as normal imports. An unrelated URL must never be registered here.
     if(options.existingOnly) {
       await tx`SELECT id FROM sources WHERE id=${sourceId} FOR UPDATE`;
-      if(!(await tx`SELECT id FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`).length) return null;
+      if(!(await tx`SELECT id FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`).length) {
+        const prior=await replay(tx,null,0);
+        return prior.seen?prior.result:remember(tx,null);
+      }
     }
     await tx`INSERT INTO sources (id,name,kind,enabled,participation_mode,site_fulltext,next_fetch_at)
       VALUES (${sourceId},${column.name},'external',false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
@@ -150,18 +185,20 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     }
     if (doc!.withdrawn_reason) throw new Conflict("Document withdrawn; batch cannot restore it");
     const [previous] = await tx`SELECT revision,payload FROM fishery_observations WHERE document_id=${doc!.id} ORDER BY revision DESC LIMIT 1`;
+    const prior=await replay(tx,String(doc!.id),previous?.revision??0);
+    if(prior.seen)return prior.result;
     if(options.changedRequiredEvidenceOnly){
       const {noticeAttachmentChanged}=await import('./fujian-notices.ts');
       const c=payload.sourceCapture,old=previous?.payload.sourceCapture;
       const changed=c?.httpStatus===200&&(c.adapter==='fujian-notices'&&!c.conflicts.length&&noticeAttachmentChanged(old?.noticeContext,c.noticeContext)||
         c.adapter==='npfc'&&old?.adapter==='npfc'&&c.attachmentHttpStatus===200&&!!c.attachmentSha256&&!!old.attachmentSha256&&(c.attachmentUrl!==old.attachmentUrl||c.attachmentSha256!==old.attachmentSha256));
-      if(!changed)return null;
+      if(!changed)return remember(tx,null);
     }
-    if (previous && evidenceIdentity({ ...previous.payload, expectedRevision:0 }) === evidenceIdentity({ ...payload, expectedRevision:0 })) return { id:doc!.id as string, revision:previous.revision as number, unchanged:true };
+    if (previous && evidenceIdentity({ ...previous.payload, expectedRevision:0 }) === evidenceIdentity({ ...payload, expectedRevision:0 })) return remember(tx,{ id:doc!.id as string, revision:previous.revision as number, unchanged:true });
     const revision = (previous?.revision ?? 0) + 1;
     await tx`INSERT INTO fishery_observations(document_id,revision,actor,content_hash,payload) VALUES (${doc!.id},${revision},${actor},${hash(payload)},${tx.json(payload)})`;
     await audit(actor,"fishery.observe",`fishery:${doc!.id}`,"Manual captured batch; unreviewed",{revision:previous?.revision??0},{revision,contentHash:hash(payload)},{db:tx});
-    return { id:doc!.id as string, revision, unchanged:false };
+    return remember(tx,{ id:doc!.id as string, revision, unchanged:false });
   });
 }
 export async function documentHistory(id: string) {
@@ -177,7 +214,9 @@ export async function recordCapturedAcquisition(columnId:string,canonicalUrl:str
     const [document]=await tx`SELECT id FROM fishery_documents WHERE source_id=${`fishery-column-${columnId}`} AND canonical_url=${canonicalUrl} FOR UPDATE`;
     if(!document) return null;
     const subject=`fishery:${document.id}`;
-    if(!(await tx`SELECT 1 FROM audit_log WHERE subject=${subject} AND action='fishery.acquisition' AND after->>'batchId'=${record.batchId} AND after->>'archiveId'=${record.archiveId} LIMIT 1`).length)
+    const [prior]=await tx`SELECT after FROM audit_log WHERE subject=${subject} AND action='fishery.acquisition' AND after->>'batchId'=${record.batchId} AND after->>'archiveId'=${record.archiveId} LIMIT 1`;
+    if(prior&&hash(prior.after.capture)!==hash(record.capture))throw new Conflict("Captured archive identity has conflicting acquisition source proof");
+    if(!prior)
       await audit(actor,"fishery.acquisition",subject,record.confirmedChange?"Confirmed source page or required-attachment change; previous approval invalidated":record.outcome==="unavailable"?"Acquisition unavailable; no confirmed source-body change":"Verified archived acquisition result",null,record,{db:tx});
     return {documentId:String(document.id),...record};
   });
