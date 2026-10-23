@@ -1908,3 +1908,27 @@ test('NPFC verified new attachment bytes invalidate approved evidence when compl
  const history=await documentHistory(first.id);assert.equal(history.observations.length,2);assert.equal(history.observations[1].payload.sourceCapture.parseStatus,'unverified');assert.notEqual((await materialDetail(first.id)).state,'approved');assert.equal(history.reviews.length,1);assert.equal(history.document.withdrawn_reason,null);
  await importBatch(changed.id,'tester');assert.equal((await documentHistory(first.id)).observations.length,2);
 });
+
+
+test('notice article flow keeps webpage and second attachment provenance through separate fake checks',async()=>{
+ const {prepareNotice}=await import('../backend/fujian-notices.ts');
+ const f=noticeFixture(),second=new URL('P0202507289999002.pdf',f.url).href;
+ const raw=Buffer.from(f.landing().replace('</ul>','<li><a href="'+second+'">第二政策附件.pdf</a></li></ul>'));
+ const receipt=(url:string,bytes:Buffer)=>({requestedUrl:url,finalUrl:url,status:200,finishedAt:'2026-10-23T00:00:00Z',sha256:sha256(bytes)});
+ const attachments=[f.pdfUrl,second].map((url,i)=>{const bytes=Buffer.from('%PDF-offline-notice-'+i),text='--- Page 1 ---\n'+(i?'NPFC synthetic far fishing second attachment.':'NPFC synthetic first attachment.');return {receipt:receipt(url,bytes),bytes,parsed:{status:'parsed' as const,rawSha256:sha256(bytes),parser:'offline-fixture/v1',pages:1,text}};});
+ const p=prepareNotice(receipt(f.url,raw),raw,attachments);assert.equal(p.readyForReview,true);
+ const doc=await importCapturedMaterial({id:'fujian-notices',...COLUMNS['fujian-notices']},f.url,{...observationFixture,originalTitle:p.title,title:p.title,rawSha256:p.sourceCapture.rawSha256,sourceCapture:p.sourceCapture,dates:p.dates},'tester');
+ await upsertMaterial({sourceId:'fishery-column-fujian-notices',url:f.url,title:f.title,bodyText:p.body!,bodyStatus:'ok',via:'offline-fixture',raw:{fisheryDocumentId:doc.id}});
+ const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-fujian-notices'`;await approve(doc.id,doc.revision,source.revision);
+ const task=await createFlow(doc.id,{identity:'notice-two-pdf-flow'},'tester');let sends=0;
+ const result=await runFlow(task.id,async(q:any)=>{
+  sends++;const source=JSON.parse(String(q.user)),catalog=(q.purpose==='fishery_draft'?source:source.source).evidenceCatalog;
+  assert.equal(catalog.version,'fishery-spans-v3-sections');
+  const span=catalog.spans.find((s:any)=>s.source?.id==='attachment-2');assert.equal(span.source.url,second);assert.equal(span.page,1);
+  const e=[span.id],u={date:{precision:'unknown',value:null},evidence:[]};
+  const wire=q.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic reference only',evidence:e},summaryZh:[{sentence:span.quote,evidence:e}],dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic second attachment evidence',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevance',evidence:e}]};
+  return {data:q.schema.parse(wire),receiptId:999999,model:'offline-fake',usage:null,reused:false};
+ });
+ assert.equal(sends,2);assert.equal(result.status,'needs_human_review',JSON.stringify(result.error));
+ assert.equal(result.draft.draft.summaryZh[0].evidence[0].source.url,second);assert.equal(result.internalArticle,null,'Separate final approval remains required');
+});

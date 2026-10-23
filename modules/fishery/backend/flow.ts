@@ -10,6 +10,7 @@ import { enqueueOn, getBoss } from "@aihot/backend/jobs/queue";
 import { chatJson, type ChatJsonOptions, type ChatJsonResult } from "@aihot/backend/providers/llm";
 import { completeReceipt } from "@aihot/backend/providers/receipts";
 import { sourceArticleAvailable } from "./source-availability.ts";
+import { noticeEvidenceSections } from "./fujian-notices.ts";
 import { hash, lockDocument, NotFound } from "./store.ts";
 import { readSourceBody } from "./source-body.ts";
 import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
@@ -63,8 +64,9 @@ async function inputFor(documentId:string,expectedHash:string):Promise<DraftInpu
     body=stored?.body_text??null;
   }
   if(!body||sha256(body)!==c.bodySha256||body.length>64000) throw new Conflict("Full bound body missing, changed or oversized; no silent truncation");
-  const pages=c.attachmentPages?pdfPages(body,c.attachmentPages):undefined;
-  return {pages,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
+  const sections=c.adapter==='fujian-notices'?noticeEvidenceSections(body,c):undefined;
+  const pages=!sections&&c.attachmentPages?pdfPages(body,c.attachmentPages):undefined;
+  return {pages,sections,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
 }
 async function assertDocumentSettled(documentId:string,db:Db=sql,exceptRunningId:string|null=null) {
   const [running]=await db`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} AND status='running' AND (${exceptRunningId}::text IS NULL OR id<>${exceptRunningId}) LIMIT 1`;
