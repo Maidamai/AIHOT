@@ -1736,3 +1736,17 @@ test('child directory without first manifest is retained and settled once withou
     assert.equal(gets,3);assert.ok((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${archiveUrl(41)}`).length);assert.deepEqual(await readFile(path.join(childDir,'raw','retained-partial.bin')),sentinel);
   }finally{await b.stop({graceful:false});}
 });
+
+
+test('NPFC verified new attachment bytes invalidate approved evidence when complete parsing fails',async()=>{
+ const {prepareNpfc}=await import('../backend/npfc-columns.ts');
+ const url='https://www.npfc.int/cmm-2026-09-changed-attachment-regression',pdfUrl='https://www.npfc.int/system/files/2026-10/changed-attachment.pdf',title='CMM 2026-09 Synthetic dependency regression',raw=Buffer.from(`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="${pdfUrl}">PDF</a></span></div></div>`),oldPdf=Buffer.from('%PDF-synthetic-original-NPFC'),r={requestedUrl:url,finalUrl:url,status:200,finishedAt:'2026-10-23T00:00:00Z',sha256:sha256(raw)};
+ const p=prepareNpfc({url,title,number:'2026-09',effectiveLiteral:null,listDate:null,priority:'direct'},r,raw,{bytes:oldPdf,receipt:{...r,requestedUrl:pdfUrl,finalUrl:pdfUrl,sha256:sha256(oldPdf)},parsed:{status:'parsed',rawSha256:sha256(oldPdf),parser:'synthetic-original/v1',pages:1,text:'--- Page 1 ---\nCMM 2026-09 Synthetic NPFC reference.'}});
+ const first=await importCapturedMaterial({id:'npfc',...COLUMNS.npfc},url,{...observationFixture,originalTitle:title,title,rawSha256:p.sourceCapture.rawSha256,sourceCapture:p.sourceCapture,dates:p.dates},'tester');
+ const [s]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-npfc'`;await approve(first.id,1,s.revision);
+ const capture=(id:string,status:number)=>collectColumns({id,dataDir:config.dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async request=>({url:request,status:request===pdfUrl?status:200,headers:{get:()=>null},body:request.endsWith('/robots.txt')?npfcRobotsFixture:request===COLUMNS.npfc.url?Buffer.from(`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`):request===url?raw:status===200?pdfFixture(true):Buffer.from('not available')})});
+ const missing=await capture('npfc-dependency-404',404);await importBatch(missing.id,'tester');assert.equal((await documentHistory(first.id)).observations.length,1);assert.equal((await materialDetail(first.id)).state,'approved','404 alone is not source withdrawal');
+ const changed=await capture('npfc-dependency-new-scan',200);assert.equal(changed.items[0].state,'failed');const result=await importBatch(changed.id,'tester');assert.equal(result.rows.length,0);assert.equal(result.evidenceUpdates.length,1);
+ const history=await documentHistory(first.id);assert.equal(history.observations.length,2);assert.equal(history.observations[1].payload.sourceCapture.parseStatus,'unverified');assert.notEqual((await materialDetail(first.id)).state,'approved');assert.equal(history.reviews.length,1);assert.equal(history.document.withdrawn_reason,null);
+ await importBatch(changed.id,'tester');assert.equal((await documentHistory(first.id)).observations.length,2);
+});

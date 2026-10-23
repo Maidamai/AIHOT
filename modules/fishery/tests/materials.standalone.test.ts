@@ -1278,3 +1278,31 @@ test("manual added PDF identities retain full extraction, size and page-count li
     }
   }
 });
+
+
+test('NPFC mixed text and textless pages remain unverified even with complete page markers',async()=>{
+ const f=npfcCacheFixture(),url=f.url,title='CMM 2026-01 Synthetic cache test',raw=Buffer.from(`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="${f.pdfUrl}">PDF</a></span></div></div>`),r={requestedUrl:url,finalUrl:url,status:200,finishedAt:'2026-10-23T00:00:00Z',sha256:sha256(raw)},p={status:'parsed' as const,rawSha256:sha256(f.pdf),parser:'synthetic/v1',pages:2,text:'--- Page 1 ---\nCMM 2026-01 Complete first-page text.\n--- Page 2 ---\n'};
+ const result=prepareNpfc({url,title,number:'2026-01',effectiveLiteral:null,listDate:null,priority:'direct'},r,raw,{bytes:f.pdf,receipt:{...r,requestedUrl:f.pdfUrl,finalUrl:f.pdfUrl,sha256:sha256(f.pdf)},parsed:p});
+ assert.equal(result.readyForReview,false);assert.equal(result.body,null);assert.equal(result.sourceCapture.parseStatus,'unverified');
+ assert.deepEqual(result.sourceCapture.pdfTextlessPages,[2]);
+});
+test('historical parsed PDF metadata cannot bypass textless-page input or observation gates',async()=>{
+ const {pdfPages}=await import('../backend/flow.ts');
+ assert.throws(()=>pdfPages('--- Page 1 ---\nCMM2026 synthetic text\n--- Page 2 ---\n',2),/textless/);
+ const f=npfcCacheFixture(),raw=Buffer.from(`<div class="region-content"><h1>CMM 2026-01 Synthetic cache test</h1><div class="field--name-field-file"><span class="file-link"><a href="${f.pdfUrl}">PDF</a></span></div></div>`),r={requestedUrl:f.url,finalUrl:f.url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'},p=prepareNpfc({url:f.url,title:'CMM 2026-01 Synthetic cache test',number:'2026-01',effectiveLiteral:null,listDate:null,priority:'direct'},r,raw,{receipt:{...r,requestedUrl:f.pdfUrl,finalUrl:f.pdfUrl,sha256:sha256(f.pdf)},bytes:f.pdf,parsed:{status:'parsed',rawSha256:sha256(f.pdf),parser:'synthetic',pages:2,text:'--- Page 1 ---\nCMM 2026-01\n--- Page 2 ---\n'}});
+ assert.equal(observationSchema.safeParse({...observationFixture,rawSha256:p.sourceCapture.rawSha256,sourceCapture:{...p.sourceCapture,parseStatus:'parsed',bodySha256:sha256('forged full text')}}).success,false);
+});
+test('PDF extraction marks a mixed untextual second page unverified on both installed runtime protocols',async()=>{
+ const raw=pdfFixture();
+ for(const platform of ['linux','darwin'] as const){
+  const result=await extractPdf(raw,{platform,execute:async(program,args)=>{
+   if(platform==='darwin')return {stdout:JSON.stringify({pages:2,text:'--- Page 1 ---\nCMM 2026-01 text.\n\n--- Page 2 ---\n'}),stderr:''};
+   if(args[0]==='-v')return {stdout:'',stderr:`${program} version 25.03.0`};
+   if(program==='pdfinfo')return {stdout:'Pages: 2\nEncrypted: no\n',stderr:''};
+   if(program==='pdftotext')return {stdout:args[args.indexOf('-f')+1]==='1'?'CMM 2026-01 text.':'  \n',stderr:''};
+   if(program==='pdftohtml')return {stdout:'<pdf2xml><fontspec id="0" size="12"/><page number="1" width="600" height="800"><text top="50" left="50" width="100" height="12" font="0">CMM 2026-01 text.</text></page><page number="2" width="600" height="800"></page></pdf2xml>',stderr:''};
+   throw new Error('Unexpected synthetic command');
+  }});
+  assert.equal(result.status,'unverified',platform);assert.equal(result.text,'');assert.deepEqual(result.textlessPages,[2]);
+ }
+});

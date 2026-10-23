@@ -120,9 +120,9 @@ export function evidenceIdentity(input: unknown) {
 }
 type CaptureColumn={id:string;name:string;issuer:string};
 type CapturedImport={id:string;revision:number;unchanged:boolean};
-export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedNoticeAttachmentsOnly?:boolean}):Promise<CapturedImport|null>;
+export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedRequiredEvidenceOnly?:boolean}):Promise<CapturedImport|null>;
 export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string):Promise<CapturedImport>;
-export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean;changedNoticeAttachmentsOnly?:boolean}={}) {
+export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean;changedRequiredEvidenceOnly?:boolean}={}) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const sourceId = `fishery-column-${column.id}`;
   // A configured column owner is attribution only; do not infer a page publisher or policy issuer.
@@ -150,9 +150,12 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     }
     if (doc!.withdrawn_reason) throw new Conflict("Document withdrawn; batch cannot restore it");
     const [previous] = await tx`SELECT revision,payload FROM fishery_observations WHERE document_id=${doc!.id} ORDER BY revision DESC LIMIT 1`;
-    if(options.changedNoticeAttachmentsOnly){
+    if(options.changedRequiredEvidenceOnly){
       const {noticeAttachmentChanged}=await import('./fujian-notices.ts');
-      if(payload.sourceCapture?.httpStatus!==200||payload.sourceCapture.conflicts.length||!noticeAttachmentChanged(previous?.payload.sourceCapture?.noticeContext,payload.sourceCapture.noticeContext))return null;
+      const c=payload.sourceCapture,old=previous?.payload.sourceCapture;
+      const changed=c?.httpStatus===200&&(c.adapter==='fujian-notices'&&!c.conflicts.length&&noticeAttachmentChanged(old?.noticeContext,c.noticeContext)||
+        c.adapter==='npfc'&&old?.adapter==='npfc'&&c.attachmentHttpStatus===200&&!!c.attachmentSha256&&!!old.attachmentSha256&&(c.attachmentUrl!==old.attachmentUrl||c.attachmentSha256!==old.attachmentSha256));
+      if(!changed)return null;
     }
     if (previous && evidenceIdentity({ ...previous.payload, expectedRevision:0 }) === evidenceIdentity({ ...payload, expectedRevision:0 })) return { id:doc!.id as string, revision:previous.revision as number, unchanged:true };
     const revision = (previous?.revision ?? 0) + 1;

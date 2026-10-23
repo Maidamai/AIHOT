@@ -175,6 +175,8 @@ node modules/fishery/scripts/moa-archive.ts --column npfc --disable --mode six_h
 正常完成的每个归档批次在同来源租约内调用既有 `importBatch`，只登记素材文书/观察和获取证据，默认待审；不建 core 待分析文章，不排 analyze/translate/report/paid flow，不审核、不发布。导入中断保留 current=importing，可显式对账复用相同原件与版本身份。停用保留 current/claim/证据且使旧作业失效；需继续原未决身份时先用相同 runId 重启原预算，再 `--resume --acknowledge-stopped --reason '<已证实原执行者停止的依据>'`。原 journal 存在就只按原身份 resume；不存在时仅在无 fetch_run 意图、无 child 归档且目录无证据的情况下，记录审计后从同一已授权 roundId 开始。未知意图/归档不能换新ID掩盖。running child 原件保持不变并明确保留，父轮以失败结束、不导入 running batch；对账同时准确结束该 roundId 的未结 job_runs。
 ### 福建通知公告附件（有界手动批次）
 
+PDF 完整性保护也适用于 NPFC 及现有本地解析器：任一物理页没有可提取文字，保留页号并标为未核验；不会把页标记或其他页有字当作该页完整的证明。空白页和扫描页尚不能自动区分。已知 NPFC 附件返回 200 且字节或链接变化时，即使新正文无法解析，也会追加未核验观察使旧审核失效；单独 404/超时不判撤稿。旧归档在进入模型前也须通过逐页非空门禁。
+
 `fujian-notices` 独立于既有“省局动态”，读取官方通知公告列表及其静态 TRS 正文、附件链接；不改变 MARA 小时或 NPFC 六小时计划。`collect-columns.ts --columns fujian-notices --limit 1..5` 每批最多尝试指定篇数，每篇至多三件附件、每件 10 MiB。`--notice-select <逗号分隔URL>` 仅能选择本次已归档列表中发现的候选，不能直接绕过列表。分页机制尚未核验，不声称全站覆盖。
 
 原始页面、每件附件、HTTP 回执、哈希与完整文本区间分别绑定。PDF 使用现有解析器；格式以真实字节识别，Office/扫描件不运行宏、不 OCR、不安装新服务。任一必需附件缺失、格式不支持、无文字页或页码不完整，整篇保持待复核，标题及附件名不算正文或行业相关证据。真实空白页与扫描页尚无自动区分证据时同样保守阻断。正文及已确认的附件换版会使旧审核失效；超时或 404 单独只记录不可用，不判官方撤稿。

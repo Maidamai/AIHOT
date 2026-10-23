@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import {captureSchema,linkSchema} from '../contracts.ts';
 import {archiveReceiptSchema,sha256,type PdfText} from './source-adapters.ts';
 import type {Candidate} from './official-columns.ts';
+import {pdfTextlessPages} from './pdf-text.ts';
 export const NPFC_LIST='https://www.npfc.int/cmms-pdf';
 const ROBOTS_SHA256='897adef5514fda6260ba3fea751d854508d3c59358a971a93e8bc079c4ad9e75';
 const collapse=(value:string)=>value.replace(/\s+/g,' ').trim();
@@ -31,6 +32,7 @@ export function prepareNpfc(candidate:NpfcCandidate,input:unknown,raw:Buffer,pdf
  const r=archiveReceiptSchema.parse(input),conflicts:string[]=[],warnings=['Current-list membership and stated effective date are unreviewed source claims; sea, flag, species and present applicability require review'];
  let body:string|null=null,title:string|null=null,parseStatus:'parsed'|'missing'|'failed'|'unverified'=r.status===200?'missing':'failed';
  let attachmentSha256:string|null=null,attachmentUrl:string|null=null,attachmentHttpStatus:number|null=null,attachmentCapturedAt:string|null=null,attachmentPages:number|null=null;
+ let textless:number[]=[];
  if(r.requestedUrl!==candidate.url||r.finalUrl!==candidate.url||r.sha256!==sha256(raw))conflicts.push('NPFC landing receipt/identity mismatch');
  if(r.status===200&&!conflicts.length){
   const $=cheerio.load(new TextDecoder('utf8',{fatal:true}).decode(raw));title=collapse($('h1').first().text());
@@ -42,6 +44,11 @@ export function prepareNpfc(candidate:NpfcCandidate,input:unknown,raw:Buffer,pdf
    attachmentSha256=sha256(pdf.bytes);attachmentHttpStatus=pr.status;attachmentCapturedAt=pr.finishedAt;attachmentPages=p.status==='parsed'&&p.pages>0?p.pages:null;
    if(pr.requestedUrl!==attachmentUrl||pr.finalUrl!==attachmentUrl||pr.sha256!==attachmentSha256||p.rawSha256!==attachmentSha256)conflicts.push('NPFC PDF receipt/text hash or URL mismatch');
    parseStatus=pr.status===200?p.status:'failed';
+   textless=p.textlessPages??[];
+   if(parseStatus==='parsed'){
+    try{textless=pdfTextlessPages(p.text,p.pages);if(textless.length){parseStatus='unverified';warnings.push(`PDF textless pages ${textless.join(',')}; blank/scanned distinction unverified`);}}
+    catch(error){parseStatus='unverified';warnings.push(String((error as Error).message));}
+   }
    if(parseStatus==='parsed'){
     if(!pdf.bytes.subarray(0,5).equals(Buffer.from('%PDF-'))||!p.text.trim()||p.pages<1||p.pages>200)parseStatus='failed';
     else{
@@ -61,7 +68,7 @@ export function prepareNpfc(candidate:NpfcCandidate,input:unknown,raw:Buffer,pdf
  const unknown=()=>({precision:'unknown' as const,value:null});
  const sourceCapture=captureSchema.parse({adapter:'npfc',acquisitionMode:'live_capture',sourceUrl:r.finalUrl,capturedAt:r.finishedAt,httpStatus:r.status,rawSha256:sha256(raw),bodySha256:body?sha256(body):null,
   parser:`official-column/npfc/v1; ${pdf?.parsed.parser??'unavailable-pdf-parser'}`,parseStatus,attachmentSha256,attachmentUrl,attachmentHttpStatus,attachmentCapturedAt,attachmentPages,conflicts,
-  ...(pdf?.parsed.textEvidence?{pdfTextEvidence:pdf.parsed.textEvidence}:{}),regulatoryListing:{measureNumber:candidate.number,statedEffectiveDate:candidate.effectiveLiteral,membership:'listed_current_only',applicableSea:'unknown',effectiveStatus:'unknown'}});
+  ...(textless.length?{pdfTextlessPages:textless}:{}),...(pdf?.parsed.textEvidence?{pdfTextEvidence:pdf.parsed.textEvidence}:{}),regulatoryListing:{measureNumber:candidate.number,statedEffectiveDate:candidate.effectiveLiteral,membership:'listed_current_only',applicableSea:'unknown',effectiveStatus:'unknown'}});
  return {title,body,dates:{published:unknown(),event:unknown(),adopted:unknown(),effectiveFrom:unknown(),effectiveUntil:unknown()},sourceCapture,policyContext:{entryIntoForce:'unknown' as const,objectionDeadline:unknown(),nonApplicationMentioned:[],provisionYears:[]},readyForReview:parseStatus==='parsed'&&!!body&&!conflicts.length,warnings,
   evidence:[{url:r.finalUrl,sha256:sha256(raw),page:null,section:`NPFC CMM ${candidate.number}; stated effective ${candidate.effectiveLiteral??'unknown'}; applicability unreviewed`},...(attachmentSha256&&attachmentUrl?[{url:attachmentUrl,sha256:attachmentSha256,page:null,section:'Complete official PDF; scope and legal status require evidence review'}]:[])]};
 }

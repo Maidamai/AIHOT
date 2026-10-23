@@ -49,7 +49,9 @@ async function snapshot(documentId:string) {
 export function pdfPages(body:string,expected:number) {
   const markers=[...body.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
   if(!Number.isInteger(expected)||expected<1||markers.length!==expected||markers.some((m,i)=>Number(m[1])!==i+1)) throw new Conflict("PDF page coverage missing or incomplete; no full-document claim");
-  return markers.map((m,i)=>({page:i+1,text:body.slice(m.index!+m[0].length,markers[i+1]?.index??body.length).trim()}));
+  const pages=markers.map((m,i)=>({page:i+1,text:body.slice(m.index!+m[0].length,markers[i+1]?.index??body.length).trim()}));
+  if(pages.some(p=>!p.text))throw new Conflict('PDF textless pages require review; no complete-document model input');
+  return pages;
 }
 async function inputFor(documentId:string,expectedHash:string):Promise<DraftInput> {
   const current=await snapshot(documentId);

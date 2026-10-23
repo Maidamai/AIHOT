@@ -13,7 +13,7 @@ export const archiveReceiptSchema = z.object({
 });
 export type ArchiveReceipt = z.infer<typeof archiveReceiptSchema>;
 export type Adapter = "jinjiang" | "iotc" | "fuzhou";
-export type PdfText = { status: "parsed" | "missing" | "failed" | "unverified"; rawSha256: string; parser: string; text: string; pages: number; error?: string; textEvidence?:z.infer<typeof pdfTextEvidenceSchema> };
+export type PdfText = { status: "parsed" | "missing" | "failed" | "unverified"; rawSha256: string; parser: string; text: string; pages: number; error?: string; textlessPages?:number[]; textEvidence?:z.infer<typeof pdfTextEvidenceSchema> };
 const unknown = () => ({ precision: "unknown" as const, value: null });
 export const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();

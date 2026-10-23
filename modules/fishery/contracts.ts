@@ -89,6 +89,7 @@ export const captureSchema = z.strictObject({
   httpStatus: z.int().min(100).max(599), rawSha256: z.string().regex(/^[a-f0-9]{64}$/),
   bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   pdfTextEvidence:pdfTextEvidenceSchema.optional(),
+  pdfTextlessPages:z.array(z.int().min(1).max(200)).max(200).optional(),
   parser: text.max(100), parseStatus: z.enum(["parsed", "missing", "failed", "unverified"]),
   attachmentSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   attachmentUrl: linkSchema.nullable().default(null), attachmentHttpStatus: z.int().min(100).max(599).nullable().default(null),
@@ -96,6 +97,7 @@ export const captureSchema = z.strictObject({
   publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
   conflicts: z.array(text.max(300)).max(20),
 }).superRefine((c, ctx) => {
+  if(c.parseStatus==='parsed'&&c.pdfTextlessPages?.length)ctx.addIssue({code:'custom',message:'Unverified textless PDF pages cannot be marked parsed'});
   if((c.adapter==='fujian-notices')!==!!c.noticeContext)ctx.addIssue({code:'custom',message:'Fujian notice captures require their bound page/attachment context only'});
   if(c.noticeContext&&c.parseStatus==='parsed'&&!completeNoticeAttachments(c.noticeContext))ctx.addIssue({code:'custom',message:'Parsed notices require every complete verified attachment'});
   if((c.adapter==='npfc')!==!!c.regulatoryListing)ctx.addIssue({code:'custom',message:'NPFC captures require their bound unreviewed measure identity only'});

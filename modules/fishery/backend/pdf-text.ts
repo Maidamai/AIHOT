@@ -11,6 +11,11 @@ import { sha256, type PdfText } from "./source-adapters.ts";
 type Execute = (file: string, args: string[], options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr: string }>;
 const execute: Execute = promisify(execFile);
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
+export function pdfTextlessPages(text:string,pages:number){
+  const markers=[...text.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
+  if(!Number.isInteger(pages)||pages<1||pages>200||markers.length!==pages||markers.some((m,i)=>Number(m[1])!==i+1)||text.slice(0,markers[0]?.index??text.length).trim())throw new Error('PDF page coverage incomplete or ambiguous');
+  return markers.flatMap((m,i)=>text.slice(m.index!+m[0].length,markers[i+1]?.index??text.length).trim()?[]:[i+1]);
+}
 type TextNode={text:string;fontSize:number;top:number;left:number;width:number;height:number};
 const literalPattern=(text:string)=>text.trim().split(/\s+/).map(part=>part.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("\\s+");
 // Only separate a small, raised numeric run with a uniquely located same-page footnote. No string/year guessing.
@@ -94,33 +99,35 @@ export async function extractPdf(original: Buffer, options: { platform?: NodeJS.
     const file = path.join(scratch, "original.pdf");
     await writeFile(file, snapshot, { flag: "wx", mode: 0o600 });
     if (platform === "darwin") {
-      result.parser = "Apple PDFKit/v1";
+      result.parser = "Apple PDFKit/v2; per-page-text";
       const { stdout } = await command("/usr/bin/swift", ["-module-cache-path", path.join(scratch, "cache"), path.join(import.meta.dirname, "../scripts/pdf-text.swift"), path.resolve(file)]);
       const parsed = JSON.parse(stdout);
       if (!Number.isInteger(parsed.pages) || parsed.pages < 1 || parsed.pages > 200 || typeof parsed.text !== "string" || !parsed.text.trim())
         throw new Error("PDF page count or text is invalid");
+      const textless=pdfTextlessPages(parsed.text,parsed.pages);
+      if(textless.length)return {...result,textlessPages:textless,error:`PDF has unverified textless pages: ${textless.join(',')}; blank/scanned distinction requires review, no automatic OCR`};
       result = { ...result, status: "parsed", pages: parsed.pages, text: parsed.text };
     } else {
       const infoVersion = await command("pdfinfo", ["-v"]), textVersion = await command("pdftotext", ["-v"]),structureVersion=await command("pdftohtml",["-v"]);
       const version = (name: string, output: { stdout: string; stderr: string }) => new RegExp(`${name} version ([0-9.]+)`).exec(output.stdout + output.stderr)?.[1];
       const iv = version("pdfinfo", infoVersion), tv = version("pdftotext", textVersion),sv=version("pdftohtml",structureVersion);
       if (!iv || !tv || !sv) throw new Error("Cannot identify Poppler versions");
-      result.parser = `Poppler ${iv}/${tv}/${sv}; footnotes/v2`;
+      result.parser = `Poppler ${iv}/${tv}/${sv}; footnotes/v3; per-page-text`;
       const info = await command("pdfinfo", ["-enc", "UTF-8", path.resolve(file)]);
       const pages = Number(/^Pages:\s+(\d+)\s*$/m.exec(info.stdout)?.[1]);
       if (info.stderr.trim() || !/^Encrypted:\s+no\s*$/m.test(info.stdout) || !Number.isInteger(pages) || pages < 1 || pages > 200)
         throw new Error("Unreadable, encrypted or excessive-page PDF");
-      const parts: string[] = []; let bytes = 0, hasText = false;
+      const parts: string[] = [],textless:number[]=[]; let bytes = 0;
       for (let page = 1; page <= pages; page++) {
         const extracted = await command("pdftotext", ["-f", String(page), "-l", String(page), "-enc", "UTF-8", "-eol", "unix", "-layout", "-nopgbrk", path.resolve(file), "-"]);
         if (extracted.stderr.trim()) throw new Error("PDF text extraction diagnostics require review");
-        hasText ||= !!extracted.stdout.trim();
+        if(!extracted.stdout.trim())textless.push(page);
         const part = `--- Page ${page} ---\n${extracted.stdout}`;
         bytes += Buffer.byteLength(part) + (parts.length ? 2 : 0);
         if (bytes > OUTPUT_LIMIT) throw new Error("PDF output byte limit exceeded");
         parts.push(part);
       }
-      if (!hasText) return { ...result, status: "unverified", error: "PDF has no verified text; no automatic OCR" };
+      if(textless.length)return {...result,textlessPages:textless,error:`PDF has unverified textless pages: ${textless.join(',')}; blank/scanned distinction requires review, no automatic OCR`};
       const structure=await command("pdftohtml",["-xml","-hidden","-i","-stdout","-enc","UTF-8",path.resolve(file)]);
       if(structure.stderr.trim()) throw new Error("PDF structure diagnostics require review");
       const mapped=mapPdfFootnotes(parts.join("\n\n"),structure.stdout,pages);
