@@ -313,7 +313,7 @@ test("Office notices retain complete raw proof as manual review without providin
       assert.equal(item.state,"needs_review",item.error??"");assert.equal(batch.sources[0].outcome,"success");assert.match(item.error!,/unverified/);
       const prepared=await verifyBatchItem(dir,batch,item);assert.equal(prepared.body,null);assert.equal(prepared.readyForReview,false);assert.equal(prepared.sourceCapture.parseStatus,"unverified");assert.equal(prepared.sourceCapture.bodySha256,null);
       assert.equal(prepared.sourceCapture.noticeContext!.attachments[0].sha256,sha256(bytes));
-      assert.throws(()=>assertCaptureExportable({...observationFixture,sourceCapture:prepared.sourceCapture}),/unverified/);
+      assert.throws(()=>assertCaptureExportable(observationSchema.parse({...observationFixture,rawSha256:prepared.sourceCapture.rawSha256,sourceCapture:prepared.sourceCapture})),/unverified/);
       const file=path.join(batchRoot(dir),batch.id,"raw",`${item.archiveId}-attachment-0.bin`);assert.deepEqual(await readFile(file),bytes);
       await writeFile(file,"tampered");await assert.rejects(verifyBatchItem(dir,batch,item),/hash mismatch/);
     }
