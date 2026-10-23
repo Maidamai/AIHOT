@@ -13,7 +13,7 @@ import {collectColumnRound,columnProgressCoordinator} from './column-progress.ts
 import {columnDbProgress,COLUMN_CURSOR_KEY} from './column-db-progress.ts';
 import {importBatch} from './import-batch.ts';
 import {readBatch,type ColumnFetcher} from './column-batches.ts';
-export const ARCHIVE_COLUMNS=['moa','npfc','fujian','fujian-notices'] as const;
+export const ARCHIVE_COLUMNS=['moa','npfc','fujian','fujian-notices','jfa-press'] as const;
 export type ArchiveColumn=typeof ARCHIVE_COLUMNS[number];
 export const ARCHIVE_KEY='fishery.archive.moa',ARCHIVE_TICK='fishery.archive.moa.tick',ARCHIVE_QUEUE='fishery.archive.moa';
 const stateSchema=z.object({enabled:z.boolean(),revision:z.uuid(),mode:z.enum(['hourly','six_hourly','validation']),runId:z.string().regex(/^[a-zA-Z0-9-]{1,40}$/),intervalSeconds:z.number().int().min(10).max(21600),claimed:z.number().int().nonnegative(),pausedReason:z.string().nullable(),nextAt:z.iso.datetime().nullable(),

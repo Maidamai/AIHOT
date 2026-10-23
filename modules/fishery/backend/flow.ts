@@ -13,6 +13,7 @@ import { chatJson, type ChatJsonOptions, type ChatJsonResult } from "@aihot/back
 import { completeReceipt } from "@aihot/backend/providers/receipts";
 import { sourceArticleAvailable } from "./source-availability.ts";
 import { noticeEvidenceSections } from "./fujian-notices.ts";
+import { jfaEvidenceSections } from "./jfa-press.ts";
 import { hash, lockDocument, NotFound } from "./store.ts";
 import { readSourceBody } from "./source-body.ts";
 import { assertReviewedPdfBlanks } from './pdf-text.ts';
@@ -70,7 +71,7 @@ async function inputFor(documentId:string,expectedHash:string):Promise<DraftInpu
     body=stored?.body_text??null;
   }
   if(!body||sha256(body)!==c.bodySha256||body.length>64000) throw new Conflict("Full bound body missing, changed or oversized; no silent truncation");
-  const sections=c.adapter==='fujian-notices'?noticeEvidenceSections(body,c):undefined;
+  const sections=c.adapter==='fujian-notices'?noticeEvidenceSections(body,c):c.adapter==='jfa-press'?jfaEvidenceSections(body,c):undefined;
   const pages=!sections&&c.attachmentPages?pdfPages(body,c.attachmentPages,c.pdfBlankReview):undefined;
   return {pages,sections,pdfBlankReview:c.pdfBlankReview,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
 }

@@ -194,9 +194,11 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     if(prior.seen)return prior.result;
     if(options.changedRequiredEvidenceOnly){
       const {noticeAttachmentChanged}=await import('./fujian-notices.ts');
+      const {jfaAttachmentChanged}=await import('./jfa-press.ts');
       const c=payload.sourceCapture,old=previous?.payload.sourceCapture;
       const verifiedNpfcPdf=c?.adapter==='npfc'&&c.attachmentHttpStatus===200&&!!c.attachmentSha256;
       const changed=c?.httpStatus===200&&(c.adapter==='fujian-notices'&&!c.conflicts.length&&noticeAttachmentChanged(old?.noticeContext,c.noticeContext)||
+        c.adapter==='jfa-press'&&!c.conflicts.length&&jfaAttachmentChanged(old?.jfaContext,c.jfaContext)||
         c.adapter==='npfc'&&old?.adapter==='npfc'&&!!c.attachmentUrl&&!!old.attachmentUrl&&((!c.conflicts.length||verifiedNpfcPdf)&&c.attachmentUrl!==old.attachmentUrl||verifiedNpfcPdf&&!!old.attachmentSha256&&c.attachmentSha256!==old.attachmentSha256));
       if(!changed)return remember(tx,null);
     }

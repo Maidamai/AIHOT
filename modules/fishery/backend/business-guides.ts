@@ -9,6 +9,7 @@ import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { businessGuidePayloadSchema, createBusinessGuideSchema, updateBusinessGuideSchema, decideBusinessGuideSchema,
   type BusinessGuideAIReview, type BusinessGuideContext, type BusinessGuidePayload, type BusinessGuideAdminRecord, type BusinessGuideReaderItem, type BusinessGuideReaderPage } from "../business-contracts.ts";
 import { noticeEvidenceSections } from "./fujian-notices.ts";
+import { jfaEvidenceSections } from "./jfa-press.ts";
 import { buildEvidenceCatalog, type EvidenceCatalog } from "./evidence.ts";
 import { readSourceBody } from "./source-body.ts";
 import { hash, NotFound } from "./store.ts";
@@ -45,7 +46,7 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
   }
   if (!body || sha256(body) !== capture.bodySha256) throw new Conflict("Complete archived body missing or changed");
   let sections: EvidenceCatalog["sections"];
-  try { sections = capture.adapter === "fujian-notices" ? noticeEvidenceSections(body, capture) : undefined; }
+  try { sections = capture.adapter === "fujian-notices" ? noticeEvidenceSections(body, capture) : capture.adapter==='jfa-press'?jfaEvidenceSections(body,capture):undefined; }
   catch (error) { throw new Conflict(`Business evidence unavailable: ${(error as Error).message}`); }
   let pages: { page: number; text: string }[] | undefined;
   if (!sections && capture.attachmentPages) {

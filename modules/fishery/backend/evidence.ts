@@ -107,7 +107,7 @@ export function sameEvidenceSource(a:EvidenceSource|undefined,b:EvidenceSource|u
 }
 function buildSectionedCatalog(input:EvidenceInput):EvidenceCatalog {
   const sections=input.sections!;
-  if(input.pages!==undefined||sections.length<1||sections.length>4)throw new Error("Sectioned evidence requires bounded source sections without legacy pages");
+  if(input.pages!==undefined||sections.length<1||sections.length>7)throw new Error("Sectioned evidence requires bounded source sections without legacy pages");
   const spans:EvidenceSpan[]=[],pages:EvidenceCatalog['pages']=[],ids=new Set<string>();
   let previousEnd=0;
   for(const [i,section] of sections.entries()){

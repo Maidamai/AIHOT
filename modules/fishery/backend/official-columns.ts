@@ -7,8 +7,10 @@ import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { archiveReceiptSchema, sha256 } from "./source-adapters.ts";
 import { discoverIotc } from "./iotc-columns.ts";
 import {discoverNpfc,NPFC_LIST} from './npfc-columns.ts';
+import {JFA_PRESS,discoverJfaPress,prepareJfaPress} from './jfa-press.ts';
 
 export const COLUMNS = {
+  'jfa-press':{name:'日本水产厅 · 新闻发布',tier:'T1',url:JFA_PRESS,list:'#main_content dl.list_item dd a[href]',body:'#main_content',issuer:'日本水产厅（Fisheries Agency of Japan）'},
   moa: {
     name: "农业农村部渔业渔政管理局 · 工作动态", tier: "T1", url: "https://yyj.moa.gov.cn/gzdt/",
     list: ".sj_e_tonzhi_list li a", body: ".sj_arc_body .TRS_Editor", issuer: "农业农村部渔业渔政管理局",
@@ -26,7 +28,7 @@ export const COLUMNS = {
   },
   npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',tier:'T1',url:NPFC_LIST,list:'.region-content .view-document-list td.views-field-title > a[href]',body:'.region-content',issuer:'North Pacific Fisheries Commission (NPFC)'},
 } as const;
-export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices"]);
+export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices", "jfa-press"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
 // News lists and regulatory inventories have different time semantics.
 export const isNewsColumn = (id: ColumnId) => id !== "npfc" && id !== "iotc";
@@ -55,7 +57,7 @@ export function discoverColumnPagination(id:ColumnId,html:string,pageUrl=COLUMNS
     return {...base,scope:"verified_pagination",totalPages:Number(count[1]),nextUrl:pageIndex+1<Number(count[1])?new URL(`index_${pageIndex+1}.htm`,COLUMNS.moa.url).href:null};
   }
   if(id==="fujian"||id==='fujian-notices') return base; // The observed JS pagebar does not disclose a verified URL mechanism.
-  if(id==='npfc')return {...base,scope:'current_page_only'};
+  if(id==='npfc'||id==='jfa-press')return {...base,scope:'current_page_only'};
   const $=cheerio.load(html),links=$("ul.pager li.pager-next a[href]").toArray().map(a=>new URL($(a).attr("href")!,pageUrl).href);
   if(new Set(links).size>1) throw new Error("Conflicting IOTC next-page links");
   const nextUrl=links[0]??null;
@@ -75,6 +77,7 @@ export interface Candidate { url: string; title: string; listDate: string | null
 export function discoverColumn(id: ColumnId, html: string): { candidates: Candidate[]; rejected: number; listed: number } {
   if (id === "iotc") return discoverIotc(html);
   if (id === 'npfc')return discoverNpfc(html);
+  if (id === 'jfa-press')return discoverJfaPress(html);
   const column = COLUMNS[id], base = new URL(column.url), $ = cheerio.load(html), seen = new Set<string>();
   const candidates: Candidate[] = []; let rejected = 0, listed = 0;
   for (const anchor of $(column.list).toArray()) {
@@ -102,6 +105,7 @@ export function relevanceEvidence(body: string): string[] {
 }
 
 export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc"|'fujian-notices'>, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
+  if(id==='jfa-press')return prepareJfaPress(receiptInput,raw,[],acquisitionMode);
   const receipt = archiveReceiptSchema.parse(receiptInput), column = COLUMNS[id], origin = new URL(column.url).origin;
   const conflicts: string[] = [], warnings: string[] = [];
   if (sha256(raw) !== receipt.sha256) conflicts.push("Raw bytes differ from the HTTP receipt");

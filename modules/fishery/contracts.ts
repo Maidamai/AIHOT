@@ -75,17 +75,20 @@ export const noticeContextSchema=z.strictObject({
     textSha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),bodyStart:z.int().nonnegative().nullable(),bodyEnd:z.int().nonnegative().nullable(),pageIntervals:z.array(z.strictObject({page:z.int().min(1).max(200),start:z.int().nonnegative(),end:z.int().positive()})).min(1).max(200).optional(),pdfTextEvidence:pdfTextEvidenceSchema.optional()})).max(3),
 });
 export type NoticeContext=z.infer<typeof noticeContextSchema>;
+export const jfaContextSchema=noticeContextSchema.pick({pageBody:true,pageTextSha256:true,attachmentCount:true,attachments:true}).extend({attachments:z.array(noticeContextSchema.shape.attachments.element).max(6)});
+export type JfaContext=z.infer<typeof jfaContextSchema>;
 export function noticeDeadlineState(n:NoticeContext,today:string){
   if(n.deadline.precision!=='day')return 'unknown' as const;
   return n.deadline.value<today?'closed' as const:n.deadline.value===today?'deadline_today' as const:'future_deadline' as const;
 }
-export function completeNoticeAttachments(n:NoticeContext){
+export function completeNoticeAttachments(n:Pick<NoticeContext,'attachmentCount'|'attachments'>){
   return n.attachmentCount===n.attachments.length&&n.attachments.every(a=>a.httpStatus===200&&a.format==='pdf'&&a.extension==='pdf'&&a.parseStatus==='parsed'&&a.sha256&&a.textSha256&&a.pages&&a.bodyStart!==null&&a.bodyEnd!==null&&a.bodyEnd>a.bodyStart);
 }
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
-  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "fujian-notices", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
+  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "fujian-notices", "jfa-press", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
   noticeContext:noticeContextSchema.optional(),
+  jfaContext:jfaContextSchema.optional(),
   regulatoryListing:z.strictObject({measureNumber:z.string().regex(/^\d{4}-\d{2}$/),statedEffectiveDate:z.string().max(100).nullable(),membership:z.literal('listed_current_only'),applicableSea:z.literal('unknown'),effectiveStatus:z.literal('unknown')}).optional(),
   archiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   manualArchiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
@@ -105,6 +108,8 @@ export const captureSchema = z.strictObject({
   if(c.parseStatus==='parsed'&&c.pdfTextlessPages?.length&&(!c.pdfBlankReview||JSON.stringify(c.pdfTextlessPages)!==JSON.stringify(c.pdfBlankReview.pageImages.map(p=>p.page))))ctx.addIssue({code:'custom',message:'Unverified textless PDF pages cannot be marked parsed'});
   if((c.adapter==='fujian-notices')!==!!c.noticeContext)ctx.addIssue({code:'custom',message:'Fujian notice captures require their bound page/attachment context only'});
   if(c.noticeContext&&c.parseStatus==='parsed'&&!completeNoticeAttachments(c.noticeContext))ctx.addIssue({code:'custom',message:'Parsed notices require every complete verified attachment'});
+  if((c.adapter==='jfa-press')!==!!c.jfaContext)ctx.addIssue({code:'custom',message:'JFA captures require their bound page/attachment context only'});
+  if(c.jfaContext&&c.parseStatus==='parsed'&&!completeNoticeAttachments(c.jfaContext))ctx.addIssue({code:'custom',message:'Parsed JFA press releases require every complete verified attachment'});
   if((c.adapter==='npfc')!==!!c.regulatoryListing)ctx.addIssue({code:'custom',message:'NPFC captures require their bound unreviewed measure identity only'});
   if ((c.manualArchiveId && c.adapter !== "manual_official") || (c.adapter === "manual_official" && (!c.manualArchiveId || c.archiveId)))
     ctx.addIssue({code:"custom",message:"Manual official captures require their own manual archive only"});

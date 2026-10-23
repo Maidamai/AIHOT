@@ -22,6 +22,28 @@ import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backe
 import type { ColumnFetcher } from '../backend/column-batches.ts';
 import {noticeFixture} from './fixtures.ts';
 import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged,noticeEvidenceSections} from '../backend/fujian-notices.ts';
+import {discoverJfaPress,jfaPage,jfaDate,prepareJfaPress,jfaAttachmentChanged,jfaEvidenceSections} from '../backend/jfa-press.ts';
+
+test('JFA discovery uses displayed Japanese dates, keeps resource updates and excludes external publishers',()=>{
+ const html='<main id="main_content"><h2>令和8年10月分</h2><p class="list_item_date">10月9日</p><dl class="list_item"><dd><a href="./seibi/261006.html">港の供用開始</a></dd></dl><p class="list_item_date">10月2日</p><dl class="list_item"><dd><a href="./sigen/251002.html">水産資源の評価</a></dd><dd><a href="https://external.example/notice.html">外部</a></dd></dl></main>';
+ const found=discoverJfaPress(html);assert.equal(found.listed,2);assert.equal(found.rejected,1);
+ assert.deepEqual(found.candidates.map(c=>c.listDate),['2026-10-09','2026-10-02']);assert.equal(jfaDate('令和8年2月30日'),null);
+});
+test('JFA complete acquisition binds six PDFs and rejects missing, textless, oversized or changed evidence',()=>{
+ const url='https://www.jfa.maff.go.jp/j/press/kokusai/261023.html';
+ const raw=Buffer.from(`<div id="main_content"><h1>北太平洋資源管理の公表</h1><div class="content_utility-date">令和8年10月23日<br>水産庁</div><p>北太平洋の公海の資源管理について、採択した措置の結果を公表します。正式な適用条件は原文を確認してください。</p>${Array.from({length:6},(_,i)=>`<a href="./attach/pdf/261023-${i+1}.pdf">資料${i+1}</a>`).join('')}<div class="outline">連絡先を正文に混入しない</div></div>`);
+ const receipt=(bytes:Buffer,u=url)=>({requestedUrl:u,finalUrl:u,status:200,finishedAt:'2026-10-23T12:00:00Z',sha256:sha256(bytes)});
+ const page=jfaPage(raw,url),files=page.attachments.map((a,i)=>{const bytes=Buffer.from(`%PDF-1.4 synthetic ${i}`),text=`--- Page 1 ---\n添付資料${i+1}：北太平洋公海の資源管理に関する正式な資料。`;return {receipt:receipt(bytes,a.url),bytes,parsed:{status:'parsed' as const,rawSha256:sha256(bytes),parser:'synthetic verified PDF',text,pages:1}};});
+ const result=prepareJfaPress(receipt(raw),raw,files);assert.equal(result.readyForReview,true);assert.equal(result.dates.published.value,'2026-10-23');assert.equal(result.sourceCapture.publishedAt,null);assert.ok(!result.body!.includes('連絡先を正文に混入しない'));
+ assert.equal(jfaEvidenceSections(result.body!,result.sourceCapture).length,7);
+ const missing=prepareJfaPress(receipt(raw),raw,files.slice(0,5));assert.equal(missing.readyForReview,false);assert.equal(missing.body,null);assert.notEqual(missing.sourceCapture.parseStatus,'parsed');
+ const copy=()=>files.map(f=>({...f,receipt:{...f.receipt},parsed:{...f.parsed}}));
+ const textless=copy();textless[0]!.parsed.text='--- Page 1 ---\n';assert.equal(prepareJfaPress(receipt(raw),raw,textless).readyForReview,false);
+ const large=copy();large[0]!.parsed.text='--- Page 1 ---\n'+ '資源'.repeat(33000);const over=prepareJfaPress(receipt(raw),raw,large);assert.equal(over.body,null);assert.ok(over.warnings.some(w=>w.includes('without truncation')));
+ const changed=copy();changed[0]!.bytes=Buffer.from('%PDF-1.4 changed');changed[0]!.receipt=receipt(changed[0]!.bytes,page.attachments[0]!.url);const updated=prepareJfaPress(receipt(raw),raw,changed);assert.equal(updated.readyForReview,false);assert.equal(jfaAttachmentChanged(result.sourceCapture.jfaContext,updated.sourceCapture.jfaContext),true);
+ assert.throws(()=>jfaEvidenceSections(result.body!+' edited',result.sourceCapture),/changed|mismatch/);
+ const foreign=Buffer.from(raw.toString().replace('./attach/pdf/261023-1.pdf','https://external.example/report.pdf'));assert.equal(prepareJfaPress(receipt(foreign),foreign,files).readyForReview,false);
+});
 import {noticeDeadlineState} from '../contracts.ts';
 
 test('Fujian notices retain actual container text without an editor class and across sibling blocks',()=>{
