@@ -111,14 +111,15 @@ function selectionMock(body:string,sends:string[],options:{label?:string;failSec
   return {data:q.schema.parse(r.response),receiptId:r.receiptId,reused:r.reused,model:'mock',usage:null};
  };
 }
-async function selectionFixture(number:number){
+async function selectionFixture(number:number,publishedAt?:string){
  const d=await automaticFixture(number),[v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
- await approve(d.id,1,v.revision);return {...d,task:await createFlow(d.id,{identity:'selection-'+number,selection:true},'tester')};
+ if(publishedAt){const h=await documentHistory(d.id),p=h.observations.at(-1)!.payload;await observe(d.id,{...p,expectedRevision:1,dates:{...p.dates,published:{precision:'day',value:publishedAt.slice(0,10)}},sourceCapture:{...p.sourceCapture,publishedAt}},'tester');}
+ await approve(d.id,publishedAt?2:1,v.revision);return {...d,task:await createFlow(d.id,{identity:'selection-'+number,selection:true},'tester')};
 }
 test('selection persists three independent receipts, needs final fact approval and keeps historical material historical',async()=>{
- const d=await selectionFixture(61),sends:string[]=[];
+ const d=await selectionFixture(61,'2020-09-30T12:36:00.000Z'),sends:string[]=[],invoke=selectionMock(d.body,sends);
  assert.equal(await flowRequiredCalls(d.task.id),5);
- const result=await runFlow(d.task.id,selectionMock(d.body,sends));
+ const result=await runFlow(d.task.id,async q=>{if(q.purpose==='score_article')assert.match(String(q.user),/2020-09-30T20:36/,'Verified original instant must survive the selection input');return invoke(q);});
  assert.equal(result.status,'needs_human_review',JSON.stringify(result.error));assert.deepEqual(sends,['prefilter','score-1','score-2','generation','review']);
  assert.equal(new Set(Object.values(result.selection.results).map((r:any)=>r.receiptId)).size,3);
  assert.notEqual(result.stage_requests['score-1:1'].subject,result.stage_requests['score-2:1'].subject);

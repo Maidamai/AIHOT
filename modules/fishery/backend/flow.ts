@@ -420,8 +420,10 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
           const current=await snapshot(claimed.document_id),[source]=await sql`SELECT name,kind,tier FROM sources WHERE id=${current.value.sourceId}`;
           if(source!.tier!==claimed.selection.sourceTier)throw new Conflict('Source tier changed since selection was authorized');
           const p=current.payload,c=p.sourceCapture,day=p.dates.published;
+          const publicationTime=c.publishedAt??(day.precision==='day'?day.value:null);
+          const publishedAt=publicationTime?new Date(publicationTime.length===10?publicationTime+(c.adapter==='jfa-press'?'T00:00:00+09:00':'T00:00:00+08:00'):publicationTime):null;
           const article:AnalyzeInputArticle={id:claimed.document_id,revision:current.value.observationRevision,title:p.originalTitle||p.title,url:c.sourceUrl,author:null,
-            publishedAt:day.precision==='day'?new Date(day.value+'T00:00:00+08:00'):null,publicationTime:day.precision==='day'?day.value:null,
+            publishedAt,publicationTime,
             bodyText:input.body,bodyStatus:'ok',excerpt:null,xPost:null,media:[],source:{name:source!.name,kind:source!.kind,tier:source!.tier,firstParty:source!.tier==='T1'}};
           const state=claimed.selection as SelectionState;
           const outcome=await runFisherySelection(article,state,async options=>{
