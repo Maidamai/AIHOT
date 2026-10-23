@@ -26,7 +26,7 @@ async function importBatchContents(id: string, actor: string) {
     const confirmedBody=!!r?.body&&capture?.httpStatus===200&&capture.parseStatus==="parsed"&&!capture.conflicts.length&&sha256(r.body)===capture.bodySha256;
     const outcome=confirmedBody?(r!.readyForReview?"ready" as const:"irrelevant" as const):"unavailable" as const;
     const relevance=r&&"relevance" in r?r.relevance:null;
-    const changedDependency=capture?.httpStatus===200&&(item.column==='fujian-notices'&&!capture.conflicts.length&&!!capture.noticeContext||item.column==='npfc'&&capture.attachmentHttpStatus===200&&!!capture.attachmentSha256);
+    const changedDependency=capture?.httpStatus===200&&(item.column==='fujian-notices'&&!capture.conflicts.length&&!!capture.noticeContext||item.column==='npfc'&&!capture.conflicts.length&&!!capture.attachmentUrl);
     if(confirmedBody||changedDependency) {
       const input={expectedRevision:0,originalTitle:r!.title,title:r!.title,
         summaryZh:!confirmedBody?"必需附件已确认变更，但完整正文尚未核验；旧审核失效，待补证。":outcome==="ready"?"待人工核对原文；尚未生成业务摘要，关键词命中仅是检索线索。":"最新归档正文未提供明确远洋渔业证据；仅保留变更证据，旧摘要不可继承，待人工核对。",

@@ -191,7 +191,7 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
       const {noticeAttachmentChanged}=await import('./fujian-notices.ts');
       const c=payload.sourceCapture,old=previous?.payload.sourceCapture;
       const changed=c?.httpStatus===200&&(c.adapter==='fujian-notices'&&!c.conflicts.length&&noticeAttachmentChanged(old?.noticeContext,c.noticeContext)||
-        c.adapter==='npfc'&&old?.adapter==='npfc'&&c.attachmentHttpStatus===200&&!!c.attachmentSha256&&!!old.attachmentSha256&&(c.attachmentUrl!==old.attachmentUrl||c.attachmentSha256!==old.attachmentSha256));
+        c.adapter==='npfc'&&old?.adapter==='npfc'&&!c.conflicts.length&&!!c.attachmentUrl&&!!old.attachmentUrl&&(c.attachmentUrl!==old.attachmentUrl||c.attachmentHttpStatus===200&&!!c.attachmentSha256&&!!old.attachmentSha256&&c.attachmentSha256!==old.attachmentSha256));
       if(!changed)return remember(tx,null);
     }
     if (previous && evidenceIdentity({ ...previous.payload, expectedRevision:0 }) === evidenceIdentity({ ...payload, expectedRevision:0 })) return remember(tx,{ id:doc!.id as string, revision:previous.revision as number, unchanged:true });

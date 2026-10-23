@@ -38,7 +38,7 @@ export function prepareNpfc(candidate:NpfcCandidate,input:unknown,raw:Buffer,pdf
   const $=cheerio.load(new TextDecoder('utf8',{fatal:true}).decode(raw));title=collapse($('h1').first().text());
   if(title!==candidate.title)conflicts.push('NPFC listing and landing title/version/effective label disagree');
   attachmentUrl=npfcAttachment(raw,r.finalUrl);
-  if(!pdf)warnings.push('Full PDF missing; landing metadata is not measure text');
+  if(!pdf){parseStatus='unverified';warnings.push('Full PDF missing; landing metadata is not measure text');}
   else{
    const pr=archiveReceiptSchema.parse(pdf.receipt),p=pdf.parsed;
    attachmentSha256=sha256(pdf.bytes);attachmentHttpStatus=pr.status;attachmentCapturedAt=pr.finishedAt;attachmentPages=p.status==='parsed'&&p.pages>0?p.pages:null;

@@ -1932,3 +1932,27 @@ test('notice article flow keeps webpage and second attachment provenance through
  assert.equal(sends,2);assert.equal(result.status,'needs_human_review',JSON.stringify(result.error));
  assert.equal(result.draft.draft.summaryZh[0].evidence[0].source.url,second);assert.equal(result.internalArticle,null,'Separate final approval remains required');
 });
+
+test('NPFC verified changed landing PDF URL invalidates old approval and qualified article even when PDF acquisition fails',async()=>{
+ const {prepareNpfc}=await import('../backend/npfc-columns.ts');
+ for(const failure of ['404','timeout','nonpdf'] as const){
+  const title='CMM 2026-09 Synthetic URL dependency regression',url=`https://www.npfc.int/cmm-2026-09-url-${failure}`,pdfA=`https://www.npfc.int/system/files/url-${failure}-a.pdf`,pdfB=`https://www.npfc.int/system/files/url-${failure}-b.pdf`,bytes=Buffer.from('%PDF-synthetic-original-NPFC'),fact='合成公海远洋渔业事实。',body=`--- Page 1 ---\nCMM 2026-09\n${fact}`;
+  const landing=(pdf:string)=>Buffer.from(`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="${pdf}">PDF</a></span></div></div>`),raw=landing(pdfA),r={requestedUrl:url,finalUrl:url,status:200,finishedAt:'2026-10-23T00:00:00Z',sha256:sha256(raw)};
+  const p=prepareNpfc({url,title,number:'2026-09',effectiveLiteral:null,listDate:null,priority:'direct'},r,raw,{bytes,receipt:{...r,requestedUrl:pdfA,finalUrl:pdfA,sha256:sha256(bytes)},parsed:{status:'parsed',rawSha256:sha256(bytes),parser:'synthetic-original/v1',pages:1,text:body}});
+  const first=await importCapturedMaterial({id:'npfc',...COLUMNS.npfc},url,{...observationFixture,originalTitle:title,title,rawSha256:p.sourceCapture.rawSha256,sourceCapture:p.sourceCapture,dates:p.dates},'tester');
+  await upsertMaterial({sourceId:'fishery-column-npfc',url,title,bodyText:body,bodyStatus:'ok',via:'offline-fixture',raw:{fisheryDocumentId:first.id}});
+  const [s]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-npfc'`;await approve(first.id,1,s.revision);
+  const date={date:{precision:'unknown',value:null},evidence:[]},evidence=['p2s1'];
+  const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic source evidence',evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic original sentence',evidence},{field:'relevance',verdict:'supported',reason:'Synthetic relevance evidence',evidence}]}),receiptId:999999,model:'mock',reused:false,usage:null});
+  const task=await createFlow(first.id,{identity:'npfc-url-'+failure},'tester'),checked=await runFlow(task.id,invoke);assert.equal(checked.status,'needs_human_review');
+  await decideFlow(task.id,{decision:'qualified',snapshotHash:checked.snapshotHash,note:'Synthetic previous PDF approval'},'tester');assert.ok((await flowDetail(task.id)).internalArticle);
+  const capture=(id:string,pdf:string)=>collectColumns({id,dataDir:config.dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async request=>{
+   if(request===pdf&&failure==='timeout')throw new Error('Synthetic PDF timeout');
+   return {url:request,status:request===pdf?(failure==='404'?404:200):200,headers:{get:()=>null},body:request.endsWith('/robots.txt')?npfcRobotsFixture:request===COLUMNS.npfc.url?Buffer.from(`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`):request===url?landing(pdf):Buffer.from('unavailable')};
+  }});
+  const same=await capture('npfc-same-url-'+failure,pdfA),unavailable=await importBatch(same.id,'tester');assert.equal(unavailable.evidenceUpdates.length,0);assert.equal(unavailable.acquisitions[0].confirmedChange,false);assert.equal((await documentHistory(first.id)).observations.length,1);assert.equal((await materialDetail(first.id)).state,'approved');assert.ok((await flowDetail(task.id)).internalArticle);
+  const changed=await capture('npfc-new-url-'+failure,pdfB),result=await importBatch(changed.id,'tester');assert.equal(result.rows.length,0);assert.equal(result.evidenceUpdates.length,1);assert.equal(result.acquisitions[0].outcome,'unavailable');assert.equal(result.acquisitions[0].confirmedChange,true);
+  const history=await documentHistory(first.id),latest=history.observations[1].payload.sourceCapture;assert.equal(history.observations.length,2);assert.equal(latest.attachmentUrl,pdfB);assert.equal(latest.attachmentSha256,null);assert.equal(latest.bodySha256,null);assert.equal(latest.parseStatus,'unverified');assert.equal((await materialDetail(first.id)).state,'unverified');assert.equal(history.reviews.length,1);assert.equal(history.reviews[0].revision,1);assert.equal(history.document.withdrawn_reason,null);assert.equal((await flowDetail(task.id)).stale,true);assert.equal((await flowDetail(task.id)).internalArticle,null);
+  await importBatch(changed.id,'tester');assert.equal((await documentHistory(first.id)).observations.length,2);
+ }
+});

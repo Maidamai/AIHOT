@@ -103,9 +103,16 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     if(listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl||listing.receipt.status!==200)throw new Error('Invalid NPFC listing receipt');
     const candidate=discoverNpfc(new TextDecoder('utf8',{fatal:true}).decode(listing.body)).candidates.find(c=>c.url===item.url);
     if(!candidate)throw new Error('NPFC measure absent from archived current listing');
-    const attachment=await readArchive(root,`${item.archiveId}-pdf`,10*1024*1024);
-    await verifyNpfcPdf(dataDir,batch,item.archiveId,npfcAttachment(raw,receipt.finalUrl),attachment);
-    result=prepareNpfc(candidate,receipt,raw,{receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)});
+    // A verified landing can confirm a changed required URL even when its new PDF is unavailable.
+    // Reconstruct that identity independently; never recover it from the editable manifest.
+    result=prepareNpfc(candidate,receipt,raw);
+    if(result.sourceCapture.httpStatus===200&&!result.sourceCapture.conflicts.length){
+      const attachment=await readArchive(root,`${item.archiveId}-pdf`,10*1024*1024).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+      if(attachment){
+        await verifyNpfcPdf(dataDir,batch,item.archiveId,result.sourceCapture.attachmentUrl!,attachment);
+        result=prepareNpfc(candidate,receipt,raw,{receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)});
+      }
+    }
     result.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
   } else if(item.column==='fujian-notices'){
     const robots=await readArchive(root,'fujian-notices-robots',256*1024),listing=await readArchive(root,'fujian-notices-list',6*1024*1024),listingUrl=item.listingUrl??COLUMNS['fujian-notices'].url;
@@ -332,7 +339,11 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           } else if(column==='npfc'){
             let pdf:Parameters<typeof prepareNpfc>[3];
             let attachment:Awaited<ReturnType<typeof captureNpfcPdf>>|undefined;
-            if(article.receipt.status===200){const url=npfcAttachment(article.body,article.receipt.finalUrl);await wait(delay);attachment=await captureNpfcPdf({dataDir:options.dataDir,batchId:id,archiveId,url,check,write:writeRaw,get,wait:()=>wait(delay)});await check();pdf={receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)};await check();}
+            if(article.receipt.status===200){
+              const url=npfcAttachment(article.body,article.receipt.finalUrl);
+              try{await wait(delay);attachment=await captureNpfcPdf({dataDir:options.dataDir,batchId:id,archiveId,url,check,write:writeRaw,get,wait:()=>wait(delay)});await check();pdf={receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)};await check();}
+              catch(error){await check();item.error=String((error as Error).message).slice(0,500);}
+            }
             prepared=prepareNpfc(discoverNpfc(html).candidates.find(c=>c.url===candidate.url)!,article.receipt,article.body,pdf);
             prepared.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
             if(prepared.readyForReview&&attachment)pendingCache.push(attachment.publish);

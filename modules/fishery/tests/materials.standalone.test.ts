@@ -1378,3 +1378,35 @@ test('Legacy PDF evidence refuses a textless physical page even when old parsed 
  assert.throws(()=>buildEvidenceCatalog(input),/page intervals/);
  assert.throws(()=>buildFisheryDraftRequest(input,'mock'),/page intervals/);
 });
+
+test('NPFC unavailable PDFs retain independently verified landing attachment identity',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'npfc-unavailable-')),f=npfcCacheFixture();
+ try{
+  for(const failure of ['404','timeout','nonpdf'] as const){
+   const b=await collectColumns({id:'landing-only-'+failure,dataDir:dir,columns:['npfc'],limit:1,wait:async()=>{},fetch:f.fetch(async()=>{
+    if(failure==='timeout')throw new Error('Synthetic PDF timeout');
+    return f.response(failure==='404'?404:200,Buffer.from('unavailable'));
+   })});
+   const item=b.items[0];assert.equal(item.state,'failed');assert.equal(item.prepared!.sourceCapture.attachmentUrl,f.pdfUrl);
+   item.prepared!.sourceCapture.attachmentUrl='https://www.npfc.int/system/files/forged.pdf';
+   const p=await verifyBatchItem(dir,b,item);assert.equal(p.sourceCapture.attachmentUrl,f.pdfUrl);assert.equal(p.sourceCapture.attachmentSha256,null);assert.equal(p.sourceCapture.parseStatus,'unverified');assert.equal(p.body,null);assert.equal(p.readyForReview,false);
+   const raw=path.join(batchRoot(dir),b.id,'raw');
+   if(failure!=='timeout')assert.equal(JSON.parse(await readFile(path.join(raw,item.archiveId+'-pdf-response.receipt.json'),'utf8')).status,failure==='404'?404:200);
+  }
+  const capture=async(id:string,mode:'landing-failed'|'title-mismatch'|'foreign-link'|'list-mismatch')=>collectColumns({id,dataDir:dir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async url=>{
+   const response=await f.fetch(async()=>f.response(404,Buffer.from('missing')))(url);
+   if(url===f.url){
+    if(mode==='landing-failed')response.status=404;
+    if(mode==='title-mismatch')response.body=Buffer.from(response.body.toString().replace('CMM 2026-01 Synthetic cache test','CMM 2025-01 Other version'));
+    if(mode==='foreign-link')response.body=Buffer.from(response.body.toString().replace(f.pdfUrl,'https://example.org/forged.pdf'));
+   }
+   if(url===COLUMNS.npfc.url&&mode==='list-mismatch')response.body=Buffer.from(response.body.toString().replace('CMM 2026-01 Synthetic cache test','CMM 2025-01 Other version'));
+   return response;
+  }});
+  for(const mode of ['landing-failed','title-mismatch','foreign-link','list-mismatch'] as const){
+   const b=await capture('untrusted-'+mode,mode);
+   if(mode==='foreign-link')await assert.rejects(verifyBatchItem(dir,b,b.items[0]),/unambiguous/);
+   else{const p=await verifyBatchItem(dir,b,b.items[0]);assert.ok(p.sourceCapture.httpStatus!==200||p.sourceCapture.conflicts.length>0);assert.equal(p.readyForReview,false);}
+  }
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
