@@ -1,6 +1,6 @@
 import type { BusinessGuideReaderItem } from "../business-contracts.ts";
 import type { ReactNode } from "react";
-const dateLabel = (date: { precision: string; value: string | null }) => date.value ? `${date.value}（${({ year: "年", month: "月", day: "日" } as Record<string, string>)[date.precision] ?? date.precision}精度）` : "未知";
+const dateLabel = (date: { precision: string; value: string | null }) => date.value ? `${date.value}（${({ year: "年", month: "月", day: "日" } as Record<string, string>)[date.precision] ?? date.precision}精度）` : "未核实";
 import "./business.css";
 export const BUSINESS_KINDS={business_guide:"业务指南",policy_reference:"政策资料",dynamic_article:"动态文章"};
 export function SafeSource({url,children}:{url:string|null|undefined;children:ReactNode}) {
@@ -8,7 +8,7 @@ export function SafeSource({url,children}:{url:string|null|undefined;children:Re
   return safe?<a href={url!} target="_blank" rel="noopener noreferrer">{children} ↗</a>:<span>{children}（链接待确认）</span>;
 }
 export function BusinessDate({value}:{value:{value:string|null;precision:string}}){return <>{dateLabel(value)}</>;}
-export function BusinessUnknown(){return <span className="business-unknown">未知，待确认</span>;}
+export function BusinessUnknown(){return <span className="business-unknown">未核实（尚无已采纳证据）</span>;}
 
 export function isHistorical(date:{precision:string;value:string|null},reference:string){
   if(!date.value)return false;

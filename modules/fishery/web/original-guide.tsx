@@ -10,7 +10,7 @@ function SourceLink({ url, children }: { url: string | null; children: ReactNode
   return safe ? <a href={url!} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{children} ↗</a> : <span>{children}（链接待确认）</span>;
 }
 
-const unknown = "未知，待确认";
+const unknown = "未核实（尚无已采纳证据）";
 function dateText(value: { value: string | null; precision: string }) {
   return value.value ? `${value.value}（${({ year: "年", month: "月", day: "日" } as Record<string, string>)[value.precision] ?? value.precision}精度）` : unknown;
 }
@@ -51,7 +51,7 @@ export function BusinessGuideBody({ guide }: { guide: BusinessGuideReaderItem })
   const sameTitle = (value: string) => value.replace(/\s+/g, " ").trim() === p.title.value.replace(/\s+/g, " ").trim();
   const summary = p.summary.filter(s => !sameTitle(s.value));
   const titleEvidence = [...new Set([...p.title.evidence, ...p.summary.filter(s => sameTitle(s.value)).flatMap(s => s.evidence)])];
-  const dateNames = { published: "原文发布日期（正文引句）", effectiveFrom: "生效日期", deadline: "截止日期", expiresAt: "失效日期" };
+  const dateNames = { published: "原文发布日期（正文引句）", effectiveFrom: "文载生效日期", deadline: "办理截止日期", expiresAt: "文载失效日期" };
   return <div className="mt-5 border-t border-line pt-4" aria-label="办事指南与政策资料">
     <div className="flex flex-wrap items-center justify-between gap-3 text-[12px] font-semibold text-accent">
       <span>{p.kind === "business_guide" ? "办事指南" : "政策资料"} · 编审整理</span>
@@ -72,7 +72,7 @@ export function BusinessGuideBody({ guide }: { guide: BusinessGuideReaderItem })
       {fields.map(([title, field]) => <Field key={title} title={title} evidence={field.evidence} guide={guide}>{field.state === "documented" ? field.value : unknown}</Field>)}
       {secondary.filter(([, field]) => field.state === "documented").map(([title, field]) => <Field key={title} title={title} evidence={field.evidence} guide={guide}>{field.value}</Field>)}
       <Field title="文载状态" evidence={p.documentStatus.evidence} guide={guide}>{p.documentStatus.state === "unknown" ? unknown : p.documentStatus.value === "formal" ? "正式文件（文载）" : "征求意见稿（文载）"}</Field>
-      {(Object.keys(dateNames) as Array<keyof typeof dateNames>).map(key => <Field key={key} title={dateNames[key]} evidence={p.dates[key].evidence} guide={guide}>{dateText(p.dates[key].value)}</Field>)}
+      {(Object.keys(dateNames) as Array<keyof typeof dateNames>).map(key => <Field key={key} title={dateNames[key]} evidence={p.dates[key].evidence} guide={guide}>{key === "published" && publication.metadata ? "正文日期证据未核实；来源元数据日期见上方" : dateText(p.dates[key].value)}</Field>)}
       {p.relations.length > 0 && <Field title="修订、废止与解释关系" guide={guide}>{p.relations.map((relation, i) => <div key={i}>
         <p>{{ amends: "修订", repeals: "废止", interprets: "解释", supersedes: "取代" }[relation.type]} · <SourceLink url={relation.url}>{relation.title}</SourceLink></p>
         <Evidence ids={relation.evidence} guide={guide} />

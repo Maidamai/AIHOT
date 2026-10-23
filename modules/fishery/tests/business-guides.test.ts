@@ -44,7 +44,7 @@ after(async () => { await app.close(); await stopBoss(); await closeDb(); });
 let sequence = 0;
 const body = "本合成测试通知为正式文件，2026年10月21日发布。\n本合成测试仅适用远洋渔业企业，申请材料包括申请表。\n2026年11月1日截止。\n办理入口：https://example.org/service。\n本合成测试修改2020年第2号规定，并不废止整份规定。";
 const unknown = () => ({ state: "unknown" as const, value: null, evidence: [] as [] });
-async function fixture(options: { manual?: boolean; pdf?: boolean } = {}) {
+async function fixture(options: { manual?: boolean; pdf?: boolean; undated?: boolean } = {}) {
   const sourceBody = options.pdf ? `--- Page 1 ---\n${body}\n--- Page 2 ---\n合成附件第二页，限定条件保留。` : body;
   const sourceId = `business-guide-${++sequence}`;
   await sql`INSERT INTO sources(id,name,kind,enabled,next_fetch_at) VALUES(${sourceId},'Synthetic official source','external',false,'2100-01-01')`;
@@ -52,7 +52,7 @@ async function fixture(options: { manual?: boolean; pdf?: boolean } = {}) {
   const doc = await createDocument({ sourceId, issuer: "Synthetic source attribution", canonicalUrl: `https://example.org/${sourceId}` }, "synthetic-editor");
   const archiveId = `${sourceId}_${sha256(sourceId).slice(0, 16)}`, directory = options.manual ? path.join(config.dataDir, "fishery-manual-archives", sourceId) : path.join(config.dataDir, "fishery-batches", sourceId, "body"), filename = path.join(directory, options.manual ? "body.txt" : `${archiveId}.txt`);
   await mkdir(directory, { recursive: true }); await writeFile(filename, sourceBody);
-  const observation = { ...observationFixture, originalTitle: "合成测试正式通知", title: "合成测试正式通知", rawSha256: sha256(sourceBody), sourceCapture: {
+  const observation = { ...observationFixture, dates: { ...observationFixture.dates, published: options.undated ? { precision: "unknown", value: null } : observationFixture.dates.published }, originalTitle: "合成测试正式通知", title: "合成测试正式通知", rawSha256: sha256(sourceBody), sourceCapture: {
     adapter: options.manual ? "manual_official" : "moa", acquisitionMode: "live_capture", ...(options.manual ? { manualArchiveId: sourceId } : { archiveId }), sourceUrl: `https://example.org/${sourceId}`, capturedAt: "2026-10-21T00:00:00Z",
     httpStatus: 200, rawSha256: sha256(sourceBody), bodySha256: sha256(sourceBody), parser: "synthetic-business/v1", parseStatus: "parsed", attachmentSha256: options.pdf ? sha256("Synthetic PDF bytes") : null,
     attachmentPages: options.pdf ? 2 : null, attachmentUrl: options.pdf ? "https://example.org/synthetic.pdf" : null, conflicts: [],
@@ -354,7 +354,11 @@ test("reviewed guides use original publication pool/detail and immediately disap
     assert.deepEqual(publication!.tags, ["补贴融资", "资料"]);
     assert.ok((await loadTopicPage("funding", 1))!.topic.poolTotal > 0);
     assert.ok((await loadPool({channel:"all",category:"reference",tag:"补贴融资",q:"合成通知"})).items.some(item => item.id === id));
-    assert.equal(publication!.published_at, null); assert.equal(publication!.publication_time, null); assert.equal(publication!.backfill, true);
+    assert.equal(publication!.published_at.toISOString(), "2026-04-16T16:00:00.000Z");
+    assert.equal(publication!.publication_time, "2026-04-17"); assert.equal(publication!.backfill, true);
+    const metadata = (await fisheryReferenceMetadata([id], new Date()))[id]!;
+    assert.match(metadata.lifecycle!.notice, /来源元数据发布日期：2026-04-17/);
+    assert.deepEqual((await businessGuideAdminDetail(created.id)).payload, created.payload, "Metadata projection does not rewrite approved body claims");
     assert.equal(publication!.grouping_status, "pending"); assert.equal(publication!.body_mode, "summary"); assert.equal(publication!.syndicate, false);
     assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${id}`).length, 0);
     // Controlled barrier: compute accepted IDs, mutate only canonical module state, then execute
@@ -435,7 +439,7 @@ test("reviewed business topics reuse the original tag-filtered pool and disappea
 });
 
 test("original RSS and v1 routes project guide dates at Beijing midnight without rewriting approved history", async t => {
-  const f = await fixture(), context = await businessGuideContext(f.id), input = payload(context);
+  const f = await fixture({ undated: true }), context = await businessGuideContext(f.id), input = payload(context);
   input.dates.published = { value: { precision: "day", value: "2026-10-21" }, evidence: [context.catalog.spans[0]!.id] };
   input.dates.expiresAt = structuredClone(input.dates.deadline);
   input.documentStatus = { state: "unknown", value: null, evidence: [] };
@@ -599,7 +603,7 @@ test("real consumer entry installs only configured modules and preserves unknown
   const boss = await getBoss({ schedule: false, supervise: false });
   const old = await sql`SELECT id FROM pgboss.job WHERE name=${publicationQueue.name} AND state IN ('created','retry')`;
   if (old.length) await boss.cancel(publicationQueue.name, old.map(row => row.id));
-  const f = await fixture(), approved = await finalApproval(await draft(f.id), "synthetic-entry-reviewer");
+  const f = await fixture({ undated: true }), approved = await finalApproval(await draft(f.id), "synthetic-entry-reviewer");
   const unapproved = await fixture(); await draft(unapproved.id);
   installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
   const bootstrap = await syncFisheryPublications("synthetic-entry-bootstrap");
