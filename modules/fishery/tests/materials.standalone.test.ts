@@ -22,7 +22,16 @@ import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backe
 import type { ColumnFetcher } from '../backend/column-batches.ts';
 import {noticeFixture} from './fixtures.ts';
 import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged,noticeEvidenceSections} from '../backend/fujian-notices.ts';
-import {discoverJfaPress,jfaPage,jfaDate,prepareJfaPress,jfaAttachmentChanged,jfaEvidenceSections} from '../backend/jfa-press.ts';
+import {discoverJfaPress,jfaPage,jfaDate,prepareJfaPress,jfaAttachmentChanged,jfaEvidenceSections,jfaCapacityNeedsReview} from '../backend/jfa-press.ts';
+
+test('JFA attachment-count capability gap retains verified landing and entire inventory without accepting acquisition failures',()=>{
+ const url='https://www.jfa.maff.go.jp/j/press/sigen/261002.html',html=`<div id="main_content"><h1>水産資源の評価結果</h1><div class="content_utility-date">令和8年10月2日 水産庁</div><p>資源評価結果の本文と添付資料一覧を公表します。適用海域については各資料で確認してください。</p>${Array.from({length:17},(_,i)=>`<a href="./attach/pdf/261002-${i+1}.pdf">資料${i+1}</a>`).join('')}</div>`;
+ const prepare=(text=html,status=200)=>{const raw=Buffer.from(text);return prepareJfaPress({requestedUrl:url,finalUrl:url,status,finishedAt:'2026-10-23T12:00:00Z',sha256:sha256(raw)},raw);};
+ const r=prepare();assert.equal(jfaCapacityNeedsReview(r),true);assert.equal(r.body,null);assert.equal(r.sourceCapture.bodySha256,null);assert.equal(r.sourceCapture.jfaContext!.attachmentCount,17);assert.deepEqual(r.sourceCapture.jfaContext!.attachments,[]);
+ const changed=prepare(html.replace('261002-17.pdf','261002-18.pdf'));assert.equal(jfaAttachmentChanged(r.sourceCapture.jfaContext,changed.sourceCapture.jfaContext),true);
+ assert.equal(jfaCapacityNeedsReview(prepare(html,503)),false);assert.equal(jfaCapacityNeedsReview({...r,sourceCapture:{...r.sourceCapture,conflicts:['Hash mismatch']}}),false);
+ const missing=prepare(html.replace(/<a href=.*?<\/a>/g,''));assert.equal(jfaCapacityNeedsReview(missing),false);
+});
 
 test('JFA discovery uses displayed Japanese dates, keeps resource updates and excludes external publishers',()=>{
  const html='<main id="main_content"><h2>令和8年10月分</h2><p class="list_item_date">10月9日</p><dl class="list_item"><dd><a href="./seibi/261006.html">港の供用開始</a></dd></dl><p class="list_item_date">10月2日</p><dl class="list_item"><dd><a href="./sigen/251002.html">水産資源の評価</a></dd><dd><a href="https://external.example/notice.html">外部</a></dd></dl></main>';
