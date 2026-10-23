@@ -173,6 +173,7 @@ test('selection BLOCK and UNKNOWN stop scores; high score cannot bless a fact wi
 });
 
 import {AUTOMATIC_FLOW_KEY,configureAutomaticFlows,upgradeAutomaticFlowSources,dispatchAutomaticDocuments,automaticFlowPermit} from '../backend/automatic-flows.ts';
+import {nominateProcessing,processingEligibility,revokeProcessing} from '../backend/processing-eligibility.ts';
 import { syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadItemDetail } from "@aihot/backend/publication/detail";
 import assert from "node:assert/strict";
@@ -266,6 +267,37 @@ async function automaticFixture(number:number,body='合成公海远洋渔业事�
   return {...doc,body};
 }
 const autoPolicy=(documentIds?:string[])=>({enabled:true,sourceIds:['fishery-column-moa'],createdAfter:'2026-10-21T00:00:00Z',...documentIds?{documentIds}:{}});
+test('bounded business review admits an old approved version without changing history and revocation stops spending',async()=>{
+ const d=await automaticFixture(940),[source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+ const archiveId='synthetic-business_1234567890abcdef',dir=path.join(config.dataDir,'fishery-batches','synthetic-business','body');
+ await mkdir(dir,{recursive:true});await writeFile(path.join(dir,`${archiveId}.txt`),d.body);
+ await observe(d.id,{...observationFixture,expectedRevision:1,language:'zh',sourceCapture:{adapter:'moa',sourceUrl:'https://example.org/synthetic-business',capturedAt:'2026-10-21T08:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(d.body),archiveId,parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+ await sql`UPDATE fishery_documents SET created_at='2020-01-01' WHERE id=${d.id}`;
+ await sql`UPDATE articles SET backfill=true,publication_time='2020-01-01' WHERE raw->>'fisheryDocumentId'=${d.id}`;
+ const [original]=await sql`SELECT publication_time,backfill,discovered_at FROM articles WHERE raw->>'fisheryDocumentId'=${d.id}`;
+ const before=await sql`SELECT count(*)::int AS n FROM receipts`;
+ const nomination={revision:2,sourceRevision:source.revision,kind:'policy',evidenceQuote:d.body,reason:'Synthetic business relevance review; no assertion of current legal validity',expiresAt:new Date(Date.now()+86400000).toISOString()};
+ await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic bounded historical business review');
+ try{
+  assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
+  await assert.rejects(nominateProcessing(d.id,nomination,'tester'),/当前版本素材审核/);
+  await approve(d.id,2,source.revision);
+  await assert.rejects(nominateProcessing(d.id,{...nomination,evidenceQuote:'Synthetic quotation not present in the source'},'tester'),/逐字引用/);
+  const granted=await nominateProcessing(d.id,nomination,'tester');assert.equal(granted.eligible,true);
+  assert.equal((await nominateProcessing(d.id,nomination,'tester')).nomination!.id,granted.nomination!.id);
+  const dispatched=await dispatchAutomaticDocuments();assert.equal(dispatched.rows[0].state,'enqueued');
+  assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
+  const binding=await automaticFlowPermit(dispatched.rows[0].taskId!);assert.equal(binding.processingEligibilityId,granted.nomination!.id);
+  await revokeProcessing(d.id,{reason:'Synthetic explicit review withdrawal before any paid request'},'tester');
+  await assert.rejects(automaticFlowPermit(dispatched.rows[0].taskId!,binding),/bounded business-review nomination/);
+  assert.equal((await processingEligibility(d.id)).nomination!.status,'revoked');
+  await nominateProcessing(d.id,nomination,'tester');await review(d.id,{revision:2,sourceRevision:source.revision,decision:'rejected',applicabilityReviewed:false,note:'Synthetic evidence rejection'},'tester');
+  assert.equal((await processingEligibility(d.id)).nomination!.status,'stale');
+  assert.deepEqual((await sql`SELECT publication_time,backfill,discovered_at FROM articles WHERE raw->>'fisheryDocumentId'=${d.id}`)[0],original);
+  assert.deepEqual(await sql`SELECT count(*)::int AS n FROM receipts`,before);
+  const boss=await getBoss({schedule:false,supervise:false});await boss.cancel(flowQueue.name,dispatched.rows[0].jobId!);
+ }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
+});
 test('captured news reverts and date corrections remain bound to current evidence without duplicate analysis',async()=>{
  const url='https://yyj.moa.gov.cn/gzdt/202610/t20261023_revert.htm',before=await sql`SELECT count(*)::int AS n FROM receipts`;
  const capture=async(body:string,publishedAt='2026-10-23T01:00:00Z')=>{

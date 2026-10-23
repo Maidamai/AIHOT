@@ -1,4 +1,5 @@
 import { fisheryReaderTarget } from "./backend/publication-bridge.ts";
+import {processingEligibility,nominateProcessing,revokeProcessing} from './backend/processing-eligibility.ts';
 import { newsQueue, retryNewsEditorial } from "./backend/news-editorial.ts";
 import { publicationQueue } from "./backend/publication-queue.ts";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata } from "./backend/publication-bridge.ts";
@@ -45,6 +46,9 @@ export default defineServerModule({
     app.get("/api/admin/fishery/reader", guarded(async req=>readerPage(z.strictObject({category:z.enum(Object.keys(READER_CATEGORIES) as [keyof typeof READER_CATEGORIES,...(keyof typeof READER_CATEGORIES)[]]).optional(),page:z.coerce.number().int().positive().max(100000).optional()}).parse(req.query))));
     app.get("/api/admin/fishery/reader/:id", guarded(async req=>readerItem(param(req))));
     app.get("/api/admin/fishery/documents/:id/flows", guarded(async req=>({rows:await listFlows(param(req))})));
+    app.get('/api/admin/fishery/documents/:id/processing-eligibility',guarded(async req=>processingEligibility(param(req))));
+    app.post('/api/admin/fishery/documents/:id/processing-eligibility',guarded(async(req,_reply,admin)=>nominateProcessing(param(req),req.body,admin.name)));
+    app.delete('/api/admin/fishery/documents/:id/processing-eligibility',guarded(async(req,_reply,admin)=>revokeProcessing(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/documents/:id/flows", guarded(async(req,reply,admin)=>reply.code(201).send(await createFlow(param(req),req.body,admin.name))));
     app.get("/api/admin/fishery/flows/:id", guarded(async req=>flowDetail(param(req))));
     app.get("/api/admin/fishery/flows/:id/revision", guarded(async req=>revisionContext(param(req))));
