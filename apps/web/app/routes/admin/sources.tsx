@@ -4,8 +4,9 @@ import type { Route } from "./+types/sources";
 import type { AdminSources } from "@aihot/contracts/admin";
 import { adminGet } from "../../lib/admin.server";
 import { num } from "../../features/admin/format";
-import { HEALTH_LABEL, KIND_LABEL, MODE_LABEL } from "../../features/admin/labels";
-import { AdminPage, Badge, ButtonLink, Card, DataTable, Dot, FilterChips, healthTone, Input, Pager, Select, Stat, Time } from "../../features/admin/ui";
+import { KIND_LABEL, MODE_LABEL } from "../../features/admin/labels";
+import { SourceHealth, sourceInterval, SourceRuntimeLink } from "../../features/admin/source-runtime";
+import { AdminPage, Badge, ButtonLink, Card, DataTable, FilterChips, Input, Pager, Select, Stat, Time } from "../../features/admin/ui";
 
 
 
@@ -23,7 +24,7 @@ export default function Sources({ loaderData }: Route.ComponentProps) {
   return (
     <AdminPage
       title="信源"
-      subtitle="列表按健康度排序：失败的在最前。点进详情可以预览抓取、手动采集、调整频率与参与方式。"
+      subtitle="列表按实际运行健康度排序：失败的在最前。受控采集的运行设置请前往对应状态页查看。"
       actions={<ButtonLink to="/admin/sources/new" tone="primary">新建信源</ButtonLink>}
     >
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -73,7 +74,8 @@ export default function Sources({ loaderData }: Route.ComponentProps) {
                     {r.name}
                   </Link>
                   <div className="font-mono text-[11.5px] text-ink-4">{r.id}</div>
-                  {r.health === "failing" && r.last_error && <div className="mt-1 line-clamp-1 text-[12px] text-hot">{r.last_error}</div>}
+                  {r.runtime && <div className="mt-1 text-[12px]"><SourceRuntimeLink runtime={r.runtime} /></div>}
+                  {(r.runtime ? r.runtime.lastError : r.health === "failing" ? r.last_error : null) && <div className="mt-1 line-clamp-1 text-[12px] text-hot">{r.runtime ? r.runtime.lastError : r.last_error}</div>}
                 </div>
               ),
             },
@@ -92,16 +94,11 @@ export default function Sources({ loaderData }: Route.ComponentProps) {
             {
               key: "health",
               label: "健康",
-              render: (r) => (
-                <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <Dot tone={r.enabled ? healthTone(r.health) : "muted"} />
-                  {r.enabled ? HEALTH_LABEL[r.health] ?? r.health : "已暂停"}
-                  {r.fail_count > 0 && <span className="num text-[11.5px] text-ink-4">×{r.fail_count}</span>}
-                </span>
-              ),
+              render: (r) => <SourceHealth source={r} />,
             },
-            { key: "ok", label: "上次成功", render: (r) => <Time at={r.last_ok_at} /> },
-            { key: "interval", label: "频率", align: "right", render: (r) => `${r.interval_minutes} 分` },
+            { key: "ok", label: "上次成功", render: (r) => <Time at={r.runtime ? r.runtime.lastSuccessAt : r.last_ok_at} /> },
+            { key: "next", label: "下次执行", render: (r) => <Time at={r.runtime ? r.runtime.nextRunAt : r.next_fetch_at} /> },
+            { key: "interval", label: "频率", align: "right", render: sourceInterval },
             { key: "items", label: "7 天条目", align: "right", render: (r) => num(r.items_7d) },
             { key: "sel", label: "30 天精选", align: "right", render: (r) => num(r.selected_30d) },
           ]}

@@ -6,8 +6,9 @@ import { REPLACEABLE_SOURCE_KINDS, type AdminSource, type AdminSourceDetail, typ
 import { adminGet } from "../../lib/admin.server";
 import { useAdminAction } from "../../features/admin/action";
 import { bj, duration, num } from "../../features/admin/format";
-import { HEALTH_LABEL, KIND_LABEL, MODE_LABEL, TIER_LABEL, VISIBILITY_LABEL } from "../../features/admin/labels";
-import { AdminPage, Badge, Button, Card, DataTable, Dot, Empty, Field, healthTone, Input, Json, KV, ReasonDialog, Select, Stat, Textarea, Time } from "../../features/admin/ui";
+import { KIND_LABEL, MODE_LABEL, TIER_LABEL, VISIBILITY_LABEL } from "../../features/admin/labels";
+import { SourceHealth, sourceInterval, SourceRuntimeLink } from "../../features/admin/source-runtime";
+import { AdminPage, Badge, Button, ButtonLink, Card, DataTable, Empty, Field, Input, Json, KV, ReasonDialog, Select, Stat, Textarea, Time } from "../../features/admin/ui";
 
 
 /** X runs: pages read, and older stretches still to read (backlog) or given up (dropped). */
@@ -41,6 +42,8 @@ function draftOf(s: AdminSource): Draft {
 
 export default function SourceDetail({ loaderData }: Route.ComponentProps) {
   const { source: s, runs, items, stats, history } = loaderData;
+  const runtime = s.runtime;
+  const lastError = runtime ? runtime.lastError : s.health !== "ok" ? s.last_error : null;
   const { run, pending } = useAdminAction();
   const [draft, setDraft] = useState<Draft>(() => draftOf(s));
   const [draftFor, setDraftFor] = useState(s.updated_at);
@@ -99,7 +102,7 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
       }
       subtitle={<span className="font-mono text-[12px]">{s.id}</span>}
       actions={
-        <>
+        runtime ? <ButtonLink to={runtime.detailPath}>{runtime.label}运行状态</ButtonLink> : <>
           <Button
             busy={pending === "preview"}
             onClick={async () => {
@@ -127,17 +130,28 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
           label="健康"
           value={
             <span className="inline-flex items-center gap-2 text-[18px]">
-              <Dot tone={s.enabled ? healthTone(s.health) : "muted"} />
-              {s.enabled ? HEALTH_LABEL[s.health] ?? s.health : "已暂停"}
+              <SourceHealth source={s} />
             </span>
           }
-          hint={s.fail_count ? `连续失败 ${s.fail_count} 次` : `上次成功 ${s.last_ok_at ? bj(s.last_ok_at) : "—"}`}
+          hint={runtime ? `上次成功 ${runtime.lastSuccessAt ? bj(runtime.lastSuccessAt) : "—"}` : s.fail_count ? `连续失败 ${s.fail_count} 次` : `上次成功 ${s.last_ok_at ? bj(s.last_ok_at) : "—"}`}
         />
         <Stat label="累计条目" value={num(stats.total)} />
         <Stat label="近 7 天" value={num(stats.last7d)} />
         <Stat label="入选精选" value={num(stats.selected)} />
       </div>
-      {s.last_error && s.health !== "ok" && <div className="mb-5 rounded-card bg-hot-soft px-4 py-3 text-[13px] text-hot ring-1 ring-hot/20">{s.last_error}</div>}
+      {lastError && <div className="mb-5 rounded-card bg-hot-soft px-4 py-3 text-[13px] text-hot ring-1 ring-hot/20">{lastError}</div>}
+      {runtime && (
+        <Card className="mb-5" title="实际采集运行" right={<SourceRuntimeLink runtime={runtime} />}>
+          <p className="mb-3 text-[13px] text-ink-3">此信源由{runtime.label}管理。启停、采集频率与手动执行请查看运行状态页；下方核心配置不会控制该采集任务。</p>
+          <KV items={[
+            ["健康", <SourceHealth source={s} />],
+            ["采集频率", sourceInterval(s)],
+            ["上次成功", <Time at={runtime.lastSuccessAt} />],
+            ["下次执行", <Time at={runtime.nextRunAt} />],
+            ["最后心跳", <Time at={runtime.heartbeatAt} />],
+          ]} />
+        </Card>
+      )}
 
       {preview && (
         <Card className="mb-5" title={`预览：${preview.count} 条（${preview.ms}ms，未入库）`} right={<button onClick={() => setPreview(null)}>收起</button>}>
@@ -164,15 +178,15 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
               <Field label="名称">
                 <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </Field>
-              {(REPLACEABLE_SOURCE_KINDS as readonly string[]).includes(s.kind) && (
+              {!runtime && (REPLACEABLE_SOURCE_KINDS as readonly string[]).includes(s.kind) && (
                 <Field label="采集方式" hint="调整后保留信源与历史内容；请填写对应的完整配置并预览">
                   <Select value={draft.kind} onChange={(e) => { setDraft({ ...draft, kind: e.target.value }); setPreview(null); }}>
                     {REPLACEABLE_SOURCE_KINDS.map(kind => <option key={kind} value={kind}>{KIND_LABEL[kind]}</option>)}
                   </Select>
                 </Field>
               )}
-              <Field label="采集间隔（分钟）">
-                <Input type="number" min={1} max={1440} value={draft.interval_minutes} onChange={(e) => setDraft({ ...draft, interval_minutes: Number(e.target.value) })} />
+              <Field label={runtime ? "核心采集间隔（分钟）" : "采集间隔（分钟）"} hint={runtime ? `实际频率由${runtime.label}管理，见上方实际采集运行` : undefined}>
+                <Input type="number" min={1} max={1440} disabled={!!runtime} value={draft.interval_minutes} onChange={(e) => setDraft({ ...draft, interval_minutes: Number(e.target.value) })} />
               </Field>
               <Field label="参与方式" hint="氛围只作热点讨论证据，不单独成为内容">
                 <Select value={draft.participation_mode} onChange={(e) => setDraft({ ...draft, participation_mode: e.target.value })}>
@@ -206,8 +220,8 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
             <div className="mt-4">
-              <Field label="采集配置（JSON）">
-                <Textarea className="font-mono !text-[12px]" rows={Math.min(18, draft.config.split("\n").length + 1)} value={draft.config} onChange={(e) => setDraft({ ...draft, config: e.target.value })} spellCheck={false} />
+              <Field label={runtime ? "核心采集配置（JSON，只读）" : "采集配置（JSON）"}>
+                <Textarea className="font-mono !text-[12px]" rows={Math.min(18, draft.config.split("\n").length + 1)} readOnly={!!runtime} value={draft.config} onChange={(e) => setDraft({ ...draft, config: e.target.value })} spellCheck={false} />
               </Field>
               {configError && <div className="mt-1 text-[12.5px] text-hot">{configError}</div>}
             </div>
@@ -239,9 +253,11 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
         </div>
 
         <div className="space-y-5">
-          <Card title="状态">
+          <Card title={runtime ? "核心采集配置与历史" : "状态"}>
+            {runtime && <p className="mb-3 text-[12.5px] text-ink-3">以下为核心采集配置和历史记录，实际运行见上方{runtime.label}状态。</p>}
             <KV
               items={[
+                ...(runtime ? [["核心采集", s.enabled ? "已启用" : "已停用"], ["核心采集方式", KIND_LABEL[s.kind] ?? s.kind], ["核心采集间隔", `${s.interval_minutes} 分`]] as Array<[string, string]> : []),
                 ["上次抓取", s.last_fetch_at ? bj(s.last_fetch_at, true) : null],
                 ["上次成功", s.last_ok_at ? bj(s.last_ok_at, true) : null],
                 ["下次抓取", s.next_fetch_at ? bj(s.next_fetch_at, true) : null],
@@ -250,7 +266,7 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
             />
             {s.cursor && <div className="mt-3"><Json value={s.cursor} label="游标" /></div>}
           </Card>
-          <Card title="采集记录" pad={false}>
+          <Card title={runtime ? "核心采集记录" : "采集记录"} pad={false}>
             <DataTable
               dense
               rows={runs}
