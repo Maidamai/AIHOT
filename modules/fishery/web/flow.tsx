@@ -38,6 +38,37 @@ function ReconcileInterrupted({flow:d}:{flow:FlowView}) {
     }}><label className="flex items-start gap-2 text-[13px]"><input type="checkbox" required checked={stopped} onChange={e=>setStopped(e.target.checked)}/>我已在外部确认所有旧版本 runner 已停止，核对完整执行、队列、回执和费用状态；拿到租约不能代替此确认。</label>{state.activeJobId&&<label className="mt-3 flex items-start gap-2 text-[13px]"><input type="checkbox" required checked={cancelJob} onChange={e=>setCancelJob(e.target.checked)}/>明确取消已核实的旧 active job {state.activeJobId}，不重排任何任务。</label>}{fingerprint!==null&&fingerprint!==state.executionFingerprint&&<p role="alert" className="text-hot">执行状态已变化，请关闭并重新核对。</p>}</ReasonDialog>
   </Card>;
 }
+function EditorialRecovery({flow:d}:{flow:FlowView}) {
+  const {run,busy}=useAdminAction();
+  const [command,setCommand]=useState<{mode:"resume"|"regenerate";revision:number;projectionHash:string;fingerprint:string}|null>(null),[ack,setAck]=useState(false),[error,setError]=useState("");
+  const editorial=d.editorial;
+  if(!editorial)return null;
+  const blockers:string[]=[];
+  if(!d.authoritative||d.stale||d.reviewBound!==true)blockers.push("任务或证据审核已非当前有效版本，请重新核对。");
+  if(!d.materialApproved||d.materialRejected)blockers.push("当前素材与信源版本尚未审核通过。");
+  if(d.status!=="qualified"||d.human_decision?.decision!=="qualified"||!d.internalArticle)blockers.push("当前文章尚未通过内部终审。");
+  if(d.selection?.outcome?.label!=="SCORED"||!d.selection.outcome.attentionCandidate||!d.selection.structure?.result)blockers.push("当前评分或事件事实尚不满足归组条件。");
+  if(d.timeline.historical)blockers.push("历史资料不能恢复新闻归组。");
+  if(editorial.status==="complete")blockers.push("归组已完成，无需恢复。");
+  if(editorial.job?.state!=="failed")blockers.push("仅已终止的失败归组任务可恢复；无任务、排队、运行或其他状态须先核对。");
+  const canRetry=blockers.length===0,fingerprint=JSON.stringify(d),changed=command!==null&&command.fingerprint!==fingerprint,attemptsExhausted=(editorial.job?.attempt??0)>=3;
+  const open=(mode:"resume"|"regenerate")=>{setAck(false);setError("");setCommand({mode,revision:editorial.revision,projectionHash:editorial.projectionHash,fingerprint});};
+  return <Card title="事件归组与失败恢复">
+    <p className="mb-3 text-[13px] text-ink-3">归组在文章终审后单独处理。恢复复用本次已保存回执；进入尚未请求的后续阶段仍可能新增费用。费用未决（pending / unknown）须先核清，后台会重新检查当前资格、任务与账本。</p>
+    <KV items={[["归组状态",({pending:"待归组",failed:"归组失败",complete:"归组完成"} as Record<string,string>)[editorial.status]??editorial.status],["队列状态",editorial.job?(({created:"待执行",retry:"待重试",active:"运行中",failed:"已终止失败",completed:"已完成",cancelled:"已取消"} as Record<string,string>)[editorial.job.state]??editorial.job.state):"无归组任务"],["归组尝试 / 文章版本",`${editorial.job?.attempt??"未建立"} / ${editorial.revision}`]]}/>
+    {editorial.error&&<p role="alert" className="mt-3 whitespace-pre-wrap break-words text-[13px] text-hot">归组错误：{editorial.error}</p>}
+    {!!blockers.length&&<ul className="mt-3 space-y-1 text-[12px] text-ink-3">{blockers.map(reason=><li key={reason}>{reason}</li>)}</ul>}
+    {attemptsExhausted&&<p className="mt-3 text-[12px] text-ink-3">已达到每版本3次付费尝试上限，不能重新生成；同次恢复仍须后台检查。</p>}
+    <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy||!canRetry} onClick={()=>open("resume")}>恢复本次归组</Button><Button disabled={busy||!canRetry||attemptsExhausted} onClick={()=>open("regenerate")}>重新生成归组（新增费用）</Button></div>
+    <details className="mt-3 text-[12px]"><summary>归组版本与队列诊断（只读）</summary><pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify(editorial,null,2)}</pre></details>
+    <ReasonDialog open={command!==null} title={command?.mode==="regenerate"?"重新生成归组，确认新增费用":"恢复本次归组"} confirmLabel="确认并排队归组" busy={busy} description={command?.mode==="regenerate"?"建立新的付费归组尝试，保留旧回执与审计。请填写原因（最多2000字）并明确确认费用。":"复用本次已有回执，尚未请求的后续阶段可能新增费用；不保证零费用。请填写原因（最多2000字）并核对费用状态。"} onClose={()=>setCommand(null)} onSubmit={async reason=>{
+      if(!command||busy||!ack||changed||!canRetry||command.mode==="regenerate"&&attemptsExhausted)return false;
+      if(reason.length>2000){setError("原因最多2000字，请缩短后重试。");return false;}
+      setError("");
+      const result=await run("POST",`/api/admin/fishery/flows/${d.id}/editorial/retry`,{projectionHash:command.projectionHash,revision:command.revision,mode:command.mode,acknowledgeNewCharge:command.mode==="regenerate"&&ack,reason},{label:`editorial:${d.id}:${command.projectionHash}:${command.revision}:${editorial.job!.id}:${command.mode}`,success:"归组恢复已排队，正在重新核对"});return !!result;
+    }}><p className="text-[13px]">绑定文章版本 {command?.revision} · 投影 <code className="break-all text-[11px]">{command?.projectionHash}</code></p><label className="flex items-start gap-2 text-[13px]"><input type="checkbox" required checked={ack} onChange={e=>setAck(e.target.checked)}/>{command?.mode==="regenerate"?"我已核清任务与费用状态，明确同意新归组尝试产生新增模型费用。":"我已核清任务与费用状态，理解恢复将复用已有回执，后续未请求阶段仍可能计费。"}</label>{(changed||!canRetry)&&<p role="alert" className="text-hot">页面数据或归组资格已变化，请取消并重新核对后再操作。</p>}{error&&<p role="alert" className="text-hot">{error}</p>}</ReasonDialog>
+  </Card>;
+}
 export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
   const {run,busy}=useAdminAction(),fresh=useFreshMaterial();
   const [command,setCommand]=useState<{kind:"resume"|"regenerate"|"qualified"|"rejected";snapshotHash:string}|null>(null),[ack,setAck]=useState(false);
@@ -49,7 +80,7 @@ export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-5">
         {d.selection&&<Card title="预筛与双评分 · 内部选材"><p className="text-[13px] text-ink-3">只衡量相关性及关注价值，门槛尚未按远洋渔业样本校准，不授予事实、精选或发布资格。旧任务不补跑。</p>{Object.entries(d.selection.results).map(([stage,r])=><p key={stage} className="mt-2 text-[13px]">{stage} · 回执 {r.receiptId} · {r.model} · {JSON.stringify(r.data)}</p>)}{d.selection.outcome&&<p className="mt-3 text-[13px]">结果 {d.selection.outcome.label} · 两次分值 {d.selection.outcome.values.join(" / ")||"未完成"} · 平均 {d.selection.outcome.average??"未知"} · 参考门槛 {d.selection.outcome.threshold??"未设"}。事实仍须独立核查及终审。</p>}</Card>}
-        {d.selection?.structure&&<Card title="事件事实 · 与摘要一同终审"><p className="text-[13px] text-ink-3">核对主体、动作、对象、发生时间及适用条件。只有当前原文的证据核查与终审通过，才进入原事件归组；归组后仍须通过信息增量判断才能精选。</p>{d.selection.structure.result?<><p className="mt-3 text-[12px] text-ink-3">抽取回执 {d.selection.structure.result.receiptId} · 范围 {d.selection.structure.result.scope}</p><pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-[13px]">{JSON.stringify(d.selection.structure.result.fact,null,2)}</pre></>:<p className="mt-3 text-[13px]">尚未完成结构化抽取。</p>}{d.editorial&&<details className="mt-3 text-[12px]"><summary>归组处理状态与恢复依据</summary><pre className="mt-2 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify(d.editorial,null,2)}</pre></details>}</Card>}
+        {d.selection?.structure&&<Card title="事件事实 · 与摘要一同终审"><p className="text-[13px] text-ink-3">核对主体、动作、对象、发生时间及适用条件。只有当前原文的证据核查与终审通过，才进入原事件归组；归组后仍须通过信息增量判断才能精选。</p>{d.selection.structure.result?<><p className="mt-3 text-[12px] text-ink-3">抽取回执 {d.selection.structure.result.receiptId} · 范围 {d.selection.structure.result.scope}</p><pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-[13px]">{JSON.stringify(d.selection.structure.result.fact,null,2)}</pre></>:<p className="mt-3 text-[13px]">尚未完成结构化抽取。</p>}</Card>}
         <Card title="候选文章与逐句证据">
           <Timeline value={d.timeline}/>{d.draft?.provenance&&<p className="mb-3 text-[13px]">{d.status==="qualified"?"人工修订候选，经模型辅助核查与人工审核":"人工修订候选，等待模型辅助核查与人工审核"}。原任务 <Link className="text-accent" to={`/admin/fishery/flows/${d.draft.provenance.originalTaskId}`}>{d.draft.provenance.originalTaskId}</Link>；修订者 {d.draft.provenance.actor} · {d.draft.provenance.at}<br/>原因：{d.draft.provenance.reason}<details><summary>修订差异审计</summary><pre className="overflow-auto whitespace-pre-wrap break-words text-[12px]">{JSON.stringify(d.draft.provenance.diff,null,2)}</pre></details></p>}
           {d.draft?<><p className="mb-3 text-[12px] text-ink-3">{d.draft.provenance?"人工修订，无生成调用":"生成回执 "+d.draft.receiptId} · 配置模型别名 {d.draft.model} · {d.draft.promptVersion}</p><ol className="space-y-4">{d.draft.draft.summaryZh.map((fact,i)=><li key={i}><p className="text-[14px] leading-relaxed">{fact.sentence}</p>{fact.evidence.map((a,j)=><blockquote key={j} className="mt-2 border-l-2 border-line pl-3 text-[12px] text-ink-3">{a.quote}<footer className="mt-1">原段 {a.paragraph} · PDF页 {a.page??"未提供"}</footer></blockquote>)}</li>)}</ol><details className="mt-4 text-[12px]"><summary className="cursor-pointer text-accent">查看日期、机构角色、海域和全部生成字段</summary><pre className="mt-2 max-h-[600px] overflow-auto whitespace-pre-wrap break-words rounded-control bg-bg-sunk p-3">{JSON.stringify(d.draft.draft,null,2)}</pre></details></>:<p className="text-[13px] text-ink-3">尚无成功生成产物。</p>}
@@ -64,6 +95,7 @@ export default function Flow({loaderData:d}:ComponentProps<typeof loader>) {
       </div>
       <aside className="space-y-5 xl:sticky xl:top-5">
         <Card title="人工决定">{!d.materialApproved&&<p role="alert" className="mb-3 text-[13px] text-hot">当前素材观察及信源版本尚未审核通过；请先在原文素材页完成正常审核，不能记录内部合格或进入资料预览。</p>}<p className="text-[13px] text-ink-3">核对原文、每条证据和适用边界后，记录内部决定。内部合格不会公开文章或开放全文导出。</p><div className="mt-4 flex flex-wrap gap-2"><Button tone="primary" disabled={busy||!canDecide} onClick={()=>open("qualified")}>记录内部合格</Button><Button tone="danger" disabled={busy||d.status==="running"} onClick={()=>open("rejected")}>拒绝 / 撤销内部合格</Button></div>{d.human_decision&&<div className="mt-4 text-[13px]"><p>{d.human_decision.actor} · {d.human_decision.at}</p><p className="mt-1 whitespace-pre-wrap break-words">{d.human_decision.note}</p></div>}</Card>
+        <EditorialRecovery flow={d}/>
         <ReconcileInterrupted flow={d}/>
         <Card title="受控处理"><p className="text-[13px] text-ink-3">排队后由受控后台处理，开关关闭或预算不足不会发送请求。中断或未知扣费先核对账本，不自动重发。</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy||d.stale||!d.authoritative||d.status!=="queued"} onClick={()=>run("POST",base+"/run",{},{success:"任务已排队，等待受控后台处理"})}>{d.draft?.provenance?"仅排队核查修订候选（可能计费）":"排队处理"}</Button><Button disabled={busy||d.stale||!d.authoritative||!["failed","needs_evidence","running"].includes(d.status)} onClick={()=>open("resume")}>{d.error?.nextStageRequiresNewCharge?"恢复未请求阶段（将新增费用）":"恢复同次处理（复用回执）"}</Button><Button disabled={busy||d.stale||!d.authoritative||!["failed","needs_evidence"].includes(d.status)||d.error?.phase==="persist"||d.error?.nextStageRequiresNewCharge} onClick={()=>open("regenerate")}>{d.draft?.provenance?"重新核查修订候选（可能计费）":"重新生成失败阶段（可能计费）"}</Button></div><KV items={[["尝试名称",d.identity],["生成 / 核查次数",`${d.generation_attempt} / ${d.review_attempt}`],["证据快照",<code className="break-all text-[11px]">{d.snapshotHash}</code>]]}/></Card>
       </aside>
