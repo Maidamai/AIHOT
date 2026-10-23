@@ -49,6 +49,7 @@ export function parseJmaSeaWarning(input: Uint8Array, url: string) {
   if (metadata.validUntil && Date.parse(metadata.validUntil) <= Date.parse(metadata.publishedAt)) throw new Error("Marine expiry does not follow publication");
 
   const bindings: Array<{ codeType: string; code: string | null; name: string; scope: string }> = [];
+  const headlineSignatures = new Set<string>();
   const checkArea = (area: any, codeType: string) => {
     const name = value(area?.Name), areaCode = value(area?.Code);
     if (!name) throw new Error("Missing marine area name");
@@ -68,16 +69,22 @@ export function parseJmaSeaWarning(input: Uint8Array, url: string) {
     if (!groups.length) throw new Error("Missing marine area bindings");
     for (const group of groups) {
       if (group["@_codeType"] !== product.codeType || !array(group.Area).length) throw new Error("Unsupported marine area code system");
-      for (const area of array(group.Area)) checkArea(area, product.codeType);
+      for (const area of array(group.Area)) {
+        checkArea(area, product.codeType);
+        if (code === "VPCU51") for (const kind of array(item.Kind)) headlineSignatures.add(JSON.stringify([value(area.Code), value(kind.Name), value(kind.Code)]));
+      }
     }
   }
   if (code === "VPCU51") {
     const warnings = array(r.Body.Warning);
     if (!warnings.length || warnings.some(w => w["@_type"] !== product.kind || !array(w.Item).length)) throw new Error("Missing local warning body");
+    const bodySignatures = new Set<string>();
     for (const warning of warnings) for (const item of array(warning.Item)) {
       if (array(item.Area).length !== 1) throw new Error("Missing local body area binding");
       checkArea(item.Area, product.codeType);
+      for (const kind of array(item.Kind)) if (value(kind.Name)) bodySignatures.add(JSON.stringify([value(item.Area.Code), value(kind.Name), value(kind.Code)]));
     }
+    if (headlineSignatures.size !== bodySignatures.size || [...headlineSignatures].some(s => !bodySignatures.has(s))) throw new Error("Local headline/body warning-area mismatch");
   }
   if (code !== "VPCU51" && !noWarningNotice && !array(r.Body.MeteorologicalInfos).some(i => i["@_type"] === product.kind && array(i.MeteorologicalInfo).length)) throw new Error("Missing general warning body");
   return {

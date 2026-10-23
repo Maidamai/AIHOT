@@ -91,6 +91,12 @@ test("unsupported version/title, missing body and changed body namespace fail cl
   for (const o of [{ version: "1.0_99" }, { title: "地方海上予報（Ｈ２８）" }, { body: "missing" }, { body: "missing", product: "VPZU54" }]) assert.throws(() => parse(o));
   assert.throws(() => parseJmaSeaWarning(Buffer.from(fixture().toString().replace("body/meteorology1/", "body/unknown/")), url()), /body namespace/);
 });
+test("a local headline cannot claim release or bind a different area from its warning body", () => {
+  const bytes = fixture().toString(); const bodyStart = bytes.indexOf("<Body");
+  const head = bytes.slice(0, bodyStart), body = bytes.slice(bodyStart);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head.replace("海上強風警報", "海上警報解除") + body), url()), /warning-area mismatch/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head + body.replace("沖縄南方海上", "沖縄東方海上").replace("6030", "6020")), url()), /warning-area mismatch/);
+});
 test("formal-warning XML is cached across restart and parsed again without a second request or changed official bytes", async () => {
   const dir = await mkdtemp(join(tmpdir(), "jma-sea-test-")); let calls = 0;
   const transport = async () => { calls++; return new Response(fixture()); };
