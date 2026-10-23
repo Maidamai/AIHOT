@@ -98,17 +98,21 @@ test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工
 
 ### 现有生成链的自动派发
 
-`fishery.flow.dispatch` 设置缺失时关闭。显式启用后仅接农业农村部这个已接通来源，按 `createdAfter` 和可选 `documentIds` 限定范围，不回溯全库。导入可以建立零调用的 `auto-` 任务占位；当前观察和信源版本的普通素材审核未通过时，不入付费队列。已有处理进程的维护循环每次最多检查5条，按证据、审核、配置与规则版本保存检查记录；前5条待审不会使第6条永久遗漏。导入落库到入队之间中断，下一次维护补派；入队与派发审计在同一事务，重放不重复入队。
+`fishery.flow.dispatch` 设置缺失时关闭。显式启用后按 `sourceIds` 同时限定已授权的农业农村部、福建省局动态、福建通知公告来源，再按 `createdAfter` 和可选 `documentIds` 限定范围，不回溯全库。导入可以建立零调用的 `auto-` 任务占位；当前观察和信源版本的普通素材审核未通过时，不入付费队列。已有处理进程的维护循环每次最多检查5条，按证据、审核、配置、核心正文修订与规则版本保存检查记录；前5条待审不会使第6条永久遗漏。导入落库到入队之间中断，下一次维护补派；入队与派发审计在同一事务，重放不重复入队。
 
 ```bash
 node modules/fishery/scripts/automatic-flows.ts --status
-node modules/fishery/scripts/automatic-flows.ts --enable --after 2026-10-21T07:13:00Z \
+node modules/fishery/scripts/automatic-flows.ts --enable --sources fishery-column-moa --after 2026-10-21T07:13:00Z \
   --documents <本轮明确核验的文档UUID> --reason '明确授权的现有MARA证据化流水线试运行'
 ```
 
 启用不写素材 `approved`，不写最终 `qualified`。队列仍是既有 `fishery.flow`、单消费者、`retryLimit:0`，使用既有阶段回执及累计10元金额闸门。自动任务在消费时、取得金额锁后和发送前重新核对配置、来源隔离、观察及素材审核版本。已收到结果复用；失败、pending/unknown、执行中断须走既有明确对账流程，维护不会自动付费重试。最终审批仍通过正常管理流程，事务派发已有 `fishery.publication` 后才进入原站阅读投影。
 
-停止自动派发使用相同范围的 `--disable --after ... --documents ... --reason ...`；它不清空任务、收据、费用、采集游标或归档计划，已发出请求的结果仍正常结算。新采集新闻已复用原版预筛与独立双评分；新采集新闻另在现有任务中抽取事件事实并一同核查；终审后由同一专用处理器消费原版归组、精选与成刊，仍不开放匿名访问。
+停止自动派发使用相同范围的 `--disable --sources ... --after ... --documents ... --reason ...`；它不清空任务、收据、费用、采集游标或归档计划，已发出请求的结果仍正常结算。新采集新闻已复用原版预筛与独立双评分；新采集新闻另在现有任务中抽取事件事实并一同核查；终审后由同一专用处理器消费原版归组、精选与成刊，仍不开放匿名访问。
+
+新闻完成 URL 缓存只覆盖当前最新列表。当前列表完整采集后，下一轮在每源最多5篇的界限内复核正文；新 URL 优先，消失的失败项保留证据。已归档且核验的正文回改（含 A→B→A）和原始日期纠正复用核心修订及 timeline 规则，使旧审核失效；不改变首次发现时间，不将历史内容重新变成今日消息。同文同日期重复不重分析。消费前核对核心正文与审核快照哈希；发布读取仍核对同一绑定。
+
+福建两栏目复用现有 `moa-archive.ts --column fujian|fujian-notices` 控制器，每小时最多5篇；缺省关闭，注册来源和显式启用后才采集。NPFC 继续每6小时最多1份的法规版本流，IOTC不在允许列表。
 
 `collect-columns.ts --incremental` 默认 `--storage file`，仅用于指定私有目录中的隔离归档验收。明确选择 `--storage db` 才读取既有 `fishery-column-moa/fujian/iotc` 的 `sources.cursor.fisheryColumnProgress`；缺失来源、数据库故障或游标/配置冲突立即停止，不回退文件游标，也不创建或启用来源。每轮仍有每源1–5文章、1–3列表页的上限，没有新增队列消费者或定时任务。
 

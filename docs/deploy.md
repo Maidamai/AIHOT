@@ -1,5 +1,13 @@
 # 部署
 
+### 远洋新闻增量链更新（2026-10-23）
+
+本次无表结构迁移，不删除历史、审核或账本。部署前排空受控处理器与归档器；保留 `fishery.flow.dispatch` 原设置和旧镜像。用新镜像运行 `node modules/fishery/scripts/automatic-flows.ts --upgrade-source-scope`，显式将唯一旧 `sourceId` 转为同范围 `sourceIds` 数组；此操作幂等、保留授权边界和 revision，不启用新源、不重置费用。完成后再启动新处理器。该单条运行配置升级不放进在线 schema migration。
+
+要接通已授权的福建新闻，先核验官方最新列表和完整正文、正常注册来源，再通过现有 `moa-archive.ts --column fujian|fujian-notices` 启用 `hourly`，并用 `automatic-flows.ts --sources ...` 显式配置共同范围。新控制器默认关闭；NPFC节奏、素材审核、最终发布和累计10元闸门不变。
+
+回滚先停止新归档器和处理器，保留期间产生的素材/审计/账本；恢复旧单源派发设置，并撤销新启用的福建运行计划后再启动旧镜像，避免旧版本拒绝新来源计划。不要回退数据库或费用账本。正文修订记录和当前列表检查证据保留。
+
 ## 用 Docker（推荐）
 
 需要一台装了 Docker（带 Compose）的机器。云服务器建议至少 2 核、4 GB 内存，构建镜像时要用到。

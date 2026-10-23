@@ -1,7 +1,8 @@
 import { capturedTransaction } from "./column-lease.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
-import { upsertMaterial } from "@aihot/backend/content/materials";
+import { upsertMaterial, reviseMaterial, contentHash, decideTimeline, explicitBackfill } from "@aihot/backend/content/materials";
+import { collapseWhitespace } from "@aihot/backend/lib/text";
 import { beijingAt } from "@aihot/contracts/time";
 import { audit, Conflict } from "@aihot/backend/audit";
 import { documentSchema, observationSchema, reviewSchema, sourceSchema, withdrawSchema, canExportSummary, type SourceProfile } from "../contracts.ts";
@@ -242,10 +243,28 @@ export async function storeCapturedNews(columnId:string,documentId:string,body:s
     const [bound]=await tx`SELECT b.article_id FROM fishery_publication_bindings b JOIN articles a ON a.id=b.article_id WHERE b.kind='article' AND b.document_id=${documentId} AND a.raw->>'mode' IS DISTINCT FROM 'verified-news-candidate'`;
     if(bound)return {articleId:String(bound.article_id),existingPublication:true};
     const publicationTime=capture.publishedAt??(payload.dates.published.precision==='day'?payload.dates.published.value:null);
-    const material=await upsertMaterial({sourceId:doc.source_id,url:doc.canonical_url,title:payload.originalTitle??payload.title,
+    const title=collapseWhitespace(payload.originalTitle??payload.title).slice(0,1000)||doc.canonical_url;
+    const publishedAt=publicationTime?publicationTime.length===10?beijingAt(publicationTime,'00:00'):new Date(publicationTime):null;
+    const material=await upsertMaterial({sourceId:doc.source_id,url:doc.canonical_url,title,
       language:payload.language,bodyText:body,bodyStatus:'ok',publicationTime,
-      publishedAt:publicationTime?publicationTime.length===10?beijingAt(publicationTime,'00:00'):new Date(publicationTime):null,
+      publishedAt,
       discoveredAt:new Date(doc.created_at),via:'fishery-news',raw:{fisheryDocumentId:documentId,mode:'verified-news-candidate'}},tx);
+    const [current]=await tx`SELECT source_id,raw,title,body_text,excerpt,discovered_at,published_at_claim,publication_time,backfill_reason FROM articles WHERE id=${material.articleId} FOR UPDATE`;
+    if(current.source_id!==doc.source_id||current.raw?.fisheryDocumentId!==documentId||current.raw?.mode!=='verified-news-candidate')
+      throw new Conflict('Captured news identity is owned by another material; reconcile without overwriting it');
+    const time=decideTimeline(publishedAt,new Date(current.discovered_at),explicitBackfill(current.backfill_reason));
+    const bodyChanged=current.body_text!==body||current.title!==title;
+    const dateChanged=(current.published_at_claim?.getTime()??null)!==(publishedAt?.getTime()??null)||current.publication_time!==publicationTime;
+    if(bodyChanged||dateChanged){
+      // Core subscriptions ignore previously seen renderings. This path has a freshly archived,
+      // source-bound body: an A→B→A correction must match its current evidence, even for a known hash.
+      const set:Parameters<typeof reviseMaterial>[2]['set']=sql`title=${title},body_text=${body},body_html=NULL,body_status='ok',language=${payload.language},
+        published_at=${time.publishedAt},published_at_claim=${publishedAt},publication_time=${publicationTime},
+        timeline_at=${time.timelineAt},backfill=${time.backfill},backfill_reason=${time.backfillReason}`;
+      if(material.revised)await tx`UPDATE articles SET ${set} WHERE id=${material.articleId}`;
+      else await reviseMaterial(tx,material.articleId,{set,hash:contentHash({title,bodyText:body,excerpt:current.excerpt}),title,bodyText:body});
+      material.revised=true;material.backfill=time.backfill;
+    }
     if(material.created||material.revised)await audit(actor,'fishery.news.material',`fishery:${documentId}`,'Verified body enters core material and timeline rules; no approval or publication',null,material,{db:tx});
     return material;
   });

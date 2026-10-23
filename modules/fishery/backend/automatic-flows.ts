@@ -9,8 +9,21 @@ import {fisheryConfigurationVersion} from './ai-review.ts';
 import {hash,lockDocument,NotFound} from './store.ts';
 
 export const AUTOMATIC_FLOW_KEY='fishery.flow.dispatch';
-const policy=z.strictObject({enabled:z.boolean(),sourceId:z.enum(['fishery-column-moa','fishery-column-fujian','fishery-column-fujian-notices']),createdAfter:z.iso.datetime(),documentIds:z.array(z.uuid()).min(1).max(20).optional()});
+const sourceId=z.enum(['fishery-column-moa','fishery-column-fujian','fishery-column-fujian-notices']);
+const policy=z.strictObject({enabled:z.boolean(),sourceIds:z.array(sourceId).min(1).max(3).refine(ids=>new Set(ids).size===ids.length,'Duplicate source').transform(ids=>ids.sort()),createdAfter:z.iso.datetime(),documentIds:z.array(z.uuid()).min(1).max(20).optional()});
 const stored=policy.extend({revision:z.uuid()});
+// Explicit one-row operational upgrade, outside online schema migrations. It preserves scope,
+// revision, timestamps and paid authorization; it never enables another source.
+export async function upgradeAutomaticFlowSources(actor:string){
+  return sql.begin(async tx=>{
+    const [r]=await tx`SELECT value FROM settings WHERE key=${AUTOMATIC_FLOW_KEY} FOR UPDATE`;
+    if(!r)return null;if(!('sourceId' in r.value))return stored.parse(r.value);
+    const {sourceId:id,...old}=policy.omit({sourceIds:true}).extend({sourceId,revision:z.uuid()}).parse(r.value);
+    const next=stored.parse({...old,sourceIds:[id]});
+    await tx`UPDATE settings SET value=${tx.json(next)} WHERE key=${AUTOMATIC_FLOW_KEY}`;
+    await audit(actor,'fishery.flow.dispatch.upgrade',AUTOMATIC_FLOW_KEY,'Same authorized source represented as a set; no scope or budget change',r.value,next,{db:tx});return next;
+  });
+}
 export interface AutomaticFlowBinding {revision:string;snapshotHash:string;materialReviewId:number;}
 interface DispatchRow {documentId:string;taskId?:string;state:string;jobId?:string;reason?:string;}
 async function lockAutomaticDocument(db:Db,documentId:string){
@@ -50,9 +63,12 @@ export async function automaticFlowPermit(id:string,binding?:AutomaticFlowBindin
     JOIN LATERAL(SELECT revision FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1)o ON true
     LEFT JOIN LATERAL(SELECT id,decision,revision,source_revision FROM fishery_reviews WHERE document_id=d.id ORDER BY id DESC LIMIT 1)rv ON true
     WHERE t.id=${id} FOR SHARE OF s,f`;
-  if(!r||r.source_id!==c.sourceId||new Date(r.created_at)<new Date(c.createdAfter)||c.documentIds&&!c.documentIds.includes(r.document_id))throw new Conflict('Document is outside automatic dispatch scope');
+  if(!r||!c.sourceIds.includes(r.source_id)||new Date(r.created_at)<new Date(c.createdAfter)||c.documentIds&&!c.documentIds.includes(r.document_id))throw new Conflict('Document is outside automatic dispatch scope');
   if(!(await db`SELECT 1 FROM articles a WHERE a.source_id=${r.source_id} AND a.raw->>'fisheryDocumentId'=${r.document_id} AND NOT a.backfill AND a.body_status='ok'`).length)
     throw new Conflict('Historical or undated reference is outside automatic news processing');
+  if(!(await db`SELECT 1 FROM articles a WHERE a.source_id=${r.source_id} AND a.raw->>'fisheryDocumentId'=${r.document_id}
+    AND encode(sha256(convert_to(a.body_text,'UTF8')),'hex')=${r.snapshot.bodySha256}`).length)
+    throw new Conflict('Core news body differs from current evidence; recapture before any model request');
   if(r.withdrawn_reason||r.participation_mode!=='editorial')throw new Conflict('Source isolated or document withdrawn');
   if(r.decision!=='approved'||r.review_revision!==r.observation_revision||r.review_source_revision!==r.source_revision)throw new Conflict('Waiting for current material approval; no automatic model request');
   const detail=await flowDetail(id);if(detail.stale||!detail.authoritative||!['queued','running'].includes(r.status))throw new Conflict('Current queued/running evidence-bound flow required');
@@ -64,17 +80,17 @@ export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHe
   const c=await configuration();if(!c?.enabled)return {enabled:false,rows:[]};
   // The timestamp and optional document allowlist prevent an enable operation from charging for old archives.
   const rulesHash=hash({execution:fisheryConfigurationVersion(),discovery:'core-news/v1'});
-  const docs=await sql`SELECT d.id,d.source_id,f.revision AS source_revision,o.revision,o.content_hash,s.participation_mode,rv.id AS review_id
+  const docs=await sql`SELECT d.id,d.source_id,f.revision AS source_revision,o.revision,o.content_hash,s.participation_mode,rv.id AS review_id,news.revision AS core_revision
     FROM fishery_documents d JOIN fishery_sources f ON f.source_id=d.source_id JOIN sources s ON s.id=d.source_id
     JOIN LATERAL(SELECT revision,content_hash FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1)o ON true
     LEFT JOIN LATERAL(SELECT id FROM fishery_reviews WHERE document_id=d.id ORDER BY id DESC LIMIT 1)rv ON true
-    WHERE d.source_id=${c.sourceId} AND d.created_at>=${new Date(c.createdAfter)}
-      AND EXISTS(SELECT 1 FROM articles a WHERE a.source_id=d.source_id AND a.raw->>'fisheryDocumentId'=d.id AND NOT a.backfill AND a.body_status='ok')
+    JOIN LATERAL(SELECT a.revision FROM articles a WHERE a.source_id=d.source_id AND a.raw->>'fisheryDocumentId'=d.id AND NOT a.backfill AND a.body_status='ok' LIMIT 1)news ON true
+    WHERE d.source_id IN ${sql(c.sourceIds)} AND d.created_at>=${new Date(c.createdAfter)}
       ${c.documentIds?sql`AND d.id IN ${sql(c.documentIds)}`:sql``} ${ids?sql`AND d.id IN ${sql(ids.length?ids:['00000000-0000-0000-0000-000000000000'])}`:sql``}
       AND NOT EXISTS(SELECT 1 FROM audit_log a WHERE a.subject='fishery:'||d.id AND a.action='fishery.flow.auto_checked'
         AND a.after->>'configurationRevision'=${c.revision} AND a.after->>'sourceRevision'=f.revision::text
         AND a.after->>'observationRevision'=o.revision::text AND a.after->>'materialReviewId'=coalesce(rv.id::text,'none')
-        AND a.after->>'sourceMode'=s.participation_mode AND a.after->>'rulesHash'=${rulesHash})
+        AND a.after->>'sourceMode'=s.participation_mode AND a.after->>'rulesHash'=${rulesHash} AND a.after->>'coreRevision'=news.revision::text)
     ORDER BY d.created_at,d.id LIMIT 5`;
   const rows:DispatchRow[]=[];
   for(const d of docs){
@@ -109,7 +125,7 @@ export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHe
     }
     await options.assertHeld?.();
     await audit('automatic-dispatch','fishery.flow.auto_checked',`fishery:${d.id}`,'Bounded automatic continuation checked this exact evidence/approval version',null,
-      {configurationRevision:c.revision,sourceRevision:d.source_revision,observationRevision:d.revision,materialReviewId:String(d.review_id??'none'),sourceMode:d.participation_mode,rulesHash,result:rows.at(-1)},{db:sql});
+      {configurationRevision:c.revision,sourceRevision:d.source_revision,observationRevision:d.revision,materialReviewId:String(d.review_id??'none'),sourceMode:d.participation_mode,coreRevision:d.core_revision,rulesHash,result:rows.at(-1)},{db:sql});
   }
   return {enabled:true,revision:c.revision,rows};
 }

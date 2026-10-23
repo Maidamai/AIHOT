@@ -172,7 +172,7 @@ test('selection BLOCK and UNKNOWN stop scores; high score cannot bless a fact wi
  }finally{await sql`UPDATE sources SET participation_mode='editorial' WHERE id='fishery-column-moa'`;}
 });
 
-import {AUTOMATIC_FLOW_KEY,configureAutomaticFlows,dispatchAutomaticDocuments,automaticFlowPermit} from '../backend/automatic-flows.ts';
+import {AUTOMATIC_FLOW_KEY,configureAutomaticFlows,upgradeAutomaticFlowSources,dispatchAutomaticDocuments,automaticFlowPermit} from '../backend/automatic-flows.ts';
 import { syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadItemDetail } from "@aihot/backend/publication/detail";
 import assert from "node:assert/strict";
@@ -192,7 +192,7 @@ import { getBoss, stopBoss, enqueueOn, QUEUES } from "@aihot/backend/jobs/queue"
 import { buildApp } from "../../../apps/api/src/app.ts";
 import fishery from "../server.ts";
 import { exportMaterial, materialMarkdown } from "../backend/export.ts";
-import { createDocument, documentHistory, hash, importCapturedMaterial, observe, registerSource, review, sourceHealth, withdraw } from "../backend/store.ts";
+import { createDocument, documentHistory, hash, importCapturedMaterial, storeCapturedNews, observe, registerSource, review, sourceHealth, withdraw } from "../backend/store.ts";
 import { sourceFixture, observationFixture, npfcRobotsFixture, pdfFixture } from "./fixtures.ts";
 import { materialDetail } from "../backend/workbench.ts";
 import { sha256 } from "../backend/source-adapters.ts";
@@ -259,13 +259,44 @@ async function fixture(options: { unknownRights?: boolean; articleId?: string; s
 }
 const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { revision, sourceRevision, decision: "approved", applicabilityReviewed: false, note: "Manual fixture review" }, "reviewer");
 
-async function automaticFixture(number:number,body='合成公海远洋渔业事实，仅供自动派发离线测试。'){
+async function automaticFixture(number:number,body='合成公海远洋渔业事实，仅供自动派发离线测试。',column:'moa'|'fujian'='moa'){
   const url=`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto${number}.htm`;
-  const doc=await importCapturedMaterial({id:'moa',...COLUMNS.moa},url,{...observationFixture,language:'zh',sourceCapture:{adapter:'moa',sourceUrl:url,capturedAt:'2026-10-21T08:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
-  await upsertMaterial({sourceId:'fishery-column-moa',url:`https://example.org/auto-body-${number}`,title:'Synthetic automatic source',publishedAt:new Date(),bodyText:body,bodyStatus:'ok',via:'fishery-mock',raw:{fisheryDocumentId:doc.id}});
+  const doc=await importCapturedMaterial({id:column,...COLUMNS[column]},url,{...observationFixture,language:'zh',sourceCapture:{adapter:column,sourceUrl:url,capturedAt:'2026-10-21T08:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+  await upsertMaterial({sourceId:`fishery-column-${column}`,url:`https://example.org/auto-body-${number}`,title:'Synthetic automatic source',publishedAt:new Date(),bodyText:body,bodyStatus:'ok',via:'fishery-mock',raw:{fisheryDocumentId:doc.id}});
   return {...doc,body};
 }
-const autoPolicy=(documentIds?:string[])=>({enabled:true,sourceId:'fishery-column-moa',createdAfter:'2026-10-21T00:00:00Z',...documentIds?{documentIds}:{}});
+const autoPolicy=(documentIds?:string[])=>({enabled:true,sourceIds:['fishery-column-moa'],createdAfter:'2026-10-21T00:00:00Z',...documentIds?{documentIds}:{}});
+test('captured news reverts and date corrections remain bound to current evidence without duplicate analysis',async()=>{
+ const url='https://yyj.moa.gov.cn/gzdt/202610/t20261023_revert.htm',before=await sql`SELECT count(*)::int AS n FROM receipts`;
+ const capture=async(body:string,publishedAt='2026-10-23T01:00:00Z')=>{
+  const payload={...observationFixture,rawSha256:sha256(body+publishedAt),language:'zh',sourceCapture:{adapter:'moa' as const,sourceUrl:url,capturedAt:'2026-10-23T12:00:00Z',publishedAt,httpStatus:200,rawSha256:sha256(body+publishedAt),bodySha256:sha256(body),parser:'synthetic/v1',parseStatus:'parsed' as const,attachmentSha256:null,conflicts:[]}};
+  const doc=await importCapturedMaterial({id:'moa',...COLUMNS.moa},url,payload,'tester');
+  await sql`UPDATE fishery_documents SET created_at='2026-10-23T12:00:00Z' WHERE id=${doc.id}`;
+  const material=await storeCapturedNews('moa',doc.id,body,'tester');assert.ok('articleId' in material&&material.articleId);
+  const [a]=await sql`SELECT id,revision,body_text,published_at,publication_time,backfill,discovered_at FROM articles WHERE id=${material.articleId}`;
+  return {doc,material,a};
+ };
+ const a=await capture('Synthetic original A。'),b=await capture('Synthetic corrected B。'),again=await capture('Synthetic original A。');
+ assert.equal(a.a.id,b.a.id);assert.equal(b.a.id,again.a.id);assert.equal(again.a.body_text,'Synthetic original A。');assert.equal(again.a.revision,a.a.revision+2);
+ const unchanged=await capture('Synthetic original A。');assert.equal(unchanged.a.revision,again.a.revision);assert.equal((await documentHistory(a.doc.id)).observations.length,3);
+ const dated=await capture('Synthetic original A。','2020-01-01T00:00:00Z');assert.equal(dated.a.revision,again.a.revision+1);assert.equal(dated.a.publication_time,'2020-01-01T00:00:00Z');assert.equal(dated.a.backfill,true);assert.equal(dated.a.discovered_at.toISOString(),'2026-10-23T12:00:00.000Z');
+ assert.deepEqual(await sql`SELECT count(*)::int AS n FROM receipts`,before);
+});
+test('automatic scope covers both authorized news sources and refuses a divergent core body before spending',async()=>{
+ const m=await automaticFixture(910),f=await automaticFixture(911,undefined,'fujian');
+ try{
+  const initial=await configureAutomaticFlows(autoPolicy([m.id]),'tester','Synthetic pre-upgrade authorized scope');
+  await sql`UPDATE settings SET value=${sql.json({...initial,sourceIds:undefined,sourceId:'fishery-column-moa'})} WHERE key=${AUTOMATIC_FLOW_KEY}`;
+  assert.deepEqual(await upgradeAutomaticFlowSources('tester'),initial);assert.deepEqual(await upgradeAutomaticFlowSources('tester'),initial);
+  await configureAutomaticFlows({...autoPolicy([m.id,f.id]),sourceIds:['fishery-column-moa','fishery-column-fujian']},'tester','Synthetic multiple-source dispatch coverage');
+  const first=await dispatchAutomaticDocuments();assert.equal(first.rows.length,2);assert.ok(first.rows.every(r=>r.reason?.includes('Waiting for current material approval')));
+  assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
+  const [task]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${m.id}`;
+  await sql`UPDATE articles SET body_text='Synthetic different current body' WHERE raw->>'fisheryDocumentId'=${m.id}`;
+  await assert.rejects(automaticFlowPermit(task.id),/Core news body differs/);
+  await assert.rejects(configureAutomaticFlows({...autoPolicy(),sourceIds:['fishery-column-iotc']},'tester','Synthetic excluded source guard'));
+ }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
+});
 test('automatic dispatch waits for ordinary material approval, deduplicates queue and consumer, then retains final approval',async()=>{
   const d=await automaticFixture(1),boss=await getBoss({schedule:false,supervise:false});
   const keys=['LLM_MODEL','LLM_BASE_URL','LLM_REASONING_TOKENS','LLM_EXTRA_JSON'] as const,old=keys.map(k=>process.env[k]),enabled=config.modelCallsEnabled;
