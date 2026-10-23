@@ -8,7 +8,8 @@ import { upsertMaterial } from "@aihot/backend/content/materials";
 import { stopBoss } from "@aihot/backend/jobs/queue";
 import { publishArticle, publishArticleTx } from "@aihot/backend/publication/publish";
 import { composeDaily } from "@aihot/backend/reports/compose";
-import { candidates } from "@aihot/backend/reports/edition";
+import { candidates, periodEntries } from "@aihot/backend/reports/edition";
+import { defineServerModule, installModules } from "@aihot/backend/modules";
 
 const T = tag();
 const SOURCE = `test-report-boundary-${T}`;
@@ -177,4 +178,25 @@ test("daily composition waits for a pre-cutoff release to commit instead of losi
     commit.open();
     await Promise.allSettled([publication, report]);
   }
+});
+
+test("edition candidates and period inputs respect current module approval", async () => {
+  const date = "2020-02-03", start = editionAt("daily", "2020-02-02"), end = editionAt("daily", date);
+  const id = await selected("module-approval", new Date(+end - 120000), new Date(+end - 60000));
+  let approved = true;
+  installModules([defineServerModule({ name: "edition-approval-test", publication: {
+    readCondition: async () => ({ condition: approved ? sql`true` : sql`p.article_id <> ${id}` }),
+  } })]);
+  try {
+    assert.ok((await candidates(start, end)).some(r => r.itemId === id));
+    await composeDaily(date);
+    assert.ok((await periodEntries(date, date)).entries.some(r => r.itemId === id));
+    approved = false;
+    assert.equal((await candidates(start, end)).some(r => r.itemId === id), false, "Revoked approval excludes daily candidates before composition");
+    const period = await periodEntries(date, date);
+    assert.equal(period.entries.some(r => r.itemId === id), false, "A withdrawn daily citation cannot reach the period model input");
+    assert.equal(period.hasEntries, true, "Stored history is retained, not reclassified as an originally empty issue");
+    const [stored] = await sql`SELECT content FROM reports WHERE kind='daily' AND key=${date}`;
+    assert.ok(stored!.content.sections.some((s: any) => s.items.some((r: any) => r.itemId === id)));
+  } finally { installModules([]); }
 });

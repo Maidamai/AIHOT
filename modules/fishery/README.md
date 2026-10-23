@@ -108,7 +108,7 @@ node modules/fishery/scripts/automatic-flows.ts --enable --after 2026-10-21T07:1
 
 启用不写素材 `approved`，不写最终 `qualified`。队列仍是既有 `fishery.flow`、单消费者、`retryLimit:0`，使用既有阶段回执及累计10元金额闸门。自动任务在消费时、取得金额锁后和发送前重新核对配置、来源隔离、观察及素材审核版本。已收到结果复用；失败、pending/unknown、执行中断须走既有明确对账流程，维护不会自动付费重试。最终审批仍通过正常管理流程，事务派发已有 `fishery.publication` 后才进入原站阅读投影。
 
-停止自动派发使用相同范围的 `--disable --after ... --documents ... --reason ...`；它不清空任务、收据、费用、采集游标或归档计划，已发出请求的结果仍正常结算。此功能没有恢复原版双评分、热点归组或日报，也不开放匿名访问。
+停止自动派发使用相同范围的 `--disable --after ... --documents ... --reason ...`；它不清空任务、收据、费用、采集游标或归档计划，已发出请求的结果仍正常结算。新采集新闻已复用原版预筛与独立双评分；热点归组、精选确认和日报尚未接入专用处理器，仍不开放匿名访问。
 
 `collect-columns.ts --incremental` 默认 `--storage file`，仅用于指定私有目录中的隔离归档验收。明确选择 `--storage db` 才读取既有 `fishery-column-moa/fujian/iotc` 的 `sources.cursor.fisheryColumnProgress`；缺失来源、数据库故障或游标/配置冲突立即停止，不回退文件游标，也不创建或启用来源。每轮仍有每源1–5文章、1–3列表页的上限，没有新增队列消费者或定时任务。
 
@@ -119,7 +119,7 @@ node modules/fishery/scripts/automatic-flows.ts --enable --after 2026-10-21T07:1
 
 ## 原框架统一发布桥接
 
-`backend/publication-bridge.ts` 的 `syncFisheryPublications(actor)` 仅把当前合格文章摘要和最终审核通过的业务指南关联到核心 `articles`、`editorial_overrides` 和 `publications`；使用正常素材身份与审计，不调用模型、不创建分析或回执、不伪造精选、归组完成、评分或历史公开发布时间。指南仍是资料参考，原有结构化字段与短证据锚通过原文章详情的模块部分呈现；私有证据全文不进入核心正文。
+`backend/publication-bridge.ts` 的 `syncFisheryPublications(actor)` 仅把当前合格文章摘要和最终审核通过的业务指南关联到核心 `articles`、`editorial_overrides` 和 `publications`；使用正常素材身份与审计，不调用模型、不创建分析或回执、不伪造精选、归组完成或历史公开发布时间。新采集新闻保留已经通过门槛、证据审核及终审的真实双评分均值，并把评分结果纳入当前审核绑定；旧参考和指南仍无评分。`selected=false` 保持到具有真实结构化事实和归组决定时，不把摘要批准当作事件确认。指南仍是资料参考，原有结构化字段与短证据锚通过原文章详情的模块部分呈现；私有证据全文不进入核心正文。
 
 `fishery_publication_bindings` 保存稳定身份、审核投影哈希和核心素材修订号，不保存永久合格副本。每次原资料池、搜索、详情、时间线、数量、RSS、MCP 或同步读取，都重用现有文章与业务审核的当前资格计算；来源、观察、正文档案、规则、候选或最终审核失效即隐藏。未关联的模块来源文章也拒绝读取。未知日期保持空值和历史归档标记，已审核参考资料可进入资料池，不借采集时间冒充发布时间。
 

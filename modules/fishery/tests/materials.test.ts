@@ -292,7 +292,15 @@ test('automatic dispatch waits for ordinary material approval, deduplicates queu
     await decideFlow(task.id,{decision:'qualified',snapshotHash:detail.snapshotHash,note:'Synthetic explicit final approval'},'authorized-agent:test-final');
     const linked=(await syncFisheryPublications('synthetic-news-final')).rows.find(r=>r.itemId===d.id)!;
     assert.equal(linked.articleId,core.id,'Publication must reuse the exact news material identity');
+    const [newsProjection]=await sql`SELECT score,selected,selection_candidate FROM publications WHERE article_id=${core.id}`;
+    assert.equal(Number(newsProjection!.score),90,'Retain the approved independent scores on the same news identity');
+    assert.equal(newsProjection!.selected,false,'An approved summary is not a confirmed event identity');
+    assert.equal(newsProjection!.selection_candidate,false,'Do not fake a core structured analysis or completed grouping');
     assert.equal((await loadItemDetail(core.id)).kind,'found');
+    await sql`UPDATE publications SET score=91 WHERE article_id=${core.id}`;
+    assert.equal((await loadItemDetail(core.id)).kind,'not_found','A public score must match the approved bound result');
+    await syncFisheryPublications('synthetic-news-score-repair');
+    assert.equal((await loadItemDetail(core.id)).kind,'found');assert.equal(sends,5,'Publication replay never repays scoring');
     assert.ok((await loadPool({channel:'all',category:null,tag:null,includeBackfill:false})).items.some(i=>i.id===core.id));
     detail=await flowDetail(task.id);assert.ok(detail.internalArticle);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,5);
     await boss.cancel(flowQueue.name,jobId);
