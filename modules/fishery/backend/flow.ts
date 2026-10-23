@@ -195,7 +195,7 @@ async function currentMaterialDecision(documentId:string,db:Db=sql) {
 }
 const reconcileSchema=z.strictObject({snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),executionFingerprint:z.string().regex(/^[a-f0-9]{64}$/),expectedStatus:z.literal("running"),acknowledgeRunnerStopped:z.literal(true),reason:z.string().trim().min(1).max(2000),cancelActiveJobId:z.uuid().optional()});
 function executionState(row:Record<string,any>) {
-  return {id:row.id,documentId:row.document_id,snapshotHash:hash(row.snapshot),status:row.status,stage:row.stage,generationAttempt:row.generation_attempt,reviewAttempt:row.review_attempt,stageRequests:row.stage_requests,
+  return {id:row.id,documentId:row.document_id,snapshotHash:hash(row.snapshot),status:row.status,stage:row.stage,executionToken:row.execution_token??null,generationAttempt:row.generation_attempt,reviewAttempt:row.review_attempt,stageRequests:row.stage_requests,
     candidateHash:hash(row.draft?.draft??null),draftHash:hash(row.draft??null),qualityHash:hash(row.quality_review??null),selection:row.selection??null,humanHash:hash(row.human_decision??null),error:row.error,updatedAt:row.execution_updated_at??new Date(row.updated_at).toISOString()};
 }
 async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=false):Promise<FlowReconciliation> {
@@ -304,7 +304,7 @@ export async function reconcileFlow(id:string,raw:unknown,actor:string) {
       }
       const error={code:"FISHERY_INTERRUPTED_BEFORE_REQUEST",stage:row!.stage,phase:"interrupted_before_request",reason:data.reason,receiptId:null,noAutomaticRetry:true,nextStageRequiresNewCharge:true,newCallsOnResume:state.newCallsOnResume,reusableGenerationReceiptId:state.reusableGenerationReceiptId};
       await lease.assertHeld();
-      await tx`UPDATE fishery_flow_tasks SET status='failed',error=${tx.json(error)},updated_at=now() WHERE id=${id}`;
+      await tx`UPDATE fishery_flow_tasks SET status='failed',execution_token=NULL,error=${tx.json(error)},updated_at=now() WHERE id=${id}`;
       await audit(actor,"fishery.flow.reconcile",`fishery:${row!.document_id}`,data.reason,{...executionState(row!),executionFingerprint:state.executionFingerprint},{id,status:"failed",error,leaseBackendPid:lease.backendPid,leaseInstanceId:lease.instanceId,acknowledgeRunnerStopped:true,cancelledJobId:state.activeJobId,checkedLedger:state.ledger,checkedReceipts:state.receipts,currentSourceRevision:state.currentSourceRevision,currentObservationRevision:state.currentObservationRevision,modelCalls:0,published:false},{db:tx});
       await lease.assertHeld();
       return {id,status:"failed",stage:row!.stage,modelCalls:0,published:false,newCallsOnResume:state.newCallsOnResume};
@@ -321,8 +321,17 @@ export async function flowDetail(id:string,now=new Date()):Promise<Record<string
     internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&materialApproved&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
-async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,stage:string,attempt:number,options:ChatJsonOptions<S>,invoke:FisheryInvoke) {
-  const [task]=await sql`SELECT draft,document_id,selection FROM fishery_flow_tasks WHERE id=${id}`;
+class FlowExecutionLost extends Conflict {}
+function assertExecutionOwner(row:Record<string,any>|undefined,executionToken:string) {
+  if(row?.status!=="running"||row.execution_token!==executionToken) throw new FlowExecutionLost("Flow execution ownership changed; old runner cannot write or invoke");
+}
+function assertExecutionUpdated(rows:readonly unknown[]) {
+  if(rows.length!==1) throw new FlowExecutionLost("Flow execution ownership changed; old runner cannot persist");
+}
+async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,stage:string,attempt:number,options:ChatJsonOptions<S>,invoke:FisheryInvoke,executionToken:string,assertLease:()=>Promise<void>) {
+  await assertLease();
+  const [task]=await sql`SELECT draft,document_id,selection,status,execution_token FROM fishery_flow_tasks WHERE id=${id}`;
+  assertExecutionOwner(task,executionToken);
   await inputFor(task!.document_id,snapshotHash);
   if(task!.selection)await assertSelectionFlowCurrent(id);
   const revisionHash=task?.draft?.provenance?.candidateHash;
@@ -330,37 +339,60 @@ async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,st
   options.attemptTag=`fishery-flow:${snapshotHash}:${stage}:${attempt}${revisionHash?`:revision:${revisionHash}`:""}${native}`;
   options.subject+=`:snapshot:${snapshotHash}:${stage}:${attempt}${revisionHash?`:revision:${revisionHash}`:""}`;
   const fingerprint=hash({model:options.model,purpose:options.purpose,promptVersion:options.promptVersion,system:options.system,user:options.user,temperature:options.temperature,maxTokens:options.maxTokens,attemptTag:options.attemptTag});
+  await assertLease();
   await sql.begin(async tx=>{
-    const [row]=await tx`SELECT stage_requests FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
+    const [row]=await tx`SELECT stage_requests,status,execution_token FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
+    await assertLease();
+    assertExecutionOwner(row,executionToken);
     const key=`${stage}:${attempt}`,previous=row!.stage_requests[key];
     if(previous&&previous.fingerprint!==fingerprint) throw new Conflict("Stage request changed; resume cannot send a different prompt/model/input. Explicit regenerated attempt required");
     if(!previous) {
       row!.stage_requests[key]={fingerprint,subject:options.subject,purpose:options.purpose,promptVersion:options.promptVersion,attemptTag:options.attemptTag};
-      await tx`UPDATE fishery_flow_tasks SET stage_requests=${tx.json(row!.stage_requests)},updated_at=now() WHERE id=${id}`;
+      assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET stage_requests=${tx.json(row!.stage_requests)},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);
     }
     // paidRequest reuses received/completed, but automatically retries failed. For this flow an
     // existing failed/pending/unknown receipt must never be resent by a mere resume operation.
     const [receipt]=await tx`SELECT id,status FROM receipts WHERE subject=${options.subject} AND purpose=${options.purpose} ORDER BY id DESC LIMIT 1`;
     if(receipt&&!["received","completed"].includes(receipt.status)) throw new Conflict(`Existing ${receipt.status} receipt ${receipt.id}; reconcile and explicitly regenerate, never blind resume`);
+    await assertLease();
   });
+  const [current]=await sql`SELECT status,execution_token FROM fishery_flow_tasks WHERE id=${id}`;
+  assertExecutionOwner(current,executionToken);
+  await assertLease();
   return invoke(options);
 }
 export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>Promise<void>)=>Promise<void>=run=>run(),options:{requireProcessingLease?:boolean}={}) {
   const [task]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;
   if(!task) throw new NotFound("Flow not found");
+  const requireLease=options.requireProcessingLease||invoke===chatJson;
+  const assertLease=async()=>{
+    if(requireLease) try {await assertProcessingLease();}catch(error){throw new FlowExecutionLost("Fishery processing lease lost; old runner cannot write or invoke",{cause:error});}
+  };
+  const executionToken=randomUUID();
+  await assertLease();
   const claimed=await sql.begin(async tx=>{
     await lockDocument(tx,task.document_id);
     await assertDocumentSettled(task.document_id,tx);
     const [latest]=await tx`SELECT id FROM fishery_flow_tasks WHERE document_id=${task.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
     if(latest?.id!==id) throw new Conflict("A newer authoritative task supersedes this task");
-    if(options.requireProcessingLease||invoke===chatJson) await assertProcessingLease();
-    const [row]=await tx`UPDATE fishery_flow_tasks SET status='running',updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
+    await assertLease();
+    const [row]=await tx`UPDATE fishery_flow_tasks SET status='running',execution_token=${executionToken},updated_at=now() WHERE id=${id} AND status='queued' RETURNING *`;
     if(!row) throw new Conflict("Flow is not queued; running/failed/unknown outcomes require explicit operator reconciliation");
+    await assertLease();
     return row;
   });
+  const persist=async(write:(tx:Db)=>Promise<void>)=>{
+    await assertLease();
+    await sql.begin(async tx=>{
+      await write(tx);
+      // A row update can wait behind recovery; lease loss during that wait rolls back all business writes.
+      await assertLease();
+    });
+  };
   let stage=claimed.stage as string,phase="authorization",receiptId:number|null=null;
   try {
     await authorize(async()=>{
+      await assertLease();
       phase="source";
       const input=await inputFor(claimed.document_id,hash(claimed.snapshot));
       let draft=claimed.draft;
@@ -378,12 +410,13 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
           const outcome=await runFisherySelection(article,state,async options=>{
             const requestStage:SelectionStage=options.purpose==='prefilter_article'?'prefilter':options.attemptTag?.endsWith('score-1')?'score-1':'score-2';
             stage=requestStage;phase='call';
-            const answer=await stageInvoke(id,hash(claimed.snapshot),requestStage,state.attempts[requestStage],options,invoke);
+            const answer=await stageInvoke(id,hash(claimed.snapshot),requestStage,state.attempts[requestStage],options,invoke,executionToken,assertLease);
             receiptId=answer.receiptId;phase='persist';return answer;
           },async(selected,result,next)=>{
             await inputFor(claimed.document_id,hash(claimed.snapshot));
-            await sql.begin(async tx=>{
-              await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(state)},stage=${next},updated_at=now() WHERE id=${id}`;
+            await persist(async tx=>{
+              assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(state)},stage=${next},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);
+              await assertLease();
               await completeReceipt(tx,result!.receiptId);
               await audit(claimed.actor,'fishery.flow.selection',`fishery:${claimed.document_id}`,null,null,{id,stage:selected,receiptId:result!.receiptId,data:result!.data,calibrated:false,factApproval:false},{db:tx});
             });stage=next;receiptId=null;
@@ -391,7 +424,7 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
           state.outcome=outcome;
           const stopped=outcome.label!=='SCORED';
           stage=stopped?(outcome.label==='BLOCK'||outcome.label==='UNKNOWN'?'prefilter':String(stage)==='generation'?'score-2':stage):'generation';
-          await sql`UPDATE fishery_flow_tasks SET selection=${sql.json(state)},stage=${stage},status=${stopped?'needs_evidence':'running'},error=${stopped?sql.json({code:'FISHERY_SELECTION_STOP',stage,phase:'selection',reason:outcome.label+'; selection is not fact approval',receiptId:null,noAutomaticRetry:true}):null},updated_at=now() WHERE id=${id}`;
+          await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(state)},stage=${stage},status=${stopped?'needs_evidence':'running'},error=${stopped?tx.json({code:'FISHERY_SELECTION_STOP',stage,phase:'selection',reason:outcome.label+'; selection is not fact approval',receiptId:null,noAutomaticRetry:true}):null},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);});
           if(stopped)return;
         }
         if(claimed.selection.outcome?.label!=='SCORED')throw new Conflict('Complete PASS and two independent scores required before article generation or review');
@@ -406,26 +439,28 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
       if(stage==="generation") {
         phase="call";
         draft=await prepareFisheryDraft(input,"default",async options=>{
-          const answer=await stageInvoke(id,hash(claimed.snapshot),"generation",claimed.generation_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
+          const answer=await stageInvoke(id,hash(claimed.snapshot),"generation",claimed.generation_attempt,options,invoke,executionToken,assertLease);receiptId=answer.receiptId;phase="validate";return answer;
         });
         phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
-        await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET draft=${tx.json(draft)},stage='review',updated_at=now() WHERE id=${id}`;await completeReceipt(tx,draft.receiptId);await audit(claimed.actor,"fishery.flow.generated",`fishery:${claimed.document_id}`,null,null,{id,receiptId:draft.receiptId},{db:tx});});stage="review";receiptId=null;
+        await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET draft=${tx.json(draft)},stage='review',updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);await assertLease();await completeReceipt(tx,draft.receiptId);await audit(claimed.actor,"fishery.flow.generated",`fishery:${claimed.document_id}`,null,null,{id,receiptId:draft.receiptId},{db:tx});});stage="review";receiptId=null;
       }
       if(draft.draft.relevance.decision!=="relevant"||!draft.draft.summaryZh.some((item:{sentence:string})=>item.sentence.trim())) {
         const reason="行业相关性须为relevant，且至少有一条非空事实摘要；请补证、明确重新生成或人工拒绝";
-        await sql`UPDATE fishery_flow_tasks SET status='needs_evidence',stage=${draft.provenance?.origin==="human_revision"?"review":"generation"},quality_review=NULL,error=${sql.json({code:"FISHERY_ARTICLE_INELIGIBLE",stage:"generation",phase:"eligibility",reason,receiptId:draft.receiptId,noAutomaticRetry:true})},updated_at=now() WHERE id=${id}`;
+        await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET status='needs_evidence',stage=${draft.provenance?.origin==="human_revision"?"review":"generation"},quality_review=NULL,error=${tx.json({code:"FISHERY_ARTICLE_INELIGIBLE",stage:"generation",phase:"eligibility",reason,receiptId:draft.receiptId,noAutomaticRetry:true})},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);});
         return;
       }
       phase="call";
       const quality=await reviewFisheryDraft(input,draft.draft,"default",async options=>{
-        const answer=await stageInvoke(id,hash(claimed.snapshot),"review",claimed.review_attempt,options,invoke);receiptId=answer.receiptId;phase="validate";return answer;
+        const answer=await stageInvoke(id,hash(claimed.snapshot),"review",claimed.review_attempt,options,invoke,executionToken,assertLease);receiptId=answer.receiptId;phase="validate";return answer;
       },draft.provenance?.origin==="human_revision"?{mode:"manual_revision"}:{});
       phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
-      await sql.begin(async tx=>{await tx`UPDATE fishery_flow_tasks SET quality_review=${tx.json(quality)},status=${quality.status},stage='human',error=NULL,updated_at=now() WHERE id=${id}`;await completeReceipt(tx,quality.receiptId);await audit(claimed.actor,"fishery.flow.checked",`fishery:${claimed.document_id}`,null,null,{id,receiptId:quality.receiptId,status:quality.status},{db:tx});});
+      await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET quality_review=${tx.json(quality)},status=${quality.status},stage='human',error=NULL,updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);await assertLease();await completeReceipt(tx,quality.receiptId);await audit(claimed.actor,"fishery.flow.checked",`fishery:${claimed.document_id}`,null,null,{id,receiptId:quality.receiptId,status:quality.status},{db:tx});});
     });
   } catch(error) {
     const detail={code:phase==="authorization"?"FISHERY_FLOW_BLOCKED":"FISHERY_FLOW_FAILED",stage,phase,type:(error as Error).name,reason:(error as Error).message.slice(0,1000),receiptId:(error as {receiptId?:number}).receiptId??receiptId,noAutomaticRetry:true};
-    await sql`UPDATE fishery_flow_tasks SET status='failed',stage=${stage},error=${sql.json(detail)},updated_at=now() WHERE id=${id}`;
+    try {
+      await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET status='failed',stage=${stage},error=${tx.json(detail)},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);});
+    } catch(failure) {if(!(failure instanceof FlowExecutionLost)) throw failure;}
   }
   return flowDetail(id);
 }
@@ -457,7 +492,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
       if(mode==='regenerate')for(const key of selectionStages.slice(selectionStages.indexOf(stage)))delete row.selection.results[key];
       delete row.selection.outcome;
     }
-    await tx`UPDATE fishery_flow_tasks SET status='queued',stage=${stage},generation_attempt=${stage==="generation"?attempt:row.generation_attempt},review_attempt=${stage==="review"?attempt:row.review_attempt},quality_review=NULL,error=NULL,updated_at=now() WHERE id=${id}`;
+    await tx`UPDATE fishery_flow_tasks SET status='queued',execution_token=NULL,stage=${stage},generation_attempt=${stage==="generation"?attempt:row.generation_attempt},review_attempt=${stage==="review"?attempt:row.review_attempt},quality_review=NULL,error=NULL,updated_at=now() WHERE id=${id}`;
     if(row.selection)await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(row.selection)},updated_at=now() WHERE id=${id}`;
     await audit(actor,"fishery.flow.retry",`fishery:${row.document_id}`,note,null,{id,stage,attempt,mode,receiptId:receipt?.id??null,acknowledgeNewCharge,newStageAfterReconciliation:row.error?.code==="FISHERY_INTERRUPTED_BEFORE_REQUEST",preservedGenerationReceiptId:row.draft?.receiptId??null},{db:tx});
     return {id,status:"queued",stage,attempt,mode};

@@ -1371,6 +1371,100 @@ test("synthetic old lease owner cannot claim after waiting for a document lock",
 });
 
 
+async function flowExecutionFixture(identity:string) {
+  const f=await fixture({unknownRights:true}),body="合成远洋渔业执行归属故障测试。";
+  await observe(f.id,{...observationFixture,expectedRevision:1,sourceCapture:{adapter:"iotc",sourceUrl:`https://example.org/${f.sourceId}`,capturedAt:"2026-10-20T00:00:00Z",httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:"synthetic-execution/v1",parseStatus:"parsed",attachmentSha256:null,conflicts:[]}},"fixture-admin");
+  await upsertMaterial({sourceId:f.sourceId,url:`https://example.org/execution-${f.id}`,title:"SYNTHETIC EXECUTION FIXTURE",bodyText:body,bodyStatus:"ok",via:"fishery-mock",raw:{fisheryDocumentId:f.id}});
+  await approve(f.id,2,1);
+  return {...f,body,task:await createFlow(f.id,{identity},"fixture-admin")};
+}
+async function terminateFlowTestLease(lease:{backendPid:number}) {
+  assert.match(new URL(config.databaseUrl).pathname,/_(test|ci)$/);
+  const [row]=await sql`SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity WHERE pid=${lease.backendPid} AND datname=current_database() AND application_name='fishery-processing-lease'`;
+  assert.equal(row?.terminated,true,"terminate only this isolated test database's own processing lease");
+}
+async function flowExecutionState(id:string) {
+  const [row]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${id}`;
+  const audits=await sql`SELECT * FROM audit_log WHERE after->>'id'=${id} ORDER BY id`;
+  const receipts=await sql`SELECT r.* FROM receipts r WHERE EXISTS (SELECT 1 FROM fishery_flow_tasks t CROSS JOIN LATERAL jsonb_each(t.stage_requests) b WHERE t.id=${id} AND r.subject=b.value->>'subject' AND r.purpose=b.value->>'purpose') ORDER BY r.id`;
+  return {row,audits:[...audits],receipts:[...receipts]};
+}
+test("flow execution fencing preserves a replacement claim against a late authorization failure after zero-request reconciliation",async()=>{
+  for(const leased of [true,false]) {
+    const f=await flowExecutionFixture("execution-zero-request-"+leased),boss=await getBoss({schedule:false,supervise:false});await boss.createQueue(flowQueue.name,flowQueue.options);
+    const [priorLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+    await sql`INSERT INTO settings(key,value) VALUES (${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=excluded.value`;
+    const ownerA=leased?await acquireProcessingLease():undefined,arrived=Promise.withResolvers<void>(),late=Promise.withResolvers<void>(),replacement=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();
+    let ownerB:Awaited<ReturnType<typeof acquireProcessingLease>>|undefined,old:Promise<any>|undefined,next:Promise<any>|undefined;
+    const sends:string[]=[];
+    try {
+      const run=()=>runFlow(f.task.id,selectionMock(f.body,sends),async()=>{arrived.resolve();await late.promise;throw new Error("Synthetic late authorization failure");},{requireProcessingLease:leased});
+      old=ownerA?ownerA.run(run):run();
+      await arrived.promise;const before=await flowExecutionState(f.task.id);assert.ok(before.row.execution_token);
+      // The token participates in recovery's fingerprint even when timestamps and other task fields do not change.
+      const fingerprint=(await flowDetail(f.task.id)).reconciliation.executionFingerprint;
+      await sql`UPDATE fishery_flow_tasks SET execution_token=${"00000000-0000-4000-8000-000000000001"} WHERE id=${f.task.id}`;
+      assert.notEqual((await flowDetail(f.task.id)).reconciliation.executionFingerprint,fingerprint);
+      await sql`UPDATE fishery_flow_tasks SET execution_token=${before.row.execution_token} WHERE id=${f.task.id}`;
+      if(ownerA)await terminateFlowTestLease(ownerA);
+      const state=(await flowDetail(f.task.id)).reconciliation;assert.equal(state.eligible,true,state.reasons.join("; "));
+      await reconcileFlow(f.task.id,{snapshotHash:state.snapshotHash,executionFingerprint:state.executionFingerprint,expectedStatus:"running",acknowledgeRunnerStopped:true,reason:"Synthetic old test runner stopped at authorization"},"fixture-admin");
+      assert.equal((await flowExecutionState(f.task.id)).row.execution_token,null);
+      await retryFlow(f.task.id,{note:"Synthetic explicit recovery",acknowledgeNewCharge:true},"fixture-admin");
+      assert.equal((await flowExecutionState(f.task.id)).row.execution_token,null);
+      ownerB=await acquireProcessingLease();
+      next=ownerB.run(()=>runFlow(f.task.id,selectionMock(f.body,sends),async run=>{replacement.resolve();await finish.promise;await run();},{requireProcessingLease:true}));
+      await replacement.promise;const replacementState=await flowExecutionState(f.task.id);
+      assert.equal(replacementState.row.status,"running");assert.notEqual(replacementState.row.execution_token,before.row.execution_token);
+      late.resolve();await old;
+      assert.deepEqual(await flowExecutionState(f.task.id),replacementState,"late A catch cannot change B's row, audits or receipts");assert.deepEqual(sends,[]);
+      finish.resolve();assert.equal((await next).status,"needs_human_review");assert.deepEqual(sends,["generation","review"]);
+    } finally {
+      late.resolve();finish.resolve();await old;await next;await ownerB?.release();await ownerA?.release();
+      if(priorLedger)await sql`UPDATE settings SET value=${sql.json(priorLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
+    }
+  }
+});
+test("flow execution fencing reuses received generation and preserves replacement results against late success and failure",async()=>{
+  for(const variant of ["leased-success","leased-failure","fake-success"] as const) {
+    const f=await flowExecutionFixture("execution-received-"+variant),sends:string[]=[],invoke=selectionMock(f.body,sends),arrived=Promise.withResolvers<void>(),late=Promise.withResolvers<void>();
+    const leased=variant!=="fake-success",ownerA=leased?await acquireProcessingLease():undefined;
+    let old:Promise<any>|undefined;
+    try {
+      const run=()=>runFlow(f.task.id,async options=>{
+        const result=await invoke(options);assert.equal(options.purpose,"fishery_draft");arrived.resolve();await late.promise;
+        if(variant==="leased-failure")throw new Error("Synthetic late generation failure");
+        return result;
+      },undefined,{requireProcessingLease:leased});
+      old=ownerA?ownerA.run(run):run();
+      await arrived.promise;const received=await flowExecutionState(f.task.id);
+      assert.equal(received.row.draft,null);assert.equal(received.receipts.length,1);assert.equal(received.receipts[0].status,"received");
+      if(ownerA)await terminateFlowTestLease(ownerA);
+      await retryFlow(f.task.id,{note:"Synthetic reuse of original received generation"},"fixture-admin");
+      assert.equal((await flowExecutionState(f.task.id)).row.execution_token,null);
+      const done=await runFlow(f.task.id,invoke);assert.equal(done.status,"needs_human_review",JSON.stringify(done.error));
+      const replacementState=await flowExecutionState(f.task.id);
+      assert.notEqual(replacementState.row.execution_token,received.row.execution_token);
+      assert.equal(done.draft.receiptId,received.receipts[0].id);assert.deepEqual(sends,["generation","review"]);
+      late.resolve();await old;
+      assert.deepEqual(await flowExecutionState(f.task.id),replacementState,"old execution cannot change the replacement row, audits or completed receipts");
+      assert.deepEqual(sends,["generation","review"],"generation sent once, with unchanged provider identity across executions");
+    } finally {late.resolve();await old;await ownerA?.release();}
+  }
+});
+test("flow execution fencing leaves a received response reusable when its lease is lost before replacement",async()=>{
+  const f=await flowExecutionFixture("execution-lease-before-replacement"),sends:string[]=[],invoke=selectionMock(f.body,sends),arrived=Promise.withResolvers<void>(),late=Promise.withResolvers<void>(),owner=await acquireProcessingLease();
+  let old:Promise<any>|undefined;
+  try {
+    old=owner.run(()=>runFlow(f.task.id,async options=>{const answer=await invoke(options);arrived.resolve();await late.promise;return answer;},undefined,{requireProcessingLease:true}));
+    await arrived.promise;const received=await flowExecutionState(f.task.id);
+    await terminateFlowTestLease(owner);late.resolve();await old;
+    assert.deepEqual(await flowExecutionState(f.task.id),received,"lost lease cannot complete receipts, audit or persist even without a replacement claim");
+    await retryFlow(f.task.id,{note:"Synthetic explicit received response recovery"},"fixture-admin");
+    assert.equal((await runFlow(f.task.id,invoke)).status,"needs_human_review");assert.deepEqual(sends,["generation","review"]);
+  } finally {late.resolve();await old;await owner.release();}
+});
+
 test("explicit amount-only upgrade retains cumulative history and audits the original ledger",async()=>{
   const entries=Array.from({length:18},(_,i)=>({id:i+1,state:"received",wireBytes:100,reservedMicroCny:400_000,usage:{promptTokens:i===17?9847:7000,completionTokens:0,estimatedMicroCny:i===17?19694:14000}}));
   const old={id:TRIAL.id,maxRequests:20,maxReservedMicroCny:10_000_000,entries};
