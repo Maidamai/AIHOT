@@ -1657,3 +1657,91 @@ test('NPFC unavailable PDFs retain independently verified landing attachment ide
   }
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+// Complementary business-source previews stay outside production registration and approval.
+import {businessSource,discoverBusinessHtml,restrictMpaListing,prepareBusinessArticle,businessRevision} from '../backend/business-sources.ts';
+import {unsupportedConfig} from '@aihot/backend/sources/config-keys';
+const businessReceipt=(url:string,raw:Buffer)=>({requestedUrl:url,finalUrl:url,status:200,finishedAt:'2026-10-23T16:00:00Z',sha256:sha256(raw)});
+const faoBusinessUrl='https://www.fao.org/in-action/globefish/news-events/news/news-detail/test-market/en';
+const faoBusinessHtml=(date='09/11/2023',text='Historical tuna market context, with a stated species, location and observation period. This is analysis, not a current fuel quotation.')=>Buffer.from(`<h1 class="detail-title">Market analysis</h1><div class="news-detail"><span class="news - detail__date">${date}</span></div><div class="news-detail__body"><p>${text}</p></div><meta name="last-modified" content="2026-10-23">`);
+const faoBusinessCandidate={url:faoBusinessUrl,title:'Market analysis',publicationTime:'2023-11-09'};
+
+test('business sources: definitions stay disabled and native configs are supported',()=>{
+ for(const id of ['itf-fisheries','fao-tuna','mpa-port'] as const){
+  const source=businessSource(id);assert.equal(source.enabled,false);assert.equal(source.participation_mode,'isolated');assert.deepEqual(unsupportedConfig(source.kind,source.config),[]);
+ }
+});
+
+test('business sources: FAO day/month dates retain old dates and exclude quarterly document links',()=>{
+ const url=String(businessSource('fao-tuna').config.url);
+ const raw=Buffer.from(`<div class="d-list-content"><h5><a href="${faoBusinessUrl}">Market analysis</a></h5><h6 class="date">09/11/2023</h6></div><div class="d-list-content"><h5><a href="https://openknowledge.fao.org/handle/20.500.14283/test">Quarterly report</a></h5><h6 class="date">15/10/2026</h6></div>`);
+ const items=discoverBusinessHtml('fao-tuna',businessReceipt(url,raw),raw);
+ assert.equal(items.length,1);assert.equal(items[0]!.publicationTime,'2023-11-09');
+ const body=faoBusinessHtml(),prepared=prepareBusinessArticle('fao-tuna',items[0]!,businessReceipt(faoBusinessUrl,body),body);
+ assert.equal(prepared.readyForReview,true);assert.equal(prepared.readyForImport,false);assert.equal(prepared.publicationTime,'2023-11-09');assert.equal(prepared.sections.length,1);
+ for(const invalid of ['31/02/2026','unknown']){
+  const broken=Buffer.from(raw.toString().replace('09/11/2023',invalid));assert.throws(()=>discoverBusinessHtml('fao-tuna',businessReceipt(url,broken),broken),/date/);
+ }
+});
+
+test('business sources: missing or conflicting dates cannot use last-modified, URL or capture time',()=>{
+ for(const date of ['', '23/10/2026','31/02/2026']){
+  const raw=faoBusinessHtml(date),prepared=prepareBusinessArticle('fao-tuna',faoBusinessCandidate,businessReceipt(faoBusinessUrl,raw),raw);
+  assert.equal(prepared.readyForReview,false);assert.equal(prepared.body,null);assert.equal(prepared.versionHash,null);assert.equal(businessRevision(null,prepared),'blocked');
+ }
+});
+
+test('business sources: ITF keeps complete news and ignores related-card/subscription bodies',()=>{
+ const url='https://www.itfglobal.org/en/news/test-fishers',listUrl=String(businessSource('itf-fisheries').config.url);
+ const listing=Buffer.from(`<article class="node--type-news node--view-mode-teaser"><h2><a href="${url}">Fishers rights</a></h2><time datetime="2026-04-16T09:00:00Z">16 Apr 2026</time></article>`);
+ const candidate=discoverBusinessHtml('itf-fisheries',businessReceipt(listUrl,listing),listing)[0]!;
+ assert.equal(candidate.publicationTime,'2026-04-16');
+ const raw=Buffer.from(`<h1>Fishers rights</h1><article class="node--type-news node--view-mode-full"><div class="node-info-wrapper"><span class="field-created"><time datetime="2026-04-16T09:00:00Z">16 Apr 2026</time></span></div><div class="content-wrapper"><div class="body-wrapper"><div class="field--name-body"><p>Fishers' labour conditions require independent verification. Union accounts retain their attribution and are not a government ruling.</p><p>Final paragraph is preserved.</p></div></div><div class="field--name-body">Subscribe now</div></div></article><article class="node--type-news node--view-mode-teaser"><div class="field--name-body">Other news</div></article>`);
+ const prepared=prepareBusinessArticle('itf-fisheries',candidate,businessReceipt(url,raw),raw);
+ assert.equal(prepared.readyForReview,true);assert.match(prepared.body!,/Final paragraph/);assert.doesNotMatch(prepared.body!,/Subscribe|Other news/);
+ const broken=Buffer.from(raw.toString().replace('2026-04-16T09','2026-04-17T09'));
+ assert.equal(prepareBusinessArticle('itf-fisheries',candidate,businessReceipt(url,broken),broken).readyForReview,false);
+});
+
+const mpaBusinessUrl='https://www.mpa.gov.sg/media-centre/details/test-port-notice';
+const mpaBusinessPdfUrl='https://www.mpa.gov.sg/api/media/test/notice.pdf';
+const mpaBusinessCandidate={url:mpaBusinessUrl,title:'PORT MARINE NOTICE NO. 142 OF 2026 - CREW OFFICE',publicationTime:'2026-10-21T17:00:00.000Z'};
+const mpaBusinessHtml=(href=mpaBusinessPdfUrl)=>Buffer.from(`<div class="news-header"><h3>${mpaBusinessCandidate.title}</h3><div class="news-header__date">Published 22 Oct 2026</div></div><div class="news-detail__content">PORT MARINE NOTICE NO. 142 OF 2026<a href="${href}">Notice PDF</a><ul class="news-detail__tags"><li><a href="/media-centre?type=Port+Marine+Notices">Port Marine Notices</a></li></ul></div>`);
+function mpaBusinessFile(text='--- Page 1 ---\nPORT MARINE NOTICE NO. 142 OF 2026\nCrew office opening hours and operational details.',bytes=pdfFixture()){
+ return {bytes,receipt:businessReceipt(mpaBusinessPdfUrl,bytes),parsed:{status:'parsed' as const,rawSha256:sha256(bytes),parser:'synthetic-fixture',pages:1,text}};
+}
+
+test('business sources: MPA native RSS filtering never treats a description as complete body',()=>{
+ const items=restrictMpaListing([{...mpaBusinessCandidate,bodyText:'RSS teaser',bodyStatus:'ok'},{...mpaBusinessCandidate,title:'Keynote Speech'},{...mpaBusinessCandidate,url:'https://unrelated.example/article'}]);
+ assert.equal(items.length,1);assert.equal(items[0]!.bodyText,null);assert.equal(items[0]!.bodyStatus,'pending');assert.equal(items[0]!.publicationTime,mpaBusinessCandidate.publicationTime);
+});
+
+test('business sources: MPA requires exact complete PDF evidence and retains Singapore publication day',()=>{
+ const raw=mpaBusinessHtml(),receipt=businessReceipt(mpaBusinessUrl,raw),file=mpaBusinessFile();
+ const incomplete=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw);
+ assert.equal(incomplete.readyForReview,false);assert.equal(incomplete.body,null);
+ const prepared=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[file]);
+ assert.equal(prepared.readyForReview,true);assert.equal(prepared.publicationTime,'2026-10-22');assert.equal(prepared.sections[1]!.pages![0]!.page,1);
+ assert.equal(prepared.body!.slice(prepared.sections[1]!.start,prepared.sections[1]!.end),file.parsed.text);
+ for(const bad of [mpaBusinessFile(file.parsed.text.replace('142','143')),mpaBusinessFile('--- Page 1 ---\n'),{...file,parsed:{...file.parsed,rawSha256:'0'.repeat(64)}},{...file,receipt:{...file.receipt,status:404}}]){
+  const result=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[bad]);assert.equal(result.readyForReview,false);assert.equal(result.body,null);
+ }
+ const foreign=mpaBusinessHtml('https://foreign.example/notice.pdf');assert.equal(prepareBusinessArticle('mpa-port',mpaBusinessCandidate,businessReceipt(mpaBusinessUrl,foreign),foreign,[file]).readyForReview,false);
+});
+
+test('business sources: unchanged acquisition is idempotent; changed bytes at the same URL invalidate the version',()=>{
+ const raw=mpaBusinessHtml(),receipt=businessReceipt(mpaBusinessUrl,raw),file=mpaBusinessFile();
+ const old=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[file]);
+ assert.equal(businessRevision(null,old),'new');
+ const again=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,{...receipt,finishedAt:'2026-10-23T18:00:00Z'},raw,[file]);assert.equal(businessRevision(old,again),'unchanged');
+ const revised=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[mpaBusinessFile(file.parsed.text,pdfFixture(false,false,'Changed original PDF'))]);
+ assert.equal(businessRevision(old,revised),'revised');assert.equal(old.identityKey,revised.identityKey);
+ const failed=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[]);assert.equal(businessRevision(old,failed),'blocked');
+ const changedPage=Buffer.concat([raw,Buffer.from('<footer>Updated page</footer>')]);assert.equal(businessRevision(old,prepareBusinessArticle('mpa-port',mpaBusinessCandidate,businessReceipt(mpaBusinessUrl,changedPage),changedPage,[file])),'revised');
+});
+
+test('business sources: mismatched originals and redirects cannot produce reviewable content',()=>{
+ const raw=faoBusinessHtml(),receipt=businessReceipt(faoBusinessUrl,raw);
+ for(const altered of [{...receipt,status:404},{...receipt,sha256:'0'.repeat(64)},{...receipt,finalUrl:'https://other.example/page'}])assert.throws(()=>prepareBusinessArticle('fao-tuna',faoBusinessCandidate,altered,raw),/HTTP 200/);
+ const rawLarge=faoBusinessHtml('09/11/2023','A'.repeat(64001));assert.equal(prepareBusinessArticle('fao-tuna',faoBusinessCandidate,businessReceipt(faoBusinessUrl,rawLarge),rawLarge).body,null);
+});
