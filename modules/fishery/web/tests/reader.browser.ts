@@ -5,33 +5,19 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { chromium, expect, type Browser } from "@playwright/test";
 import { fakeApi, startWebServer, visit, type WebServer } from "../../../../apps/web/tests/web-server.ts";
-import type { FisheryReaderItem, FisheryReaderPage } from "../../ui-contracts.ts";
-import { projectBusinessTimeliness } from "../../business-timeliness.ts";
-import { BUSINESS_TOPICS } from "../../business-topics.ts";
 import type { BusinessGuideReaderItem } from "../../business-contracts.ts";
-const item:FisheryReaderItem={id:"synthetic-policy",title:"此合成资料用于检查内部摘要、原文日期及来源证据的呈现，不代表真实政策或业务审核。",source:{name:"合成官方来源 · 仅用于界面验收",originalTitle:"配额增100%（合成未核查原标题）",url:"https://example.org/synthetic-policy"},category:{id:"policy",label:"政策监管"},summary:[{sentence:"此合成资料用于检查内部摘要、原文日期及来源证据的呈现，不代表真实政策或业务审核。",evidence:[{quote:"This synthetic source excerpt is for interface verification only. It does not describe an actual conservation measure or authorize fishing operations.",paragraph:12,page:2,url:"https://example.org/synthetic-policy.pdf"}]}],dates:{published:{precision:"day",value:"2026-04-17"},event:{precision:"unknown",value:null}},age:{referenceDate:"2026-10-20",days:186,historical:true,label:"7日及更早原文资料"},verification:{status:"internally_qualified",label:"摘要已完成内部核对",legalApplicability:"未完成法律适用性核验"}};
-const unknown:FisheryReaderItem={...item,id:"synthetic-pubunknown",title:"此合成日期未知资料仅用于界面验收。",summary:[{...item.summary[0]!,sentence:"此合成日期未知资料仅用于界面验收。"}],dates:{...item.dates,published:{precision:"unknown",value:null}},age:{referenceDate:"2026-10-20",days:null,historical:false,label:"原文资料 · 发布日期未知"}};
+const item={id:"synthetic-policy",source:{name:"合成官方来源 · 仅用于界面验收",originalTitle:"Synthetic material source",url:"https://example.org/synthetic-policy"}};
 const syntheticUnknown={state:"unknown" as const,value:null,evidence:[] as []};
 const syntheticDate={value:{precision:"unknown" as const,value:null},evidence:[] as string[]};
-const businessItem:BusinessGuideReaderItem={id:"synthetic-guide",documentId:item.id,revision:1,payload:{relations:[],topicId:"funding",kind:"business_guide",title:{value:"合成业务指南 · 仅供界面验收",evidence:["p1s1"]},summary:[{value:"此合成指南不代表真实业务批准。",evidence:["p1s1"]}],audience:syntheticUnknown,opportunity:syntheticUnknown,restrictions:syntheticUnknown,materials:syntheticUnknown,applicability:{countriesOrRegions:syntheticUnknown,flagStates:syntheticUnknown,species:syntheticUnknown,fishingMethods:syntheticUnknown},documentStatus:syntheticUnknown,dates:{published:{value:{precision:"day",value:"2026-04-17"},evidence:["p1s1"]},effectiveFrom:syntheticDate,deadline:syntheticDate,expiresAt:syntheticDate},serviceEntry:{state:"unknown",label:null,url:null,evidence:[]}},source:{...item.source,published:{precision:"day",value:"2026-04-17"},publishedAt:null,publicationLiteral:"2026-04-17",capturedAt:"2026-10-20T00:00:00Z"},snapshot:{version:"fishery-business-guide/1",articleId:"synthetic-article",canonicalUrl:item.source.url,documentId:item.id,sourceId:"synthetic",sourceRevision:1,sourceProfileHash:"a".repeat(64),observationRevision:1,observationHash:"a".repeat(64),rawSha256:"a".repeat(64),bodySha256:"b".repeat(64),materialReviewId:1,materialReviewHash:"a".repeat(64),catalogHash:"c".repeat(64),catalogVersion:"synthetic"},evidence:{p1s1:{quote:"Synthetic editorial evidence only.",paragraph:1,page:null,url:"https://example.org/synthetic"}},verifiedAt:"2026-10-21T00:00:00Z",qualification:{status:"qualified",label:"AI对照核查及最终审核通过"},verification:{executorKind:"unspecified",origin:"human_editorial",aiStatus:"passed",label:"编审已批准",legalApplicability:"not_determined"},timeliness:projectBusinessTimeliness({deadline:syntheticDate,expiresAt:syntheticDate},new Date("2026-10-21T04:00:00Z")),eligibility:{canApply:null,canFish:null},internalOnly:true};
-function publicationItem():BusinessGuideReaderItem {
-  if(publicationFixture==="body")return businessItem;
-  return {...businessItem,payload:{...businessItem.payload,dates:{...businessItem.payload.dates,published:syntheticDate}},source:{...businessItem.source,published:publicationFixture==="metadata"?{precision:"day",value:"2025-08-01"}:{precision:"unknown",value:null},publicationLiteral:publicationFixture==="metadata"?"2025-08-01":null}};
-}
-function readerFixture():BusinessGuideReaderItem {
-  const row=publicationItem();if(timelinessFixture==="none")return row;
-  const dated=(value:string)=>({value:{precision:"day" as const,value},evidence:["p1s1"]});
-  const deadline=dated(timelinessFixture==="future"?"2026-10-22":timelinessFixture==="midnight"?"2026-10-21":"2026-10-20");
-  const expiresAt=timelinessFixture==="expiry"?dated("2026-10-19"):syntheticDate;
-  const payload={...row.payload,dates:{...row.payload.dates,deadline,expiresAt}};
-  return {...row,payload,verifiedAt:"2099-01-01T00:00:00Z",timeliness:projectBusinessTimeliness(payload.dates,new Date("2026-10-21T04:00:00Z"))};
-}
+const businessItem:Pick<BusinessGuideReaderItem,"id"|"documentId"|"payload"|"source"|"snapshot"|"verifiedAt">={id:"synthetic-guide",documentId:item.id,payload:{relations:[],topicId:"funding",kind:"business_guide",title:{value:"合成业务指南 · 仅供界面验收",evidence:["p1s1"]},summary:[{value:"此合成指南不代表真实业务批准。",evidence:["p1s1"]}],audience:syntheticUnknown,opportunity:syntheticUnknown,restrictions:syntheticUnknown,materials:syntheticUnknown,applicability:{countriesOrRegions:syntheticUnknown,flagStates:syntheticUnknown,species:syntheticUnknown,fishingMethods:syntheticUnknown},documentStatus:syntheticUnknown,dates:{published:{value:{precision:"day",value:"2026-04-17"},evidence:["p1s1"]},effectiveFrom:syntheticDate,deadline:syntheticDate,expiresAt:syntheticDate},serviceEntry:{state:"unknown",label:null,url:null,evidence:[]}},source:{...item.source,published:{precision:"day",value:"2026-04-17"},publishedAt:null,publicationLiteral:"2026-04-17",capturedAt:"2026-10-20T00:00:00Z"},snapshot:{version:"fishery-business-guide/1",articleId:"synthetic-article",canonicalUrl:item.source.url,documentId:item.id,sourceId:"synthetic",sourceRevision:1,sourceProfileHash:"a".repeat(64),observationRevision:1,observationHash:"a".repeat(64),rawSha256:"a".repeat(64),bodySha256:"b".repeat(64),materialReviewId:1,materialReviewHash:"a".repeat(64),catalogHash:"c".repeat(64),catalogVersion:"synthetic"},verifiedAt:"2026-10-21T00:00:00Z"};
 const businessRecord=()=>({id:businessItem.id,documentId:item.id,revision:1,status:aiFixture==="missing"?"approved":"draft",aiReview:{current:aiFixture!=="stale"&&aiFixture!=="missing",pass:aiFixture==="passed",status:aiFixture,reviewHash:aiFixture==="missing"?null:"e".repeat(64),receiptId:aiFixture==="missing"?null:123,guideRevision:aiFixture==="stale"?0:1,confirmedConflict:aiFixture==="conflict"},snapshot:businessItem.snapshot,snapshotHash:"a".repeat(64),payload:businessItem.payload,payloadHash:"b".repeat(64),createdAt:businessItem.verifiedAt,updatedAt:businessItem.verifiedAt,verifiedAt:null,readable:false,blockedReason:"未批准",humanDecision:null});
-let mode:"ready"|"empty"|"unauthorized"|"failure"="ready";
-const apiPaths:string[]=[];let unapprovedSupportedFlow=false;let runningReconcileFixture=false;let unavailableBusinessContext=false;let timelinessFixture:"none"|"deadline"|"expiry"|"future"|"midnight"="none";let aiFixture:"passed"|"missing"|"stale"|"conflict"|"failed"="passed";let publicationFixture:"body"|"metadata"|"unknown"="body";
-const api=fakeApi((url,res)=>{
+let mode:"ready"|"unauthorized"|"failure"="ready";
+const apiPaths:string[]=[];let unapprovedSupportedFlow=false;let runningReconcileFixture=false;let unavailableBusinessContext=false;let aiFixture:"passed"|"missing"|"stale"|"conflict"|"failed"="passed";
+const apiCookies:{path:string;cookie:string}[]=[];
+const api=fakeApi((url,res,request)=>{
   apiPaths.push(url.pathname);
-  if(url.pathname==="/api/admin/me") {if(mode==="unauthorized")res.statusCode=401;return {name:"synthetic-admin",csrf:"synthetic-test-only",dev:false};}
+  if(url.pathname.startsWith("/api/admin/"))apiCookies.push({path:url.pathname,cookie:request.headers.cookie??""});
+  if(url.pathname==="/api/admin/me") {if(mode!=="ready"){res.statusCode=mode==="unauthorized"?401:503;return {detail:"Synthetic identity unavailable"};}return {name:"synthetic-admin",csrf:"synthetic-test-only",dev:false};}
   if(url.pathname==="/api/admin/nav-counts")return {};
   if(url.pathname==="/api/admin/fishery/batches") {
     const batch=(id:string,status:string,states:string[])=>({id,status,startedAt:"2026-10-20T00:00:00Z",finishedAt:status==="complete"?"2026-10-20T00:01:00Z":null,sources:[],items:states.map((state,i)=>({archiveId:`${id}_${i}`,url:`https://example.org/${id}/${i}`,discoveryTitle:`Synthetic ${state} capture`,state,prepared:null,error:state==="failed"?"Synthetic unavailable capture":null}))});
@@ -45,63 +31,85 @@ const api=fakeApi((url,res)=>{
   if(url.pathname.startsWith("/api/admin/fishery/business-")) {
     if(mode==="unauthorized"){res.statusCode=401;return {code:"unauthorized"};}
     if(mode==="failure"){res.statusCode=503;return {detail:"Synthetic failure"};}
-    if(url.pathname==="/api/admin/fishery/business-reader")return {rows:mode==="empty"?[]:[readerFixture()],total:mode==="empty"?0:1,page:1,limit:20,topics:BUSINESS_TOPICS.map(t=>({...t,count:mode==="empty"?0:t.id==="funding"?1:0,emptyMessage:"待补充正式依据"})),internalOnly:true};
-    if(url.pathname==="/api/admin/fishery/business-reader/synthetic-guide")return readerFixture();
     if(url.pathname==="/api/admin/fishery/business-guides")return {rows:[1,2,3,4].map(i=>({...businessRecord(),id:i===1?businessItem.id:"synthetic-guide-"+i}))};
     if(url.pathname==="/api/admin/fishery/business-guides/synthetic-guide")return businessRecord();
     if(url.pathname.startsWith("/api/admin/fishery/business-guides/context/")&&unavailableBusinessContext){res.statusCode=409;return {detail:"Synthetic withdrawn material"};}
     if(url.pathname.startsWith("/api/admin/fishery/business-guides/context/"))return {documentId:item.id,snapshot:businessItem.snapshot,snapshotHash:"a".repeat(64),source:businessItem.source,catalog:{version:"synthetic",hash:"c".repeat(64),bodySha256:"b".repeat(64),observationRevision:1,spans:[{id:"p1s1",quote:"Synthetic editorial evidence only.",paragraph:1,page:null,start:0,end:33}],pages:[]}};
     res.statusCode=404;return {code:"not_found"};
   }
-  if(url.pathname.startsWith("/api/admin/fishery/reader")) {
+  if(url.pathname.startsWith("/api/admin/fishery/reader-target/")) {
     if(mode==="unauthorized") {res.statusCode=401;return {code:"unauthorized"};}
-    if(mode==="failure") {res.statusCode=503;return {detail:"Reader temporarily unavailable"};}
-    if(url.pathname==="/api/admin/fishery/reader") return {rows:mode==="empty"?[]:[item,unknown],categories:mode==="empty"?[]:[{id:"policy",label:"政策监管",count:2}],total:mode==="empty"?0:2,filteredTotal:mode==="empty"?0:2,page:1,limit:20,selectedCategory:null,internalOnly:true,referenceDate:"2026-10-20"} satisfies FisheryReaderPage;
-    if(url.pathname.endsWith("/synthetic-policy"))return item;
+    if(mode==="failure") {res.statusCode=503;return {detail:"Synthetic target unavailable"};}
+    if(url.pathname==="/api/admin/fishery/reader-target/article/synthetic-policy")return {url:"/items/synthetic-public-article"};
+    if(url.pathname==="/api/admin/fishery/reader-target/business_guide/synthetic-guide")return {url:"/items/synthetic-public-guide"};
     res.statusCode=404;return {code:"not_found"};
   }
   if(url.pathname==="/api/site/timeline")return {filters:{channel:"all",category:null,tag:null},cards:[],nextCursor:null,dayCounts:[],hot:null};
   if(url.pathname==="/api/site/hot")return {entries:[]};
 });
 let web:WebServer,browser:Browser;
-before(async()=>{web=await startWebServer(api);browser=await chromium.launch({channel:"chromium"});});
+before(async()=>{await mkdir(process.env.FISHERY_SCREENSHOT_DIR??"/tmp/fishery-reader-preview",{recursive:true});web=await startWebServer(api);browser=await chromium.launch({channel:"chromium"});});
 after(async()=>{await browser?.close();await web?.stop();});
-const noPublicNavigation=(html:string)=>{assert.doesNotMatch(html,/href="\/(?:all|hot|daily|weekly|topics|more)(?:[?"/])/);assert.doesNotMatch(html,/application\/rss\+xml/);};
-
-test("reader HTML, data and errors remain private, and signed-out readers use the existing login redirect",async()=>{
-  mode="ready";
-  for(const route of ["/fishery","/fishery/synthetic-policy","/fishery.data","/fishery/synthetic-policy.data","/fishery/missing/deeper","/fishery/missing/deeper.data"]) {
-    const response=await fetch(web.origin+route,{redirect:"manual"});
-    assert.match(response.headers.get("cache-control")??"",/private.*no-store/);assert.match(response.headers.get("x-robots-tag")??"",/noindex/,route+" "+JSON.stringify([...response.headers]));
-    const html=await response.text();if(!route.includes(".data"))noPublicNavigation(html);
-    if(route.includes("missing")) {assert.equal(response.status,404);if(!route.includes(".data")) assert.match(html,/返回资料列表/);}
+test("legacy reader collections authenticate and redirect supported filters into main-site routes",async()=>{
+  mode="ready";const start=apiCookies.length;
+  const destinations=[
+    ["/fishery","/all"],
+    ["/fishery?category=policy&page=2&q=%20配额%20&tag=%20政策%20&channel=firstParty&tab=relevance&kind=business_guide","/all?channel=firstParty&category=policy&tag=政策&q=配额&tab=relevance&page=2"],
+    ["/fishery?category=obsolete&channel=invalid&page=-1&tab=invalid","/all"],
+    ["/fishery/topics","/topics"],
+    ["/fishery/topics?topicId=funding&kind=business_guide&page=2","/topics/funding"],
+    ["/fishery/topics?topicId=missing","/topics"],
+  ];
+  for(const [route,target] of destinations){
+    const response=await fetch(web.origin+route,{redirect:"manual",headers:{cookie:"admin_session=synthetic-reader"}});
+    assert.equal(response.status,302,route);
+    assert.equal(response.headers.get("location"),new URL(target,web.origin).pathname+new URL(target,web.origin).search);
+    assert.match(response.headers.get("cache-control")??"",/private.*no-store/);
+    assert.match(response.headers.get("x-robots-tag")??"",/noindex/);
   }
-  mode="failure";const failure=await fetch(web.origin+"/fishery");assert.equal(failure.status,503);assert.match(failure.headers.get("cache-control")??"",/no-store/);noPublicNavigation(await failure.text());
-  mode="unauthorized";const signedOut=await fetch(web.origin+"/fishery",{redirect:"manual"});assert.equal(signedOut.status,302);assert.equal(signedOut.headers.get("location"),"/api/auth/login?return=%2Ffishery");
-  mode="ready";const normal=await fetch(web.origin+"/");const normalHtml=await normal.text();assert.match(normalHtml,/application\/rss\+xml/);assert.match(normalHtml,/href="\/all/);
+  for(const category of ["policy","safety","market","research","equipment","operations","reference"]){
+    const response=await fetch(web.origin+"/fishery?category="+category,{redirect:"manual"});
+    assert.equal(response.status,302);assert.equal(response.headers.get("location"),"/all?category="+category);
+  }
+  assert.ok(apiCookies.slice(start,start+destinations.length).every(read=>read.path==="/api/admin/me"&&read.cookie==="admin_session=synthetic-reader"));
+  assert.equal(apiPaths.some(p=>p==="/api/admin/fishery/reader"||p==="/api/admin/fishery/business-reader"),false);
 });
 
-test("reader list, complete citation detail and empty/error states fit 320, 393 and 1024 screens",async()=>{
-  mode="ready";const folder=process.env.FISHERY_SCREENSHOT_DIR??"/tmp/fishery-reader-preview";await mkdir(folder,{recursive:true});
-  for(const width of [320,393,1024]) {
-    const page=await browser.newPage({viewport:{width,height:900}});
-    await visit(page,web.origin+"/fishery");await expect(page.getByRole("heading",{name:"已核对资料",exact:true})).toBeVisible();
-    await expect(page.getByText("已核对摘要",{exact:true})).toHaveCount(2);await expect(page.getByText("摘要已完成内部核对",{exact:true})).toHaveCount(2);
-    await expect(page.getByText(item.source.originalTitle,{exact:true})).toHaveCount(0);
-    await expect(page.getByText("历史资料",{exact:true})).toBeVisible();await expect(page.getByText("原文发布日期未知",{exact:true})).toBeVisible();
-    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await expect(page.getByRole("link",{name:"模型",exact:true})).toHaveCount(0);
-    await page.screenshot({path:path.join(folder,`list-${width}.png`),fullPage:true});
-    await page.getByRole("link",{name:item.title,exact:true}).click();await expect(page.getByRole("heading",{name:"原文引证",exact:true})).toBeVisible();await expect(page.getByText(item.summary[0]!.evidence[0]!.quote,{exact:true})).toBeVisible();
-    await expect(page.getByRole("heading",{level:1,name:item.title,exact:true})).toBeVisible();assert.ok(!(await page.title()).includes("100%"));await expect(page.getByText(item.source.originalTitle,{exact:true})).toBeVisible();await expect(page.getByText("原来源标题（未作为独立事实核查）",{exact:true})).toBeVisible();
-    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.equal(await page.getByRole("link",{name:/原文第 12 段/}).getAttribute("rel"),"noopener noreferrer");
-    await page.screenshot({path:path.join(folder,`detail-${width}.png`),fullPage:true});
-    await page.goto(web.origin+"/fishery/missing/deeper");await expect(page.getByRole("heading",{name:"这份资料暂不可读",exact:true})).toBeVisible();await expect(page.getByRole("link",{name:"回到精选",exact:true})).toHaveCount(0);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-    await page.screenshot({path:path.join(folder,`error-${width}.png`),fullPage:true});await page.close();
+test("legacy reader details redirect only to the current server-mapped main-site item",async()=>{
+  mode="ready";const start=apiCookies.length;
+  for(const [route,target] of [["/fishery/synthetic-policy","/items/synthetic-public-article"],["/fishery/guides/synthetic-guide","/items/synthetic-public-guide"]]){
+    const response=await fetch(web.origin+route,{redirect:"manual",headers:{cookie:"admin_session=synthetic-reader"}});
+    assert.equal(response.status,302,route);assert.equal(response.headers.get("location"),target);
+    assert.match(response.headers.get("cache-control")??"",/private.*no-store/);
+    assert.match(response.headers.get("x-robots-tag")??"",/noindex/);
   }
-  mode="empty";const empty=await browser.newPage({viewport:{width:393,height:852}});await visit(empty,web.origin+"/fishery");await expect(empty.getByRole("heading",{name:"暂无可读资料",exact:true})).toBeVisible();await expect(empty.getByRole("link",{name:/政策监管/})).toHaveCount(0);await empty.screenshot({path:path.join(folder,"empty-393.png"),fullPage:true});await empty.close();
-  assert.equal(apiPaths.some(p=>/model|generate|process|receipts/.test(p)),false);
+  assert.deepEqual(apiCookies.slice(start).map(read=>read.path),["/api/admin/fishery/reader-target/article/synthetic-policy","/api/admin/fishery/reader-target/business_guide/synthetic-guide"]);
+  assert.ok(apiCookies.slice(start).every(read=>read.cookie==="admin_session=synthetic-reader"));
 });
 
+test("legacy reader authentication and target failures preserve login or error responses",async()=>{
+  const routes=["/fishery","/fishery/topics?topicId=funding","/fishery/synthetic-policy","/fishery/guides/synthetic-guide","/fishery/unknown/deeper"];
+  try{
+    mode="unauthorized";
+    for(const route of routes){
+      const response=await fetch(web.origin+route,{redirect:"manual"});
+      assert.equal(response.status,302,route);assert.equal(response.headers.get("location"),"/api/auth/login?"+new URLSearchParams({return:route}));
+      assert.match(response.headers.get("cache-control")??"",/no-store/);
+    }
+    mode="failure";
+    for(const route of routes){
+      const response=await fetch(web.origin+route,{redirect:"manual"});
+      assert.equal(response.status,503,route);assert.equal(response.headers.get("location"),null);
+      assert.match(response.headers.get("cache-control")??"",/private.*no-store/);
+    }
+    mode="ready";
+    for(const route of ["/fishery/missing","/fishery/guides/missing","/fishery/unknown/deeper","/fishery/missing.data","/fishery/guides/missing.data","/fishery/unknown/deeper.data"]){
+      const response=await fetch(web.origin+route,{redirect:"manual"});
+      assert.equal(response.status,404,route);assert.equal(response.headers.get("location"),null);
+      assert.match(response.headers.get("cache-control")??"",/private.*no-store/);
+    }
+  }finally{mode="ready";}
+});
 
 test("failed administrator flow cannot offer internal qualification without a reviewed relevant draft",async()=>{
   mode="ready";const page=await browser.newPage();try{await visit(page,web.origin+"/admin/fishery/flows/synthetic-failed");await expect(page.getByRole("heading",{name:"内部文章审核",exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"记录内部合格",exact:true})).toBeDisabled();unapprovedSupportedFlow=true;await page.reload();await expect(page.getByText(/当前素材观察及信源版本尚未审核通过/)).toBeVisible();await expect(page.getByRole("button",{name:"记录内部合格",exact:true})).toBeDisabled();}finally{unapprovedSupportedFlow=false;await page.close();}
@@ -159,22 +167,6 @@ test("synthetic interruption recovery requires stopped-runner acknowledgement an
   }finally{runningReconcileFixture=false;await page.close();}
 });
 
-test("business topics and guide evidence remain private and fit narrow screens",async()=>{
-  mode="ready";
-  for(const route of ["/fishery/topics","/fishery/topics.data","/fishery/guides/synthetic-guide","/fishery/guides/synthetic-guide.data","/fishery/guides/missing","/fishery/guides/missing.data"]){
-    const response=await fetch(web.origin+route,{redirect:"manual"});assert.match(response.headers.get("cache-control")??"",/private.*no-store/);assert.match(response.headers.get("x-robots-tag")??"",/noindex/);const html=await response.text();if(!route.endsWith(".data"))noPublicNavigation(html);if(route.includes("missing"))assert.equal(response.status,404);
-  }
-  mode="unauthorized";const signedOut=await fetch(web.origin+"/fishery/topics",{redirect:"manual"});assert.equal(signedOut.status,302);assert.equal(signedOut.headers.get("location"),"/api/auth/login?return=%2Ffishery%2Ftopics");mode="ready";
-  const folder=process.env.FISHERY_SCREENSHOT_DIR??"/tmp/fishery-reader-preview";await mkdir(folder,{recursive:true});
-  for(const width of [320,393,1024]){
-    const page=await browser.newPage({viewport:{width,height:900}});try{
-      await visit(page,web.origin+"/fishery/topics");await expect(page.getByRole("heading",{name:"经营主题",level:1,exact:true})).toBeVisible();await expect(page.getByRole("navigation",{name:"经营主题",exact:true}).getByRole("link")).toHaveCount(11);await expect(page.getByText("待补充",{exact:true})).toHaveCount(9);await expect(page.getByRole("link",{name:businessItem.payload.title.value,exact:true})).toBeVisible();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,`business-topics-${width}.png`),fullPage:true});
-      await page.getByRole("link",{name:businessItem.payload.title.value,exact:true}).click();await expect(page.getByRole("heading",{level:1,name:businessItem.payload.title.value})).toBeVisible();await expect(page.getByText("历史资料（原文距核验日已满7日）",{exact:false})).toBeVisible();await expect(page.getByText("未知，待确认",{exact:true}).first()).toBeVisible();await page.locator("summary").first().click();await expect(page.getByText("Synthetic editorial evidence only.",{exact:true}).first()).toBeVisible();assert.equal(await page.getByRole("link",{name:/原文第 1 段/}).first().getAttribute("rel"),"noopener noreferrer");assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,`business-guide-${width}.png`),fullPage:true});
-    }finally{await page.close();}
-  }
-  mode="empty";const empty=await browser.newPage();try{await visit(empty,web.origin+"/fishery/topics?kind=business_guide");await expect(empty.getByRole("heading",{name:"此类内容待补充",exact:true})).toBeVisible();}finally{await empty.close();mode="ready";}
-});
-
 test("manual business guide editor sends normal CSRF and version-bound save and decision commands",async()=>{
   mode="ready";const page=await browser.newPage({viewport:{width:393,height:900}}),commands:{method:string;body:any;csrf:string|undefined}[]=[];
   await page.route("**/api/admin/fishery/business-guides/synthetic-guide",async route=>{commands.push({method:route.request().method(),body:route.request().postDataJSON(),csrf:route.request().headers()["x-csrf-token"]});await route.fulfill({json:{id:businessItem.id}});});
@@ -208,40 +200,6 @@ test("manual archive import uses existing login and CSRF then links to normal ma
   const page=await browser.newPage({viewport:{width:320,height:900}}),commands:any[]=[];
   await page.route("**/api/admin/fishery/manual-sources/synthetic-manual-1/import",async route=>{commands.push({method:route.request().method(),csrf:route.request().headers()["x-csrf-token"],body:route.request().postDataJSON()});await route.fulfill({json:{archiveId:"synthetic-manual-1",rows:[{id:"synthetic-imported-material",revision:1,unchanged:false}],reviewState:"unreviewed",modelCalls:0,published:false}});});
   try{await visit(page,web.origin+"/admin/fishery/manual-sources");await expect(page.getByRole("heading",{level:1,name:"人工来源导入",exact:true})).toBeVisible();await expect(page.getByRole("heading",{name:/合成人工归档/})).toHaveCount(4);await expect(page.getByText("Synthetic archive hash mismatch",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"导入素材",exact:true}).last()).toBeDisabled();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.getByRole("button",{name:"导入素材",exact:true}).first().click();await expect(page.getByRole("link",{name:/打开素材，查看当前审核状态/})).toHaveAttribute("href","/admin/fishery/synthetic-imported-material");await expect(page.getByText("导入完成，当前审核状态见素材详情。未公开发布 · 模型调用 0 次",{exact:true})).toBeVisible();assert.deepEqual(commands,[{method:"POST",csrf:"synthetic-test-only",body:{}}]);await page.screenshot({path:path.join(process.env.FISHERY_SCREENSHOT_DIR??"/tmp/fishery-reader-preview","manual-sources-320.png"),fullPage:true});}finally{await page.close();mode="ready";}
-});
-
-
-test("business publication metadata supplies known display dates without changing unknown editorial fields",async()=>{
-  mode="ready";const page=await browser.newPage({viewport:{width:393,height:900}});
-  try{
-    publicationFixture="metadata";await visit(page,web.origin+"/fishery/topics?kind=business_guide");await expect(page.getByText("来源元数据发布日期 2025-08-01（日精度）",{exact:true})).toBeVisible();await expect(page.getByText("历史资料",{exact:true})).toBeVisible();await page.getByRole("link",{name:businessItem.payload.title.value,exact:true}).click();await expect(page.getByText(/^来源元数据发布日期：2025-08-01（日精度）/)).toBeVisible();await expect(page.getByText("历史资料（原文距核验日已满7日）",{exact:false})).toBeVisible();const bodyDate=page.locator("section").filter({has:page.getByRole("heading",{name:"原文发布日期（正文引句）",exact:true})});await expect(bodyDate.getByText("未知，待确认",{exact:true})).toBeVisible();await expect(page.getByText("核验日",{exact:true}).locator("..").getByText("2026-10-21（非原文发布日期）",{exact:true})).toBeVisible();await expect(page.getByText("执行身份未知（未记录）",{exact:true})).toBeVisible();await expect(page.getByText("办事指南 · 编审整理",{exact:true})).toBeVisible();await expect(page.getByText(/人工编写|最终人工审定|最终人审/)).toHaveCount(0);
-    publicationFixture="unknown";await page.goto(web.origin+"/fishery/topics?kind=business_guide");await expect(page.getByText("原文发布日期 未知",{exact:true})).toBeVisible();await expect(page.getByText("历史资料",{exact:true})).toHaveCount(0);await page.getByRole("link",{name:businessItem.payload.title.value,exact:true}).click();await expect(page.getByText(/^原文发布日期：未知，待确认/)).toBeVisible();await expect(page.getByText("历史资料（原文距核验日已满7日）",{exact:false})).toHaveCount(0);assert.deepEqual(publicationItem().payload.dates.published,syntheticDate);assert.equal(apiPaths.some(p=>/business.*(?:run|generate|process)/.test(p)),false);
-  }finally{publicationFixture="body";await page.close();}
-});
-
-
-test("business timeliness is prominent and uses current Beijing dates instead of editorial verification dates",async()=>{
-  mode="ready";const page=await browser.newPage({viewport:{width:393,height:900}});await page.clock.install({time:new Date("2026-10-21T04:00:00Z")});
-  try{
-    for(const fixture of ["deadline","expiry","future","none"] as const){
-      timelinessFixture=fixture;await visit(page,web.origin+"/fishery/topics?kind=business_guide");const card=page.locator(".reader-card").first(),status=card.getByRole("status",{name:"文载时效与申请状态"});await expect(status).toBeVisible();await expect(status).toContainText("可申请状态未知/待核实");
-      if(fixture==="deadline")await expect(status).toContainText("已截止（按原文日期）");
-      else if(fixture==="expiry"){await expect(status).toContainText("已过文载失效日期");assert.ok((await status.locator("strong").innerText()).startsWith("已过文载失效日期"));}
-      else {await expect(status).not.toContainText("已截止");await expect(status).not.toContainText("已过文载失效日期");}
-      await page.getByRole("link",{name:businessItem.payload.title.value,exact:true}).click();const detail=page.getByRole("status",{name:"文载时效与申请状态"});await expect(detail).toBeVisible();await expect(detail).toContainText("北京时间核对日 2026-10-21");await expect(detail).toContainText("可申请状态未知/待核实");
-      if(fixture!=="none")await expect(page.getByText("核验日",{exact:true}).locator("..").getByText("2099-01-01（非原文发布日期）",{exact:true})).toBeVisible();
-      if(fixture==="deadline")await expect(detail).toContainText("已截止（按原文日期）");if(fixture==="expiry")await expect(detail).toContainText("已过文载失效日期");assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.equal(readerFixture().eligibility.canApply,null);assert.equal(readerFixture().eligibility.canFish,null);
-    }
-    assert.equal(apiPaths.some(p=>/business.*(?:run|generate|process)/.test(p)),false);
-  }finally{timelinessFixture="none";await page.close();}
-});
-
-test("an open business page recalculates after Beijing midnight and on returning focus",async()=>{
-  mode="ready";timelinessFixture="midnight";const page=await browser.newPage();await page.clock.install({time:new Date("2026-10-21T15:59:59.800Z")});
-  try{
-    await visit(page,web.origin+"/fishery/guides/synthetic-guide");const status=page.getByRole("status",{name:"文载时效与申请状态"});await expect(status).toContainText("北京时间核对日 2026-10-21");await expect(status).not.toContainText("已截止");await page.clock.fastForward(1000);await expect(status).toContainText("已截止（按原文日期）");await expect(status).toContainText("北京时间核对日 2026-10-22");
-    await page.clock.setSystemTime(new Date("2026-10-23T04:00:00Z"));await page.evaluate(()=>window.dispatchEvent(new Event("focus")));await expect(status).toContainText("北京时间核对日 2026-10-23");assert.equal(apiPaths.some(p=>/business.*(?:run|generate|process)/.test(p)),false);
-  }finally{timelinessFixture="none";await page.close();}
 });
 
 
