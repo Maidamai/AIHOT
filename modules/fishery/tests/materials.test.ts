@@ -1932,6 +1932,8 @@ test('notice article flow keeps webpage and second attachment provenance through
  });
  assert.equal(sends,2);assert.equal(result.status,'needs_human_review',JSON.stringify(result.error));
  assert.equal(result.draft.draft.summaryZh[0].evidence[0].source.url,second);assert.equal(result.internalArticle,null,'Separate final approval remains required');
+ await decideFlow(task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'Synthetic final review of source-bound second attachment'},'authorized-agent:test');
+ const readable=await readerItem(doc.id);assert.equal(readable.summary[0].evidence[0].url,second);assert.equal(readable.summary[0].evidence[0].page,1);assert.notEqual(readable.summary[0].evidence[0].url,f.pdfUrl,'Second attachment page1 cannot link the first PDF');
 });
 
 test('NPFC verified changed landing PDF URL invalidates old approval and qualified article even when PDF acquisition fails',async()=>{

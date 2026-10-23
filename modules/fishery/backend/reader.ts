@@ -4,6 +4,7 @@ import { linkSchema } from "../contracts.ts";
 import type { FisheryReaderItem, FisheryReaderPage, ReaderCategory } from "../ui-contracts.ts";
 import { flowDetail } from "./flow.ts";
 import { hash, NotFound } from "./store.ts";
+import type { EvidenceSource } from "./evidence.ts";
 
 export const READER_CATEGORIES={policy:"政策监管",safety:"作业安全",market:"市场贸易",research:"资源科研",equipment:"船舶装备",operations:"企业合作与港口基地",reference:"资料"} as const;
 export type ReaderCategoryId=keyof typeof READER_CATEGORIES;
@@ -31,7 +32,7 @@ export async function eligibleReaderItems(now=new Date()):Promise<FisheryReaderI
     const title=candidate.summaryZh?.find((s:{sentence:string})=>s.sentence.trim())?.sentence,originalTitle=String(row.payload.originalTitle??row.payload.title??""),sourceUrl=linkSchema.safeParse(row.canonical_url);
     if(!title||!sourceUrl.success||!candidate.summaryZh?.length||candidate.summaryZh.some((s:{sentence:string})=>!s.sentence.trim())) continue;
     const capture=row.payload.sourceCapture;
-    const summary=candidate.summaryZh.map((s:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]})=>({sentence:s.sentence,evidence:s.evidence.map(a=>({quote:a.quote,paragraph:a.paragraph,page:a.page,url:a.page!==null&&linkSchema.safeParse(capture?.attachmentUrl).success?capture.attachmentUrl:sourceUrl.data}))}));
+    const summary=candidate.summaryZh.map((s:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null;source?:EvidenceSource}[]})=>({sentence:s.sentence,evidence:s.evidence.map(a=>({quote:a.quote,paragraph:a.paragraph,page:a.page,url:linkSchema.safeParse(a.source?.url).success?a.source!.url:a.page!==null&&linkSchema.safeParse(capture?.attachmentUrl).success?capture.attachmentUrl:sourceUrl.data}))}));
     if(summary.some((s:{evidence:unknown[]})=>!s.evidence.length)) continue;
     const category=categoryFor(summary.map((s:{sentence:string})=>s.sentence).join("\n")),time=flow.timeline;
     items.push({id:row.id,title,source:{name:row.source_name,url:sourceUrl.data,originalTitle},category:{id:category,label:READER_CATEGORIES[category]},summary,
