@@ -88,7 +88,7 @@ export interface BusinessAttachment {receipt:unknown;bytes:Buffer;parsed:PdfText
 export interface BusinessPrepared {
  schemaVersion:'fishery-business-preview/1';source:BusinessSourceId;url:string;identityKey:string;
  readyForReview:boolean;readyForImport:false;title:string|null;publicationLiteral:string|null;publicationTime:string|null;
- body:string|null;bodySha256:string|null;versionHash:string|null;receipt:ArchiveReceipt;
+ body:string|null;bodySha256:string|null;versionHash:string|null;evidenceHash:string|null;receipt:ArchiveReceipt;
  sections:EvidenceSection[];links:{url:string;label:string;role:'required_attachment'|'reference'}[];
  attachmentReceipts:ArchiveReceipt[];issues:string[];
 }
@@ -149,10 +149,12 @@ export function prepareBusinessArticle(id:BusinessSourceId,candidate:Candidate,i
  if(body.length>64000)issues.push('Complete body exceeds evidence capacity; no truncation');
  if(!issues.length)try{buildEvidenceCatalog({body,bodySha256:sha256(body),sections,observationRevision:1});}catch(error){issues.push((error as Error).message);}
  const readyForReview=issues.length===0,bodySha256=readyForReview?sha256(body):null;
- // Acquisition time alone is not a revision. Any changed original (including an unchanged-URL
- // attachment) changes the binding; this preview must never authorize reuse of an older review.
- const versionHash=readyForReview?sha256(stableJson({source:id,url:candidate.url,title,publicationTime:day,pageRawSha256:receipt.sha256,bodySha256,links,attachments:attachmentReceipts.map(a=>({url:a.finalUrl,sha256:a.sha256}))})):null;
- return {schemaVersion:'fishery-business-preview/1',source:id,url:candidate.url,identityKey,readyForReview,readyForImport:false,title,publicationLiteral:literal,publicationTime:day,body:readyForReview?body:null,bodySha256,versionHash,receipt,sections:readyForReview?sections:[],links,attachmentReceipts,issues};
+ // Real revisits changed ITF/MPA page chrome with identical article text and dates. Record new
+ // originals separately: unchanged content must retain its already-bound observation/review,
+ // not silently replace its raw evidence. Same-URL PDF byte changes remain content revisions.
+ const versionHash=readyForReview?sha256(stableJson({source:id,url:candidate.url,title,publicationTime:day,bodySha256,links,attachments:attachmentReceipts.map(a=>({url:a.finalUrl,sha256:a.sha256}))})):null;
+ const evidenceHash=readyForReview?sha256(stableJson({versionHash,sections})):null;
+ return {schemaVersion:'fishery-business-preview/1',source:id,url:candidate.url,identityKey,readyForReview,readyForImport:false,title,publicationLiteral:literal,publicationTime:day,body:readyForReview?body:null,bodySha256,versionHash,evidenceHash,receipt,sections:readyForReview?sections:[],links,attachmentReceipts,issues};
 }
 
 /** A failed revisit must not replace a successful version or advance a success cursor. */

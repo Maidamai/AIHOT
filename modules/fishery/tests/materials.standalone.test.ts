@@ -1737,7 +1737,10 @@ test('business sources: unchanged acquisition is idempotent; changed bytes at th
  const revised=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[mpaBusinessFile(file.parsed.text,pdfFixture(false,false,'Changed original PDF'))]);
  assert.equal(businessRevision(old,revised),'revised');assert.equal(old.identityKey,revised.identityKey);
  const failed=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,receipt,raw,[]);assert.equal(businessRevision(old,failed),'blocked');
- const changedPage=Buffer.concat([raw,Buffer.from('<footer>Updated page</footer>')]);assert.equal(businessRevision(old,prepareBusinessArticle('mpa-port',mpaBusinessCandidate,businessReceipt(mpaBusinessUrl,changedPage),changedPage,[file])),'revised');
+ const changedPage=Buffer.concat([raw,Buffer.from('<footer>Updated page</footer>')]),chromeOnly=prepareBusinessArticle('mpa-port',mpaBusinessCandidate,businessReceipt(mpaBusinessUrl,changedPage),changedPage,[file]);
+ assert.equal(businessRevision(old,chromeOnly),'unchanged');assert.notEqual(old.evidenceHash,chromeOnly.evidenceHash);assert.notEqual(old.receipt.sha256,chromeOnly.receipt.sha256);
+ const changedText=Buffer.from(raw.toString().replace('Notice PDF','Updated notice PDF'));
+ assert.equal(businessRevision(old,prepareBusinessArticle('mpa-port',mpaBusinessCandidate,businessReceipt(mpaBusinessUrl,changedText),changedText,[file])),'revised');
 });
 
 test('business sources: mismatched originals and redirects cannot produce reviewable content',()=>{
