@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { sha256, type PdfText } from "./source-adapters.ts";
+import {pdfBlankProofSchema,type PdfBlankProof} from './pdf-blank-proof.ts';
 
 type Execute = (file: string, args: string[], options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr: string }>;
 const execute: Execute = promisify(execFile);
@@ -15,6 +16,11 @@ export function pdfTextlessPages(text:string,pages:number){
   const markers=[...text.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
   if(!Number.isInteger(pages)||pages<1||pages>200||markers.length!==pages||markers.some((m,i)=>Number(m[1])!==i+1)||text.slice(0,markers[0]?.index??text.length).trim())throw new Error('PDF page coverage incomplete or ambiguous');
   return markers.flatMap((m,i)=>text.slice(m.index!+m[0].length,markers[i+1]?.index??text.length).trim()?[]:[i+1]);
+}
+// Called only with a registry-verified review in production. An empty text layer alone never establishes a blank page.
+export function assertReviewedPdfBlanks(proof:PdfBlankProof,rawSha256:string,pages:number,textless:number[]){
+  const review=pdfBlankProofSchema.parse(proof);
+  if(review.rawSha256!==rawSha256||review.physicalPages!==pages||JSON.stringify(review.pageImages.map(p=>p.page))!==JSON.stringify(textless))throw new Error('Blank-page review does not match exact original, page count and every textless physical page');
 }
 type TextNode={text:string;fontSize:number;top:number;left:number;width:number;height:number};
 const literalPattern=(text:string)=>text.trim().split(/\s+/).map(part=>part.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("\\s+");
@@ -77,7 +83,7 @@ export function mapPdfFootnotes(layout:string,xml:string,expectedPages:number) {
   text+=layout.slice(offset);
   return {text,textEvidence:pdfTextEvidenceSchema.parse({version:"pdf-footnotes/v1",layoutSha256:sha256(layout),structureSha256:sha256(xml),textSha256:sha256(text),transformations:mapped})};
 }
-export async function extractPdf(original: Buffer, options: { platform?: NodeJS.Platform; execute?: Execute } = {}): Promise<PdfText> {
+export async function extractPdf(original: Buffer, options: { platform?: NodeJS.Platform; execute?: Execute; blankReview?:PdfBlankProof } = {}): Promise<PdfText> {
   let result: PdfText = { status: "unverified", parser: "unavailable-pdf-parser", rawSha256: sha256(original), text: "", pages: 0 };
   if (original.length > 10 * 1024 * 1024 || !original.subarray(0, 5).equals(Buffer.from("%PDF-")))
     return { ...result, status: "failed", error: "Invalid PDF signature or size limit" };
@@ -105,7 +111,8 @@ export async function extractPdf(original: Buffer, options: { platform?: NodeJS.
       if (!Number.isInteger(parsed.pages) || parsed.pages < 1 || parsed.pages > 200 || typeof parsed.text !== "string" || !parsed.text.trim())
         throw new Error("PDF page count or text is invalid");
       const textless=pdfTextlessPages(parsed.text,parsed.pages);
-      if(textless.length)return {...result,textlessPages:textless,error:`PDF has unverified textless pages: ${textless.join(',')}; blank/scanned distinction requires review, no automatic OCR`};
+      if(textless.length&&!options.blankReview)return {...result,textlessPages:textless,error:`PDF has unverified textless pages: ${textless.join(',')}; blank/scanned distinction requires review, no automatic OCR`};
+      if(options.blankReview)assertReviewedPdfBlanks(options.blankReview,result.rawSha256,parsed.pages,textless);
       result = { ...result, status: "parsed", pages: parsed.pages, text: parsed.text };
     } else {
       const infoVersion = await command("pdfinfo", ["-v"]), textVersion = await command("pdftotext", ["-v"]),structureVersion=await command("pdftohtml",["-v"]);
@@ -127,7 +134,8 @@ export async function extractPdf(original: Buffer, options: { platform?: NodeJS.
         if (bytes > OUTPUT_LIMIT) throw new Error("PDF output byte limit exceeded");
         parts.push(part);
       }
-      if(textless.length)return {...result,textlessPages:textless,error:`PDF has unverified textless pages: ${textless.join(',')}; blank/scanned distinction requires review, no automatic OCR`};
+      if(textless.length&&!options.blankReview)return {...result,textlessPages:textless,error:`PDF has unverified textless pages: ${textless.join(',')}; blank/scanned distinction requires review, no automatic OCR`};
+      if(options.blankReview)assertReviewedPdfBlanks(options.blankReview,result.rawSha256,pages,textless);
       const structure=await command("pdftohtml",["-xml","-hidden","-i","-stdout","-enc","UTF-8",path.resolve(file)]);
       if(structure.stderr.trim()) throw new Error("PDF structure diagnostics require review");
       const mapped=mapPdfFootnotes(parts.join("\n\n"),structure.stdout,pages);

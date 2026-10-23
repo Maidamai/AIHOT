@@ -54,7 +54,7 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
     pages = markers.map((m, i) => ({ page: i + 1, text: body.slice(m.index! + m[0].length, markers[i + 1]?.index ?? body.length).trim() }));
   }
   let catalog: EvidenceCatalog;
-  try { catalog = buildEvidenceCatalog({ body, bodySha256: capture.bodySha256, observationRevision: observation.revision, pages, sections }); }
+  try { catalog = buildEvidenceCatalog({ body, bodySha256: capture.bodySha256, observationRevision: observation.revision, pages, sections, pdfBlankReview:capture.pdfBlankReview }); }
   catch (error) { throw new Conflict(`Business evidence unavailable: ${(error as Error).message}`); }
   const snapshot: BusinessGuideContext["snapshot"] = {
     version: "fishery-business-guide/1", documentId, sourceId: doc.source_id, articleId: doc.article_id, canonicalUrl: doc.canonical_url, sourceRevision: source.revision, sourceProfileHash: hash(source.profile),

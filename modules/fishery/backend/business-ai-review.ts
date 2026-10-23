@@ -94,7 +94,7 @@ export function buildGuideAIReviewRequest(input: EvidenceInput, raw: unknown, mo
     promptVersion: `${GUIDE_AI_RULES_VERSION}:${FISHERY_RULES_VERSION}:${catalog.version}:${hash(system)}`, system,
     // Full body appears once. IDs point to exact UTF-16 intervals; no selected-page/sentence truncation.
     user: JSON.stringify({ candidateAnchors: catalog.spans.flatMap((span, alias) => claims.some(c => c.evidenceIds.includes(span.id)) ? [{ alias, id: span.id, quote: span.quote }] : []), source: { body: input.body, offsetUnit: "UTF-16", evidenceCatalog: { ...evidenceBinding(catalog), columns: ["alias", "id", "paragraph", "page", "start", "end"], spans: catalog.spans.map(({ id, paragraph, page, start, end }, alias) => [alias, id, paragraph, page, start, end]) },
-      pageColumns: ["page", "start", "end"], pages: catalog.pages.map(p => [p.page, p.start, p.end]), ...(catalog.sections ? { sourceSections: catalog.sections, spanSources: catalog.spans.map(s => ({ id: s.id, source: s.source })), pageSources: catalog.pages.map(p => ({ page: p.page, start: p.start, source: p.source })) } : {}) }, candidate: payload,
+      pageColumns: ["page", "start", "end"], pages: catalog.pages.map(p => [p.page, p.start, p.end]), ...(catalog.pdfBlankReview?{reviewedBlankPages:catalog.pdfBlankReview}:{}), ...(catalog.sections ? { sourceSections: catalog.sections, spanSources: catalog.spans.map(s => ({ id: s.id, source: s.source })), pageSources: catalog.pages.map(p => ({ page: p.page, start: p.start, source: p.source })) } : {}) }, candidate: payload,
       claims: claims.map((c, claimIndex) => ({ ...c, claimIndex, evidenceAliases: c.evidenceIds.map(id => catalog.spans.findIndex(s => s.id === id)) })), omissionChecks: omissionIds.map((field, omissionIndex) => ({ field, omissionIndex })) }), schema, temperature: 0, maxTokens: TRIAL.maxOutputTokens };
   if (fisheryWireBytes(request) > TRIAL.maxWireBytes) throw new Conflict("Complete source and guide exceed 96000-byte wire capacity; no truncation or request permitted");
   return { request, payload, catalog, resultSchema, outputEnvelopeBytes };
@@ -120,7 +120,7 @@ async function prepare(guideId: string, db: Db = sql) {
   if (!body) throw new Conflict("Complete archived source required");
   const sections = context.catalog.sections;
   const pages = !sections && context.catalog.pages.length ? context.catalog.pages.map(p => ({ page: p.page, text: body!.slice(p.start, p.end).trim() })) : undefined;
-  const input = { body, bodySha256: context.snapshot.bodySha256, observationRevision: context.snapshot.observationRevision, pages, sections };
+  const input = { body, bodySha256: context.snapshot.bodySha256, observationRevision: context.snapshot.observationRevision, pages, sections, pdfBlankReview:context.catalog.pdfBlankReview };
   const prepared = buildGuideAIReviewRequest(input, guide.payload);
   if (prepared.catalog.hash !== context.catalog.hash) throw new Conflict("Current catalog changed");
   // Approval increments guide revision. Content/source hashes, rather than editorial status, bind this independent check.

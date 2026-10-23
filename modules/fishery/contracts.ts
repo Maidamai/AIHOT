@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { z } from "zod";
+import { pdfBlankProofSchema } from "./backend/pdf-blank-proof.ts";
 import { isBlockedAddress } from "@aihot/backend/lib/url";
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
@@ -92,6 +93,7 @@ export const captureSchema = z.strictObject({
   bodySha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   pdfTextEvidence:pdfTextEvidenceSchema.optional(),
   pdfTextlessPages:z.array(z.int().min(1).max(200)).max(200).optional(),
+  pdfBlankReview:pdfBlankProofSchema.optional(),
   parser: text.max(100), parseStatus: z.enum(["parsed", "missing", "failed", "unverified"]),
   attachmentSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   attachmentUrl: linkSchema.nullable().default(null), attachmentHttpStatus: z.int().min(100).max(599).nullable().default(null),
@@ -99,7 +101,8 @@ export const captureSchema = z.strictObject({
   publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
   conflicts: z.array(text.max(300)).max(20),
 }).superRefine((c, ctx) => {
-  if(c.parseStatus==='parsed'&&c.pdfTextlessPages?.length)ctx.addIssue({code:'custom',message:'Unverified textless PDF pages cannot be marked parsed'});
+  if(c.pdfBlankReview&&(c.adapter!=='manual_official'||c.pdfBlankReview.rawSha256!==c.rawSha256||c.pdfBlankReview.physicalPages!==c.attachmentPages))ctx.addIssue({code:'custom',message:'Blank-page review requires its exact manual original PDF and physical page count'});
+  if(c.parseStatus==='parsed'&&c.pdfTextlessPages?.length&&(!c.pdfBlankReview||JSON.stringify(c.pdfTextlessPages)!==JSON.stringify(c.pdfBlankReview.pageImages.map(p=>p.page))))ctx.addIssue({code:'custom',message:'Unverified textless PDF pages cannot be marked parsed'});
   if((c.adapter==='fujian-notices')!==!!c.noticeContext)ctx.addIssue({code:'custom',message:'Fujian notice captures require their bound page/attachment context only'});
   if(c.noticeContext&&c.parseStatus==='parsed'&&!completeNoticeAttachments(c.noticeContext))ctx.addIssue({code:'custom',message:'Parsed notices require every complete verified attachment'});
   if((c.adapter==='npfc')!==!!c.regulatoryListing)ctx.addIssue({code:'custom',message:'NPFC captures require their bound unreviewed measure identity only'});

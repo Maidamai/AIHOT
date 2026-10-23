@@ -10,7 +10,9 @@ import { adminHandler } from "@aihot/api/routes/admin-auth";
 import type { FastifyInstance } from "fastify";
 import { captureSchema, linkSchema } from "../contracts.ts";
 import { archiveReceiptSchema, sha256, type PdfText } from "./source-adapters.ts";
-import { extractPdf } from "./pdf-text.ts";
+import { extractPdf, pdfTextlessPages, assertReviewedPdfBlanks } from "./pdf-text.ts";
+import { loadVerifiedPdfBlankReview } from './pdf-blank-review.ts';
+import type { PdfBlankProof } from './pdf-blank-proof.ts';
 import { importCapturedMaterial } from "./store.ts";
 
 export const manualArchiveIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/);
@@ -21,6 +23,7 @@ export const manualManifestSchema = z.strictObject({
   publishedAt: z.iso.datetime({offset:true}).nullable(), publicationLiteral: z.string().max(150).nullable(),
   rawSha256: digest, bodySha256: digest,
   parser: z.enum(["manual-official-html/v1", "manual-official-pdf/v1"]), bodySelector: z.string().max(80).optional(),
+  blankReviewId:z.uuid().optional(),
 });
 interface HtmlSource { bodySelector: string; titleSelector?: string; titleAttribute?: string; removeTitle?: string; visibleDateSelector?: string; unknownDate?: boolean }
 const article = (bodySelector: string, visibleDateSelector?: string): HtmlSource => ({ bodySelector, titleSelector: "meta[name=ArticleTitle]", titleAttribute: "content", visibleDateSelector });
@@ -42,10 +45,11 @@ const known = new Map<string, string | HtmlSource>([
   ["https://www.mawei.gov.cn/xjwz/zwgk/gggs/tzgg/202603/P020260910638846579817.pdf", "pdf"],
   ["https://hyj.quanzhou.gov.cn/zwgk/fgwj/yyl/202508/P020250804347985996003.pdf", "pdf"],
   ["https://hyj.quanzhou.gov.cn/zfxxgk/zc/xzgfxwj/202507/P020251216619209074818.pdf", "pdf"],
+  ["https://hyyyj.fujian.gov.cn/xxgk/tzgg/202507/P020250728594612073287.pdf", "pdf"],
 ]);
 const collapse = (s:string) => s.replace(/\s+/g," ").trim();
 const unknown = () => ({precision:"unknown" as const,value:null});
-export async function prepareManualSource(raw:Buffer, input:unknown, receiptInput:unknown, options:{parsePdf?:(raw:Buffer)=>Promise<PdfText>}={}) {
+export async function prepareManualSource(raw:Buffer, input:unknown, receiptInput:unknown, options:{parsePdf?:(raw:Buffer)=>Promise<PdfText>;blankReview?:PdfBlankProof}={}) {
   const manifest=manualManifestSchema.parse(input),receipt=archiveReceiptSchema.parse(receiptInput),source=known.get(manifest.url);
   const selector=typeof source==="string"?source:source?.bodySelector;
   if(!selector || receipt.requestedUrl!==manifest.url || receipt.finalUrl!==manifest.url) throw new Error("Manual archive URL is not the verified official URL");
@@ -55,12 +59,17 @@ export async function prepareManualSource(raw:Buffer, input:unknown, receiptInpu
   if(selector==="pdf") {
     if(manifest.parser!=="manual-official-pdf/v1" || manifest.bodySelector || raw.length>10*1024*1024 || !raw.subarray(0,5).equals(Buffer.from("%PDF-"))) throw new Error("Expected original PDF archive within existing size limit");
     if(manifest.publishedAt!==null || manifest.publicationLiteral!==null) throw new Error("PDF web publication date is unknown; signature dates are not publication metadata");
-    pdf=await(options.parsePdf??extractPdf)(raw);
+    if(!!manifest.blankReviewId!==!!options.blankReview||manifest.blankReviewId&&manifest.blankReviewId!==options.blankReview?.reviewId)throw new Error('Registered blank-page review required; manifest is not review authority');
+    pdf=await(options.parsePdf??((bytes:Buffer)=>extractPdf(bytes,{blankReview:options.blankReview})))(raw);
     if(pdf.status!=="parsed" || pdf.rawSha256!==sha256(raw) || !pdf.text.replace(/^--- Page \d+ ---\r?$/gm,"").trim() || !Number.isInteger(pdf.pages) || pdf.pages<1 || pdf.pages>200) throw new Error(`Full PDF parsing failed: ${pdf.error??pdf.status}; verified text required`);
     const markers=[...pdf.text.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
     if(markers.length!==pdf.pages || markers.some((m,i)=>Number(m[1])!==i+1)) throw new Error("Full PDF page coverage required");
+    const textless=pdfTextlessPages(pdf.text,pdf.pages);
+    if(textless.length&&!options.blankReview)throw new Error('Unreviewed textless PDF pages cannot be imported');
+    if(options.blankReview)assertReviewedPdfBlanks(options.blankReview,sha256(raw),pdf.pages,textless);
     body=pdf.text;
   } else {
+    if(manifest.blankReviewId||options.blankReview)throw new Error('Blank-page review applies only to its original PDF');
     if(manifest.parser!=="manual-official-html/v1" || manifest.bodySelector!==selector) throw new Error("Expected verified official HTML selector");
     const $=cheerio.load(new TextDecoder("utf-8",{fatal:true}).decode(raw));
     const html=typeof source==="object"?source:null;
@@ -98,7 +107,7 @@ export async function prepareManualSource(raw:Buffer, input:unknown, receiptInpu
   if(Buffer.byteLength(body)>4*1024*1024) throw new Error("Manual body oversized");
   const sourceCapture=captureSchema.parse({adapter:"manual_official",manualArchiveId:manifest.id,acquisitionMode:"archive_replay",sourceUrl:manifest.url,capturedAt:receipt.finishedAt,httpStatus:200,
     rawSha256:sha256(raw),bodySha256:sha256(body),parser:pdf?`${manifest.parser}; ${pdf.parser}`.slice(0,100):manifest.parser,parseStatus:"parsed",attachmentSha256:null,
-    attachmentPages:pdf?.pages??null,pdfTextEvidence:pdf?.textEvidence,publishedAt:manifest.publishedAt,publicationLiteral:manifest.publicationLiteral,conflicts:[]});
+    attachmentPages:pdf?.pages??null,pdfTextEvidence:pdf?.textEvidence,...(options.blankReview?{pdfBlankReview:options.blankReview,pdfTextlessPages:options.blankReview.pageImages.map(p=>p.page)}:{}),publishedAt:manifest.publishedAt,publicationLiteral:manifest.publicationLiteral,conflicts:[]});
   return {manifest,body,sourceCapture,dates:{published,event:unknown(),adopted:unknown(),effectiveFrom:unknown(),effectiveUntil:unknown()}};
 }
 async function bounded(file:string,max:number) {
@@ -112,7 +121,10 @@ export async function verifyManualSource(dataDir:string,id:string,options:Parame
   const manifest=manualManifestSchema.parse(JSON.parse((await bounded(path.join(dir,"manifest.json"),32*1024)).toString("utf8")));
   if(manifest.id!==id) throw new Error("Manual archive id mismatch");
   const receipt=JSON.parse((await bounded(path.join(dir,"receipt.json"),32*1024)).toString("utf8"));
-  const result=await prepareManualSource(await bounded(path.join(dir,"raw.bin"),20*1024*1024),manifest,receipt,options);
+  const raw=await bounded(path.join(dir,"raw.bin"),20*1024*1024);
+  const blankReview=manifest.blankReviewId?await loadVerifiedPdfBlankReview(dataDir,raw,manifest.blankReviewId):undefined;
+  if(options.blankReview&&JSON.stringify(options.blankReview)!==JSON.stringify(blankReview))throw new Error('Archive options cannot override the registered blank-page review');
+  const result=await prepareManualSource(raw,manifest,receipt,{...options,blankReview});
   const body=await bounded(path.join(dir,"body.txt"),4*1024*1024);
   if(sha256(body)!==manifest.bodySha256 || result.sourceCapture.bodySha256!==manifest.bodySha256 || !body.equals(Buffer.from(result.body))) throw new Error("Archived body does not equal complete deterministic original extraction");
   return result;

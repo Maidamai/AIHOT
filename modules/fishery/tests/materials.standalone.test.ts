@@ -1217,6 +1217,43 @@ test("manual PDF archives preserve all pages and fail on incomplete extraction o
   await assert.rejects(prepareManualSource(raw,m,r,{parsePdf:async()=>({...parsed,status:"failed",error:"missing parser"})}),/Full PDF parsing failed/);
 });
 
+test('explicit blank-page evidence preserves all physical pages without creating quotable facts or weakening ordinary PDF checks',async()=>{
+  const {prepareManualSource}=await import('../backend/manual-sources.ts');
+  const {pdfPages}=await import('../backend/flow.ts');
+  const {catalogSource}=await import('../backend/evidence.ts');
+  const raw=Buffer.from('%PDF-synthetic reviewed blank fixture'),rawSha256=sha256(raw);
+  const text='--- Page 1 ---\n合成远洋资料第一条。\n\n--- Page 2 ---\n\n\n--- Page 3 ---\n最后一页限定条件必须保留。';
+  const proof={version:'pdf-blank-review/1' as const,reviewId:'9d59308b-a508-4f80-86ab-8f5d46b8f251',rawSha256,physicalPages:3,pageImages:[{page:2,sha256:sha256('synthetic reviewed PNG')}],proofHash:sha256('synthetic audit only')};
+  const parsed={status:'parsed' as const,rawSha256,parser:'Synthetic PDFKit',pages:3,text};
+  const url='https://hyyyj.fujian.gov.cn/xxgk/tzgg/202507/P020250728594612073287.pdf';
+  const manifest={version:'manual-official-source/1',id:'synthetic-reviewed-blank',url,name:'合成归档',attribution:'合成来源',title:'合成政策资料',publishedAt:null,publicationLiteral:null,rawSha256,bodySha256:sha256(text),parser:'manual-official-pdf/v1'};
+  const receipt={requestedUrl:url,finalUrl:url,status:200,finishedAt:'2026-10-23T00:00:00Z',sha256:rawSha256};
+  await assert.rejects(prepareManualSource(raw,manifest,receipt,{parsePdf:async()=>parsed}),/Unreviewed textless/);
+  await assert.rejects(prepareManualSource(raw,{...manifest,blankReviewId:proof.reviewId},receipt,{parsePdf:async()=>parsed}),/Registered blank-page review/);
+  const result=await prepareManualSource(raw,{...manifest,blankReviewId:proof.reviewId},receipt,{parsePdf:async()=>parsed,blankReview:proof});
+  assert.equal(result.body,text);assert.equal(result.sourceCapture.attachmentPages,3);assert.deepEqual(result.sourceCapture.pdfTextlessPages,[2]);
+  assert.deepEqual(result.dates.published,{precision:'unknown',value:null});assert.equal(result.sourceCapture.publishedAt,null);
+  assert.throws(()=>pdfPages(text,3),/textless/);
+  const pages=pdfPages(text,3,proof),input={body:text,bodySha256:sha256(text),observationRevision:1,pages,pdfBlankReview:proof};
+  assert.equal(pages[1]!.text,'');assert.throws(()=>buildEvidenceCatalog({...input,pdfBlankReview:undefined}),/unreviewed textless/);
+  const catalog=buildEvidenceCatalog(input);
+  assert.equal(catalog.version,'fishery-spans-v4-reviewed-blanks');assert.equal(catalog.pages.length,3);assert.equal(catalog.spans.some(s=>s.page===2),false);
+  assert.equal(catalog.spans.at(-1)!.quote,'最后一页限定条件必须保留。');
+  assert.deepEqual(catalogSource(input,catalog).reviewedBlankPages,proof);
+  for(const bad of [{...proof,rawSha256:sha256('different original')},{...proof,physicalPages:4},{...proof,pageImages:[{page:1,sha256:sha256('fake')}]},{...proof,pageImages:[...proof.pageImages,{page:3,sha256:sha256('fake')}]}]){
+    await assert.rejects(prepareManualSource(raw,{...manifest,blankReviewId:proof.reviewId},receipt,{parsePdf:async()=>parsed,blankReview:bad}),/Blank-page review|Invalid/);
+  }
+  assert.notEqual(buildEvidenceCatalog({...input,pdfBlankReview:{...proof,proofHash:sha256('new review')}}).hash,catalog.hash);
+  const plainBody='--- Page 1 ---\n正常页面不改变既有目录哈希。',plainInput={body:plainBody,bodySha256:sha256(plainBody),observationRevision:1,pages:[{page:1,text:'正常页面不改变既有目录哈希。'}]};
+  const plain=buildEvidenceCatalog(plainInput),{hash,...bound}=plain;
+  assert.equal(plain.version,'fishery-spans-v2');assert.equal('pdfBlankReview' in plain,false);assert.equal(hash,sha256(JSON.stringify(bound)));
+  let calls=0;
+  const execute=async()=>{calls++;return {stdout:JSON.stringify({pages:3,text}),stderr:''};};
+  const blocked=await extractPdf(raw,{platform:'darwin',execute});assert.equal(blocked.status,'unverified');assert.equal(blocked.text,'');
+  const accepted=await extractPdf(raw,{platform:'darwin',execute,blankReview:proof});assert.equal(accepted.status,'parsed');assert.equal(accepted.text,text);assert.equal(accepted.pages,3);
+  assert.equal(calls,2,'Only local extraction stubs ran; no provider transport');
+});
+
 test("manual metadata query exceptions accept only the two exact inspected HTTPS identities",()=>{
   const urls=["https://zj.singlewindow.cn/pen-portal/guide/basic.jspa?id=196","https://www.ccs.org.cn/ccswz/columnDetail?columnid=201900002000000618"];
   for(const url of urls) {

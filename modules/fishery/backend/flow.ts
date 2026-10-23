@@ -13,6 +13,8 @@ import { sourceArticleAvailable } from "./source-availability.ts";
 import { noticeEvidenceSections } from "./fujian-notices.ts";
 import { hash, lockDocument, NotFound } from "./store.ts";
 import { readSourceBody } from "./source-body.ts";
+import { assertReviewedPdfBlanks } from './pdf-text.ts';
+import type { PdfBlankProof } from './pdf-blank-proof.ts';
 import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
 import { reviewFisheryDraft, buildFisheryReviewRequest, fisheryWireBytes, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
 import { sha256 } from "./source-adapters.ts";
@@ -47,11 +49,13 @@ async function snapshot(documentId:string) {
   const value={executionConfig:fisheryConfigurationVersion(),documentId,sourceId:row.source_id,sourceRevision:row.source_revision,sourceProfileHash:hash(row.profile),observationRevision:row.revision,observationHash:row.content_hash,bodySha256:c.bodySha256,rawSha256:c.rawSha256};
   return {value,hash:hash(value),payload:row.payload,articleId:row.article_id};
 }
-export function pdfPages(body:string,expected:number) {
+export function pdfPages(body:string,expected:number,blankReview?:PdfBlankProof) {
   const markers=[...body.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
   if(!Number.isInteger(expected)||expected<1||markers.length!==expected||markers.some((m,i)=>Number(m[1])!==i+1)) throw new Conflict("PDF page coverage missing or incomplete; no full-document claim");
   const pages=markers.map((m,i)=>({page:i+1,text:body.slice(m.index!+m[0].length,markers[i+1]?.index??body.length).trim()}));
-  if(pages.some(p=>!p.text))throw new Conflict('PDF textless pages require review; no complete-document model input');
+  const textless=pages.filter(p=>!p.text).map(p=>p.page);
+  if(textless.length&&!blankReview)throw new Conflict('PDF textless pages require review; no complete-document model input');
+  if(blankReview)assertReviewedPdfBlanks(blankReview,blankReview.rawSha256,expected,textless);
   return pages;
 }
 async function inputFor(documentId:string,expectedHash:string):Promise<DraftInput> {
@@ -65,8 +69,8 @@ async function inputFor(documentId:string,expectedHash:string):Promise<DraftInpu
   }
   if(!body||sha256(body)!==c.bodySha256||body.length>64000) throw new Conflict("Full bound body missing, changed or oversized; no silent truncation");
   const sections=c.adapter==='fujian-notices'?noticeEvidenceSections(body,c):undefined;
-  const pages=!sections&&c.attachmentPages?pdfPages(body,c.attachmentPages):undefined;
-  return {pages,sections,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
+  const pages=!sections&&c.attachmentPages?pdfPages(body,c.attachmentPages,c.pdfBlankReview):undefined;
+  return {pages,sections,pdfBlankReview:c.pdfBlankReview,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
 }
 async function assertDocumentSettled(documentId:string,db:Db=sql,exceptRunningId:string|null=null) {
   const [running]=await db`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} AND status='running' AND (${exceptRunningId}::text IS NULL OR id<>${exceptRunningId}) LIMIT 1`;
