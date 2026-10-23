@@ -55,12 +55,12 @@ async function render(raw:Buffer,pages:number[],options:TestOptions){
    const iv=/pdfinfo version ([0-9.]+)/.exec(infoVersion.stdout+infoVersion.stderr)?.[1],pv=/pdftoppm version ([0-9.]+)/.exec(pngVersion.stdout+pngVersion.stderr)?.[1];if(!iv||!pv)throw new Error('Unidentified trusted Poppler renderer');
    const info=await command('/usr/bin/pdfinfo',['-enc','UTF-8',file]);physicalPages=Number(/^Pages:\s+(\d+)\s*$/m.exec(info.stdout)?.[1]);
    if(info.stderr.trim()||!/^Encrypted:\s+no\s*$/m.test(info.stdout)||!Number.isInteger(physicalPages)||physicalPages<2||physicalPages>200)throw new Error('Unreadable, encrypted or excessive PDF coverage');
-   checkPages(pages,physicalPages);renderer={name:'Poppler pdftoppm',version:`pdfinfo ${iv}; pdftoppm ${pv}`,options:'mediaBox; 144 dpi; PNG; annotations included; no crop, OCR or blank classification'};files=[];
+   checkPages(pages,physicalPages);renderer={name:'Poppler pdftoppm',version:`pdfinfo ${iv}; pdftoppm ${pv}`,options:'mediaBox; 144 dpi; PNG; annotations included; no crop, OCR or blank classification'};files=[];let renderedBytes=0;
    for(const page of pages){
     const geometry=await command('/usr/bin/pdfinfo',['-f',String(page),'-l',String(page),'-box','-enc','UTF-8',file]);
     const box=new RegExp(`^Page\\s+${page}\\s+MediaBox:\\s+(-?[0-9.]+)\\s+(-?[0-9.]+)\\s+(-?[0-9.]+)\\s+(-?[0-9.]+)\\s*$`,'m').exec(geometry.stdout)?.slice(1).map(Number);
     if(geometry.stderr.trim()||!box||box.some(v=>!Number.isFinite(v))||box[2]!-box[0]!<=0||box[3]!-box[1]!<=0||box[2]!-box[0]!>2000||box[3]!-box[1]!>2000)throw new Error('Bounded complete PDF media box required');
-    const prefix=path.join(scratch,`page-${page}`),out=await command('/usr/bin/pdftoppm',['-f',String(page),'-l',String(page),'-r','144','-png','-singlefile',file,prefix]);if(out.stdout.trim()||out.stderr.trim())throw new Error('PDF rendering diagnostics require review');files.push({page,file:`${prefix}.png`});}
+    const prefix=path.join(scratch,`page-${page}`),out=await command('/usr/bin/pdftoppm',['-f',String(page),'-l',String(page),'-r','144','-png','-singlefile',file,prefix]);if(out.stdout.trim()||out.stderr.trim())throw new Error('PDF rendering diagnostics require review');const png=await regularBytes(`${prefix}.png`,LIMIT);checkPng(png);renderedBytes+=png.length;if(renderedBytes>TOTAL_LIMIT)throw new Error('Review image aggregate byte limit');files.push({page,file:`${prefix}.png`});}
   }else if((options.platform??process.platform)==='darwin'){
    const script=path.resolve(import.meta.dirname,'../scripts/pdf-blank-render.swift'),scriptBytes=await regularBytes(script,1024*1024),outDir=path.join(scratch,'pages');
    const out=await command('/usr/bin/swift',['-module-cache-path',path.join(scratch,'cache'),script,file,outDir,...pages.map(String)]);if(out.stderr.trim())throw new Error('PDF rendering diagnostics require review');
