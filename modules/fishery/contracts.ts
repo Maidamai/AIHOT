@@ -75,7 +75,11 @@ export const noticeContextSchema=z.strictObject({
     textSha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),bodyStart:z.int().nonnegative().nullable(),bodyEnd:z.int().nonnegative().nullable(),pageIntervals:z.array(z.strictObject({page:z.int().min(1).max(200),start:z.int().nonnegative(),end:z.int().positive()})).min(1).max(200).optional(),pdfTextEvidence:pdfTextEvidenceSchema.optional()})).max(3),
 });
 export type NoticeContext=z.infer<typeof noticeContextSchema>;
-export const jfaContextSchema=noticeContextSchema.pick({pageBody:true,pageTextSha256:true,attachmentCount:true,attachments:true}).extend({attachmentListSha256:z.string().regex(/^[a-f0-9]{64}$/),capacityLimit:z.literal(6).optional(),attachments:z.array(noticeContextSchema.shape.attachments.element).max(6)});
+export const jfaContextSchema=noticeContextSchema.pick({pageBody:true,pageTextSha256:true,attachmentCount:true,attachments:true}).extend({attachmentListSha256:z.string().regex(/^[a-f0-9]{64}$/),capacityLimit:z.literal(6).optional(),attachments:z.array(noticeContextSchema.shape.attachments.element.extend({
+  manualReviewReason:z.literal('raised_reference_nonunique_footnote').optional(),
+  parserError:z.literal('Raised PDF reference lacks a unique same-page footnote; manual review required').optional(),
+  parser:z.string().max(100).optional(),
+})).max(6)});
 export type JfaContext=z.infer<typeof jfaContextSchema>;
 export function noticeDeadlineState(n:NoticeContext,today:string){
   if(n.deadline.precision!=='day')return 'unknown' as const;

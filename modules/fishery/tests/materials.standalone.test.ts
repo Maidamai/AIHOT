@@ -22,15 +22,15 @@ import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backe
 import type { ColumnFetcher } from '../backend/column-batches.ts';
 import {noticeFixture} from './fixtures.ts';
 import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged,noticeEvidenceSections} from '../backend/fujian-notices.ts';
-import {discoverJfaPress,jfaPage,jfaDate,prepareJfaPress,jfaAttachmentChanged,jfaEvidenceSections,jfaCapacityNeedsReview} from '../backend/jfa-press.ts';
+import {discoverJfaPress,jfaPage,jfaDate,prepareJfaPress,jfaAttachmentChanged,jfaEvidenceSections,jfaNeedsReview} from '../backend/jfa-press.ts';
 
 test('JFA attachment-count capability gap retains verified landing and entire inventory without accepting acquisition failures',()=>{
  const url='https://www.jfa.maff.go.jp/j/press/sigen/261002.html',html=`<div id="main_content"><h1>水産資源の評価結果</h1><div class="content_utility-date">令和8年10月2日 水産庁</div><p>資源評価結果の本文と添付資料一覧を公表します。適用海域については各資料で確認してください。</p>${Array.from({length:17},(_,i)=>`<a href="./attach/pdf/261002-${i+1}.pdf">資料${i+1}</a>`).join('')}</div>`;
  const prepare=(text=html,status=200)=>{const raw=Buffer.from(text);return prepareJfaPress({requestedUrl:url,finalUrl:url,status,finishedAt:'2026-10-23T12:00:00Z',sha256:sha256(raw)},raw);};
- const r=prepare();assert.equal(jfaCapacityNeedsReview(r),true);assert.equal(r.body,null);assert.equal(r.sourceCapture.bodySha256,null);assert.equal(r.sourceCapture.jfaContext!.attachmentCount,17);assert.deepEqual(r.sourceCapture.jfaContext!.attachments,[]);
+ const r=prepare();assert.equal(jfaNeedsReview(r),true);assert.equal(r.body,null);assert.equal(r.sourceCapture.bodySha256,null);assert.equal(r.sourceCapture.jfaContext!.attachmentCount,17);assert.deepEqual(r.sourceCapture.jfaContext!.attachments,[]);
  const changed=prepare(html.replace('261002-17.pdf','261002-18.pdf'));assert.equal(jfaAttachmentChanged(r.sourceCapture.jfaContext,changed.sourceCapture.jfaContext),true);
- assert.equal(jfaCapacityNeedsReview(prepare(html,503)),false);assert.equal(jfaCapacityNeedsReview({...r,sourceCapture:{...r.sourceCapture,conflicts:['Hash mismatch']}}),false);
- const missing=prepare(html.replace(/<a href=.*?<\/a>/g,''));assert.equal(jfaCapacityNeedsReview(missing),false);
+ assert.equal(jfaNeedsReview(prepare(html,503)),false);assert.equal(jfaNeedsReview({...r,sourceCapture:{...r.sourceCapture,conflicts:['Hash mismatch']}}),false);
+ const missing=prepare(html.replace(/<a href=.*?<\/a>/g,''));assert.equal(jfaNeedsReview(missing),false);
 });
 
 test('JFA discovery uses displayed Japanese dates, keeps resource updates and excludes external publishers',()=>{
@@ -50,6 +50,15 @@ test('JFA complete acquisition binds six PDFs and rejects missing, textless, ove
  const textless=copy();textless[0]!.parsed.text='--- Page 1 ---\n';assert.equal(prepareJfaPress(receipt(raw),raw,textless).readyForReview,false);
  const large=copy();large[0]!.parsed.text='--- Page 1 ---\n'+ '資源'.repeat(33000);const over=prepareJfaPress(receipt(raw),raw,large);assert.equal(over.body,null);assert.ok(over.warnings.some(w=>w.includes('without truncation')));
  const changed=copy();changed[0]!.bytes=Buffer.from('%PDF-1.4 changed');changed[0]!.receipt=receipt(changed[0]!.bytes,page.attachments[0]!.url);const updated=prepareJfaPress(receipt(raw),raw,changed);assert.equal(updated.readyForReview,false);assert.equal(jfaAttachmentChanged(result.sourceCapture.jfaContext,updated.sourceCapture.jfaContext),true);
+ const mapping:Parameters<typeof prepareJfaPress>[2]=copy();
+ mapping[0]!.parsed={status:'failed',rawSha256:sha256(mapping[0]!.bytes),parser:'Poppler 25.03.0/25.03.0/25.03.0; footnotes/v3; per-page-text',pages:0,text:'',error:'Raised PDF reference lacks a unique same-page footnote; manual review required'};
+ const manual=prepareJfaPress(receipt(raw),raw,mapping);assert.equal(jfaNeedsReview(manual),true);assert.equal(manual.body,null);assert.equal(manual.sourceCapture.bodySha256,null);assert.equal(manual.readyForReview,false);assert.equal(manual.sourceCapture.jfaContext!.attachments[0]!.manualReviewReason,'raised_reference_nonunique_footnote');assert.equal(manual.sourceCapture.jfaContext!.attachments.length,6);
+ assert.throws(()=>jfaEvidenceSections('',manual.sourceCapture),/Complete JFA/);
+ assert.equal(jfaNeedsReview(prepareJfaPress(receipt(raw),raw,mapping.slice(0,5))),false);
+ const tampered=mapping.map(f=>({...f}));tampered[1]!.bytes=Buffer.from('%PDF-1.4 altered original');assert.equal(jfaNeedsReview(prepareJfaPress(receipt(raw),raw,tampered)),false);
+ const unavailable=mapping.map(f=>({...f}));unavailable[1]!.receipt={...receipt(unavailable[1]!.bytes,page.attachments[1]!.url),status:503};assert.equal(jfaNeedsReview(prepareJfaPress(receipt(raw),raw,unavailable)),false);
+ const unknownError=mapping.map(f=>({...f,parsed:f.parsed?{...f.parsed}:undefined}));unknownError[0]!.parsed!.error='Unexpected PDF failure';assert.equal(jfaNeedsReview(prepareJfaPress(receipt(raw),raw,unknownError)),false);
+ const corrupted=mapping.map(f=>({...f}));corrupted[0]!.bytes=Buffer.from('invalid PDF');corrupted[0]!.receipt=receipt(corrupted[0]!.bytes,page.attachments[0]!.url);corrupted[0]!.parsed={...mapping[0]!.parsed!,rawSha256:sha256(corrupted[0]!.bytes)};assert.equal(jfaNeedsReview(prepareJfaPress(receipt(raw),raw,corrupted)),false);
  assert.throws(()=>jfaEvidenceSections(result.body!+' edited',result.sourceCapture),/changed|mismatch/);
  const foreign=Buffer.from(raw.toString().replace('./attach/pdf/261023-1.pdf','https://external.example/report.pdf'));assert.equal(prepareJfaPress(receipt(foreign),foreign,files).readyForReview,false);
 });

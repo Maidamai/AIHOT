@@ -8,6 +8,9 @@ export const JFA_PRESS='https://www.jfa.maff.go.jp/j/press/';
 const ROBOTS='https://www.jfa.maff.go.jp/robots.txt';
 const ROBOTS_MISSING_SHA256='458e61da3ecdb675ae7b9d98805fd4529d9de15c9b802d63279d28e61934debc';
 const CAPACITY_WARNING='JFA required attachment count exceeds automatic capacity (6); verified landing and attachment inventory only, no complete text or model input';
+const MAPPING_ERROR='Raised PDF reference lacks a unique same-page footnote; manual review required';
+const MAPPING_WARNING='JFA complete PDF originals acquired; raised-reference footnote mapping requires manual review, no complete text or model input';
+const mappingParser=(parser:string)=>/^Poppler [0-9.]+\/[0-9.]+\/[0-9.]+; footnotes\/v3; per-page-text$/.test(parser);
 const collapse=(s:string)=>s.replace(/\s+/g,' ').trim();
 const unknown=()=>({precision:'unknown' as const,value:null});
 function articleUrl(input:string){const u=new URL(input);return linkSchema.safeParse(input).success&&u.origin===new URL(JFA_PRESS).origin&&!u.search&&!u.hash&&/^\/j\/press\/[a-z_]+\/\d{6}(?:_\d+)?\.html$/.test(u.pathname);}
@@ -60,7 +63,8 @@ export function prepareJfaPress(input:unknown,raw:Buffer,files:JfaAttachment[]=[
  let body:string|null=page.body,complete=r.status===200&&!!page.title&&page.body.length>=40&&!conflicts.length;
  if(page.attachments.length>6){complete=false;warnings.push(CAPACITY_WARNING);}
  if(page.attachments.length>6&&files.length)conflicts.push('Capacity-limited JFA landing must not claim partial attachment acquisition');
- if(files.reduce((n,f)=>n+f.bytes.length,0)>24*1024*1024){complete=false;warnings.push('Required attachments exceed 24 MiB total; acquisition blocked');}
+ const totalBytes=files.reduce((n,f)=>n+f.bytes.length,0);
+ if(totalBytes>24*1024*1024){complete=false;warnings.push('Required attachments exceed 24 MiB total; acquisition blocked');}
  for(const [i,a] of (page.attachments.length>6?[]:page.attachments).entries()){
   const record:JfaContext['attachments'][number]={...a,format:'not_fetched',sha256:null,httpStatus:null,parseStatus:'not_fetched',pages:null,textSha256:null,bodyStart:null,bodyEnd:null},file=files[i];
   if(!file){complete=false;warnings.push(`Required attachment missing: ${a.url}`);}
@@ -72,16 +76,23 @@ export function prepareJfaPress(input:unknown,raw:Buffer,files:JfaAttachment[]=[
    if(ar.status===200&&a.extension==='pdf'&&pdf&&file.bytes.length<=10*1024*1024&&p?.status==='parsed'&&p.rawSha256===hash&&p.pages>0&&p.pages<=200&&matches.length===p.pages&&matches[0]?.index===0&&matches.every((m,j)=>Number(m[1])===j+1&&p.text.slice(m.index!+m[0].length,matches[j+1]?.index??p.text.length).trim())&&(!p.textEvidence||p.textEvidence.textSha256===sha256(p.text))){
     body+=`\n\n附件：${a.label}\n原件：${a.url}\n`;record.bodyStart=body.length;body+=p.text;record.bodyEnd=body.length;
     Object.assign(record,{parseStatus:'parsed',pages:p.pages,textSha256:sha256(p.text),pageIntervals:matches.map((m,j)=>({page:j+1,start:record.bodyStart!+m.index!+m[0].length,end:record.bodyStart!+(matches[j+1]?.index??p.text.length)})),...(p.textEvidence?{pdfTextEvidence:p.textEvidence}:{})});
-   }else{complete=false;warnings.push(`Required attachment incomplete: ${a.url}; HTTP ${ar.status}, parser ${p?.status??'missing'}`);}
+   }else{
+    complete=false;
+    if(ar.status===200&&ar.requestedUrl===a.url&&ar.finalUrl===a.url&&ar.sha256===hash&&a.extension==='pdf'&&pdf&&file.bytes.length<=10*1024*1024&&p?.status==='failed'&&p.rawSha256===hash&&p.error===MAPPING_ERROR&&mappingParser(p.parser)&&p.pages===0&&p.text===''){
+     Object.assign(record,{manualReviewReason:'raised_reference_nonunique_footnote',parserError:MAPPING_ERROR,parser:p.parser});
+     warnings.push(MAPPING_WARNING);
+    }else warnings.push(`Required attachment incomplete: ${a.url}; HTTP ${ar.status}, parser ${p?.status??'missing'}`);
+   }
   }
   context.attachments.push(record);
  }
  if(files.length>page.attachments.length)conflicts.push('Unexpected JFA attachment bytes');
  if(body.length>64000){complete=false;warnings.push('Combined release exceeds complete model-input limit (64000 characters); blocked without truncation');}
+ const mappingOnly=!conflicts.length&&!!page.title&&page.body.length>=40&&files.length===page.attachments.length&&totalBytes<=24*1024*1024&&body.length<=64000&&context.attachments.some(a=>a.manualReviewReason)&&context.attachments.every(a=>a.parseStatus==='parsed'||!!a.manualReviewReason);
  if(!complete||conflicts.length)body=null;
  const day=page.publicationLiteral?jfaDate(page.publicationLiteral):null;
  if(page.publicationLiteral&&!day)warnings.push('Publication date unverified; URL/list/capture dates are not substitutes');
- const first=context.attachments[0],sourceCapture=captureSchema.parse({adapter:'jfa-press',acquisitionMode,sourceUrl:r.finalUrl,capturedAt:r.finishedAt,httpStatus:r.status,rawSha256:sha256(raw),bodySha256:body?sha256(body):null,parser:'official-column/jfa-press/v1',parseStatus:body?'parsed':conflicts.length||context.capacityLimit?'unverified':r.status!==200?'failed':'missing',attachmentSha256:first?.sha256??null,attachmentUrl:first?.url??null,attachmentHttpStatus:first?.httpStatus??null,attachmentCapturedAt:files[0]?archiveReceiptSchema.parse(files[0].receipt).finishedAt:null,attachmentPages:first?.pages??null,publishedAt:null,publicationLiteral:page.publicationLiteral,conflicts,jfaContext:context});
+ const first=context.attachments[0],sourceCapture=captureSchema.parse({adapter:'jfa-press',acquisitionMode,sourceUrl:r.finalUrl,capturedAt:r.finishedAt,httpStatus:r.status,rawSha256:sha256(raw),bodySha256:body?sha256(body):null,parser:'official-column/jfa-press/v1',parseStatus:body?'parsed':conflicts.length||context.capacityLimit||mappingOnly?'unverified':r.status!==200?'failed':'missing',attachmentSha256:first?.sha256??null,attachmentUrl:first?.url??null,attachmentHttpStatus:first?.httpStatus??null,attachmentCapturedAt:files[0]?archiveReceiptSchema.parse(files[0].receipt).finishedAt:null,attachmentPages:first?.pages??null,publishedAt:null,publicationLiteral:page.publicationLiteral,conflicts,jfaContext:context});
  const evidence=body?body.split(/\n+/).filter(p=>/公海|国際|北太平洋|漁獲|資源|NPFC|IUU|サンマ|マサバ|マイワシ|まぐろ|遠洋/i.test(p)).slice(0,8).map(p=>p.slice(0,500)):[];
  return {title:page.title,body,dates:{published:day?{precision:'day' as const,value:day}:unknown(),event:unknown(),adopted:unknown(),effectiveFrom:unknown(),effectiveUntil:unknown()},sourceCapture,readyForReview:!!body,relevance:{decision:evidence.length?'candidate' as const:'not_proven' as const,method:'explicit_dwf_terms' as const,evidence},warnings,evidence:[{url:r.finalUrl,sha256:sha256(raw),page:null,section:'JFA official HTML release; no inferred legal applicability'},...context.attachments.filter(a=>a.sha256).map(a=>({url:a.url,sha256:a.sha256!,page:null,section:`Required attachment; ${a.parseStatus}`}))]};
 }
@@ -89,9 +100,13 @@ export function jfaAttachmentChanged(previous:JfaContext|undefined,current:JfaCo
  if(!previous||!current)return false;
  return previous.pageTextSha256!==current.pageTextSha256||previous.attachmentListSha256!==current.attachmentListSha256||previous.attachmentCount!==current.attachmentCount||previous.attachments.map(a=>a.url).join('\n')!==current.attachments.map(a=>a.url).join('\n')||current.attachments.some(a=>a.httpStatus===200&&a.sha256&&previous.attachments.some(old=>old.url===a.url&&old.sha256&&old.sha256!==a.sha256));
 }
-export function jfaCapacityNeedsReview(input:{title:string|null;body:string|null;sourceCapture:unknown;readyForReview:boolean;warnings:string[]}){
+export function jfaNeedsReview(input:{title:string|null;body:string|null;sourceCapture:unknown;readyForReview:boolean;warnings:string[]}){
  const c=captureSchema.parse(input.sourceCapture),n=c.jfaContext;
- return c.adapter==='jfa-press'&&c.httpStatus===200&&c.parseStatus==='unverified'&&!c.conflicts.length&&!!input.title&&!input.readyForReview&&input.body===null&&c.bodySha256===null&&!!n?.pageBody&&n.pageBody.sourceUrl===c.sourceUrl&&n.pageBody.rawSha256===c.rawSha256&&n.capacityLimit===6&&n.attachmentCount>6&&n.attachments.length===0&&input.warnings.includes(CAPACITY_WARNING);
+ if(c.adapter!=='jfa-press'||c.httpStatus!==200||c.parseStatus!=='unverified'||c.conflicts.length||!input.title||input.readyForReview||input.body!==null||c.bodySha256!==null||!n?.pageBody||n.pageBody.sourceUrl!==c.sourceUrl||n.pageBody.rawSha256!==c.rawSha256)return false;
+ const countGap=n.capacityLimit===6&&n.attachmentCount>6&&n.attachments.length===0&&input.warnings.includes(CAPACITY_WARNING);
+ const mapped=(a:JfaContext['attachments'][number])=>a.manualReviewReason==='raised_reference_nonunique_footnote'&&a.parserError===MAPPING_ERROR&&mappingParser(a.parser??'')&&a.parseStatus==='unverified'&&a.pages===null&&a.textSha256===null&&a.bodyStart===null&&a.bodyEnd===null;
+ const mappingGap=!n.capacityLimit&&n.attachmentCount>=1&&n.attachmentCount<=6&&n.attachments.length===n.attachmentCount&&n.attachments.some(mapped)&&n.attachments.every(a=>a.httpStatus===200&&a.format==='pdf'&&a.extension==='pdf'&&!!a.sha256&&(mapped(a)||a.parseStatus==='parsed'&&!!a.pages&&!!a.textSha256&&a.bodyStart!==null&&a.bodyEnd!==null))&&input.warnings.includes(MAPPING_WARNING);
+ return countGap||mappingGap;
 }
 export function jfaEvidenceSections(body:string,input:unknown):EvidenceSection[]{
  const c=captureSchema.parse(input),n=c.jfaContext;
