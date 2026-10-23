@@ -1688,13 +1688,13 @@ test('source bridge DB progress API reads core state rather than offline cursor'
     const offline=await app.inject({method:'GET',url:'/api/admin/fishery/batches?storage=file'});assert.equal(offline.json().storage,'file');assert.equal(offline.json().progress.find((row:{column:string})=>row.column==='moa').state.revision,99);
     const [saved]=await sql`SELECT value FROM settings WHERE key='fishery.archive.moa'`;
     await sql`INSERT INTO settings(key,value) VALUES('fishery.archive.moa','{"synthetic_invalid":true}') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
-    try{const broken=await app.inject('/api/admin/fishery/batches');assert.equal(broken.statusCode,200,broken.body);const states=broken.json().archiveSources;assert.equal(states.length,2);assert.match(states.find((s:{sourceId:string})=>s.sourceId===bridgeSource).pausedReason,/configuration unavailable/);assert.equal(states.find((s:{sourceId:string})=>s.sourceId==='fishery-column-npfc').sourceId,'fishery-column-npfc');}
+    try{const broken=await app.inject('/api/admin/fishery/batches');assert.equal(broken.statusCode,200,broken.body);const states=broken.json().archiveSources;assert.equal(states.length,ARCHIVE_COLUMNS.length);assert.match(states.find((s:{sourceId:string})=>s.sourceId===bridgeSource).pausedReason,/configuration unavailable/);assert.equal(states.find((s:{sourceId:string})=>s.sourceId==='fishery-column-npfc').sourceId,'fishery-column-npfc');}
     finally{if(saved)await sql`UPDATE settings SET value=${sql.json(saved.value)} WHERE key='fishery.archive.moa'`;else await sql`DELETE FROM settings WHERE key='fishery.archive.moa'`;}
   } finally {config.devAdmin=null;await rm(file,{force:true});}
 });
 
 import {PgBoss} from 'pg-boss';
-import {ARCHIVE_KEY,ARCHIVE_TICK,ARCHIVE_QUEUE,archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker,assertArchiveSchedules,npfcArchive,archiveSourceStatuses} from '../backend/archive-worker.ts';
+import {ARCHIVE_COLUMNS,createArchiveController,ARCHIVE_KEY,ARCHIVE_TICK,ARCHIVE_QUEUE,archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker,assertArchiveSchedules,npfcArchive,archiveSourceStatuses} from '../backend/archive-worker.ts';
 import {acquireColumnLease,withColumnLease} from '../backend/column-lease.ts';
 test('NPFC reuses source leases, core health and version invalidation without activating paid processing',async()=>{
  const id='fishery-column-npfc',url='https://www.npfc.int/cmm-2026-01-synthetic-integration';
@@ -1718,6 +1718,42 @@ test('NPFC reuses source leases, core health and version invalidation without ac
 const archiveUrl=(n:number)=>`https://yyj.moa.gov.cn/gzdt/202610/t20261021_${97000+n}.htm`;
 const archiveListing=(ids:number[])=>Buffer.from(`<ul class="sj_e_tonzhi_list">${ids.map(n=>`<li><a href="${archiveUrl(n)}">远洋渔业隔离归档${n}</a></li>`).join('')}</ul>`);
 const archiveBody=(n:number)=>Buffer.from(`<meta name="ArticleTitle" content="远洋渔业隔离归档${n}"><meta name="PubDate" content="2026-10-21"><div class="sj_arc_body"><div class="TRS_Editor"><p>ISOLATED TEST FIXTURE ${n} ${'远洋渔业公海履约完整合成上下文。'.repeat(12)}</p></div></div>`);
+test('Fujian archive controllers stay disabled until configured and use hourly five-article bounds',async()=>{
+ await archiveFixture();const b=await testArchiveBoss();
+ const before=await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_reviews) AS reviews`;
+ try{
+  for(const column of ['fujian','fujian-notices'] as const){
+   const controller=createArchiveController(column),sourceId=`fishery-column-${column}`;
+   await sql`DELETE FROM settings WHERE key=${controller.key}`;
+   const sourcesBefore=await sql`SELECT count(*) AS n FROM sources`;
+   const initial=(await archiveSourceStatuses()).find(s=>s.sourceId===sourceId)!;
+   assert.equal(initial.enabled,false);assert.equal(initial.mode,null);assert.equal(initial.maxArticles,5);assert.equal(await controller.read(),null);
+   assert.deepEqual(await sql`SELECT count(*) AS n FROM sources`,sourcesBefore,'Status never registers a missing source');
+   await sql`INSERT INTO sources(id,name,kind,enabled,cursor) VALUES(${sourceId},${'Synthetic '+column+' archive'},'external',false,'{}') ON CONFLICT(id) DO UPDATE SET kind='external',enabled=false,participation_mode='editorial',cursor='{}',fail_count=0,last_error=NULL,last_fetch_at=NULL,last_ok_at=NULL,next_fetch_at=NULL`;
+   await sql`DELETE FROM fetch_runs WHERE source_id=${sourceId} AND detail ? 'fisheryColumnRound'`;
+   await assert.rejects(controller.configureArchive({enabled:true,mode:'six_hourly',runId:'wrong-fujian-cadence'}),/does not match/);
+   const c=await controller.configureArchive({enabled:true,mode:'hourly',runId:`synthetic-${column}`});assert.equal(c.intervalSeconds,3600);
+   await controller.registerArchiveWorker(b,{consume:false});
+   const claimed=await controller.archiveTick(b,c.revision);assert.ok(claimed.roundId);if(!claimed.roundId||!claimed.jobId)throw new Error('Expected authorized archive round');
+   await b.fetch(controller.queue);await b.complete(controller.queue,claimed.jobId!);
+   const urls=Array.from({length:6},(_,i)=>new URL(`202610/t20261023_${9988101+i}.htm`,COLUMNS[column].url).href),requests:string[]=[];
+   const listing=Buffer.from(`<ul class="xw-list-1 gl_list">${urls.map((url,i)=>`<li><a href="${url}">远洋渔业隔离归档${i}</a></li>`).join('')}</ul>`);
+   const result=await controller.runArchiveJob({revision:c.revision,roundId:claimed.roundId,column},{wait:async()=>{},fetch:async url=>{
+    requests.push(url);assert.ok(url.endsWith('/robots.txt')||url===COLUMNS[column].url||urls.includes(url),'No external requests outside the local fixture');
+    return {url,status:url.endsWith('/robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('/robots.txt')?Buffer.from('missing'):url===COLUMNS[column].url?listing:Buffer.from(`<meta name="ArticleTitle" content="合成远洋渔业隔离归档"><meta name="PubDate" content="2026-10-23 10:00"><div id="detailCont"><div class="TRS_Editor"><p>ISOLATED TEST FIXTURE ${'远洋渔业公海履约完整合成上下文。'.repeat(12)}</p></div></div>`)};
+   }});
+   assert.equal(result.outcome,'success');assert.equal(result.modelCalls,0);assert.equal(requests.filter(url=>urls.includes(url)).length,5);assert.ok(!requests.includes(urls[5]));
+   const status=await controller.archiveStatus();assert.equal(status.mode,'hourly');assert.equal(status.maxArticles,5);assert.equal(status.pendingCandidates,1);assert.equal(status.coreSourceEnabled,false);assert.ok(Date.parse(status.nextRunAt!)>Date.now()+3500_000);
+   const docs=await sql`SELECT d.id,r.id AS review FROM fishery_documents d LEFT JOIN fishery_reviews r ON r.document_id=d.id WHERE d.source_id=${sourceId} AND d.canonical_url=ANY(${urls}::text[])`;
+   assert.equal(docs.length,5);assert.ok(docs.every(d=>d.review===null));assert.equal((await materialDetail(docs[0].id)).state,'pending');
+   await controller.configureArchive({enabled:false,mode:'hourly',runId:c.runId});assert.equal((await controller.archiveStatus()).enabled,false);
+  }
+  for(const column of ARCHIVE_COLUMNS){await b.createQueue(`fishery.archive.${column}.tick`);await b.schedule(`fishery.archive.${column}.tick`,'* * * * *');}
+  await assertArchiveSchedules(b);assert.throws(()=>createArchiveController('iotc' as never),/Unsupported/);
+  assert.equal((await archiveSourceStatuses()).find(s=>s.sourceId==='fishery-column-npfc')!.maxArticles,1);
+  assert.deepEqual(await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_reviews) AS reviews`,before);
+ }finally{for(const column of ARCHIVE_COLUMNS)await b.unschedule(`fishery.archive.${column}.tick`);for(const column of ['fujian','fujian-notices'])await sql`DELETE FROM settings WHERE key=${'fishery.archive.'+column}`;await b.stop({graceful:false});}
+});
 test('NPFC and MARA archive jobs use independent coordinators, health and schedules without paid side effects',async()=>{
  await archiveFixture();const b=await testArchiveBoss();let release!:()=>void;
  const arrived=new Promise<void>(r=>release=r),key=npfcArchive.key,id='fishery-column-npfc';

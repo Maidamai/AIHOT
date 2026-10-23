@@ -13,8 +13,8 @@ import {collectColumnRound,columnProgressCoordinator} from './column-progress.ts
 import {columnDbProgress,COLUMN_CURSOR_KEY} from './column-db-progress.ts';
 import {importBatch} from './import-batch.ts';
 import {readBatch,type ColumnFetcher} from './column-batches.ts';
-export type ArchiveColumn='moa'|'npfc';
-export const ARCHIVE_COLUMNS:ArchiveColumn[]=['moa','npfc'];
+export const ARCHIVE_COLUMNS=['moa','npfc','fujian','fujian-notices'] as const;
+export type ArchiveColumn=typeof ARCHIVE_COLUMNS[number];
 export const ARCHIVE_KEY='fishery.archive.moa',ARCHIVE_TICK='fishery.archive.moa.tick',ARCHIVE_QUEUE='fishery.archive.moa';
 const stateSchema=z.object({enabled:z.boolean(),revision:z.uuid(),mode:z.enum(['hourly','six_hourly','validation']),runId:z.string().regex(/^[a-zA-Z0-9-]{1,40}$/),intervalSeconds:z.number().int().min(10).max(21600),claimed:z.number().int().nonnegative(),pausedReason:z.string().nullable(),nextAt:z.iso.datetime().nullable(),
   current:z.object({id:z.string(),stage:z.enum(['queued','collecting','importing']),jobId:z.string().nullable()}).nullable(),lastRound:z.string().nullable(),heartbeatAt:z.iso.datetime().nullable()});
@@ -26,7 +26,7 @@ export async function assertArchiveSchedules(boss:PgBoss){const allowed=ARCHIVE_
 export function createArchiveController(column:ArchiveColumn){
  if(!ARCHIVE_COLUMNS.includes(column))throw new Error('Unsupported archive source');
  const ARCHIVE_KEY=`fishery.archive.${column}`,ARCHIVE_TICK=`${ARCHIVE_KEY}.tick`,ARCHIVE_QUEUE=ARCHIVE_KEY,sourceId=`fishery-column-${column}`,leaseKey=`fishery.column-archive.${column}`;
- const normalMode=column==='moa'?'hourly':'six_hourly',normalInterval=column==='moa'?3600:21600,maxArticles=column==='moa'?5:1;
+ const normalMode=column==='npfc'?'six_hourly':'hourly',normalInterval=column==='npfc'?21600:3600,maxArticles=column==='npfc'?1:5;
 const iso=(value:Date|string|null)=>value?new Date(value).toISOString():null;
 async function read(db:Tx|typeof sql=sql):Promise<ArchiveConfig|null>{const [r]=await db`SELECT value FROM settings WHERE key=${ARCHIVE_KEY}`;if(!r)return null;const state=stateSchema.parse(r.value);if(state.mode!=='validation'&&(state.mode!==normalMode||state.intervalSeconds!==normalInterval))throw new Error('Archive source cadence is invalid');return state;}
 async function save(tx:Tx,value:ArchiveConfig){await tx`INSERT INTO settings(key,value,updated_by) VALUES (${ARCHIVE_KEY},${tx.json(value)},'fishery-archive') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`;}
@@ -73,7 +73,7 @@ async function archiveTick(boss:PgBoss,revision:string){
     if(s.last_error&&s.next_fetch_at&&new Date(s.next_fetch_at).getTime()>Date.now()){state.nextAt=iso(s.next_fetch_at);await save(tx,state);return {skipped:'core failure backoff'};}
     const unfinished=await tx`SELECT id FROM fetch_runs WHERE source_id=${sourceId} AND finished_at IS NULL AND detail ? 'fisheryColumnRound' LIMIT 1`;
     if(unfinished.length){state.pausedReason='Unfinished source fetch run; explicit stopped-runner reconciliation required';await save(tx,state);return {skipped:state.pausedReason};}
-    const roundId=`${column==='moa'?'m':'n'}-${randomUUID()}`;state.claimed++;state.current={id:roundId,stage:'queued',jobId:null};
+    const roundId=`${column[0]}-${randomUUID()}`;state.claimed++;state.current={id:roundId,stage:'queued',jobId:null};
     const jobId=await boss.send(ARCHIVE_QUEUE,{revision:state.revision,roundId,column},{singletonKey:sourceId,retryLimit:0,db:queueDb(tx)});
     if(!jobId)throw new Error('Source queue already owns a job; no validation claim committed');
     state.current.jobId=jobId;await save(tx,state);return {roundId,jobId};
@@ -187,7 +187,7 @@ return {column,key:ARCHIVE_KEY,tick:ARCHIVE_TICK,queue:ARCHIVE_QUEUE,read,archiv
 const controllers=ARCHIVE_COLUMNS.map(createArchiveController);
 export const {archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker}=controllers[0];
 export const npfcArchive=controllers[1];
-export async function archiveSourceStatuses(){return Promise.all(controllers.map(async c=>{try{return await c.archiveStatus();}catch{return {sourceId:`fishery-column-${c.column}`,sourceName:COLUMNS[c.column].name,enabled:false,coreSourceEnabled:null,mode:null,runId:null,heartbeatAt:null,lastSuccessAt:null,lastFailureAt:null,lastError:'Source archive configuration unavailable',currentRound:null,lastRound:null,pendingCandidates:null,cursorUrl:null,coverage:null,maxPages:1 as const,maxArticles:c.column==='moa'?5 as const:1 as const,nextRunAt:null,consecutiveFailures:0,pausedReason:'Source configuration unavailable; inspect without resetting state',validationClaimed:null,validationLimit:null};}}));}
+export async function archiveSourceStatuses(){return Promise.all(controllers.map(async c=>{try{return await c.archiveStatus();}catch{return {sourceId:`fishery-column-${c.column}`,sourceName:COLUMNS[c.column].name,enabled:false,coreSourceEnabled:null,mode:null,runId:null,heartbeatAt:null,lastSuccessAt:null,lastFailureAt:null,lastError:'Source archive configuration unavailable',currentRound:null,lastRound:null,pendingCandidates:null,cursorUrl:null,coverage:null,maxPages:1 as const,maxArticles:c.column==='npfc'?1 as const:5 as const,nextRunAt:null,consecutiveFailures:0,pausedReason:'Source configuration unavailable; inspect without resetting state',validationClaimed:null,validationLimit:null};}}));}
 export async function startArchiveProfile():Promise<()=>Promise<void>>{
  if(process.env.MODEL_CALLS_ENABLED==='true'||process.env.COLLECT_ENABLED==='true')throw new Error('Archive profile requires core collection and model valves disabled');
  const settings={connectionString:config.databaseUrl,schema:'pgboss',max:4,supervise:false};
