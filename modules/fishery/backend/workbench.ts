@@ -1,4 +1,6 @@
 import { sql } from "@aihot/backend/db";
+import { decideTimeline } from "@aihot/backend/content/materials";
+import { beijingAt } from "@aihot/contracts/time";
 import { sourceArticleAvailability } from "./source-availability.ts";
 import { createHash } from "node:crypto";
 import { readSourceBody } from "./source-body.ts";
@@ -14,11 +16,16 @@ const sources = async (): Promise<MaterialSource[]> => (await listSources()).map
 
 function rowOf(d: Record<string, any>, source: MaterialSource, latest: MaterialObservation | null, review: MaterialReview | null, linkedStatus?: string): MaterialRow {
   const c = latest?.payload.sourceCapture;
+  const published=latest?.payload.dates.published;
+  const claimed=c?.publishedAt?new Date(c.publishedAt):published?.precision==='day'?beijingAt(published.value!,'00:00'):null;
+  const timeline=decideTimeline(claimed,new Date(d.created_at));
+  const timing={kind:timeline.backfill?'reference' as const:'news' as const,publishedAt:timeline.publishedAt?.toISOString()??null,
+    discoveredAt:iso(d.created_at),reason:timeline.backfillReason};
   const state = d.withdrawn_reason ? "withdrawn" : c && (c.httpStatus !== 200 || ["failed", "missing"].includes(c.parseStatus)) ? "failed"
     : c && (c.parseStatus === "unverified" || !c.bodySha256 || c.conflicts.length) ? "unverified"
     : review && (review.revision !== latest?.revision || review.sourceRevision !== source.revision) ? "stale"
     : review?.decision === "rejected" ? "rejected" : review?.decision === "approved" ? "approved" : "pending";
-  return { id: d.id, sourceId: d.source_id, title: latest?.payload.title ?? "尚无观察记录", ...sourceAttributionOf(d.issuer), canonicalUrl: d.canonical_url,
+  return { timing, id: d.id, sourceId: d.source_id, title: latest?.payload.title ?? "尚无观察记录", ...sourceAttributionOf(d.issuer), canonicalUrl: d.canonical_url,
     documentNumber: d.document_number, articleId: d.article_id, withdrawnReason: d.withdrawn_reason, source, latest, review, state,
     testOnly: source.testOnly || d.issuer.startsWith("ISOLATED TEST"), blockers: exportBlockers({ withdrawn_reason: d.withdrawn_reason, article_id: d.article_id },
       { revision: source.revision, profile: source.profile, participation_mode: source.participationMode },

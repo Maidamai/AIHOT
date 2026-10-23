@@ -9,7 +9,7 @@ import {fisheryConfigurationVersion} from './ai-review.ts';
 import {hash,lockDocument,NotFound} from './store.ts';
 
 export const AUTOMATIC_FLOW_KEY='fishery.flow.dispatch';
-const policy=z.strictObject({enabled:z.boolean(),sourceId:z.literal('fishery-column-moa'),createdAfter:z.iso.datetime(),documentIds:z.array(z.uuid()).min(1).max(20).optional()});
+const policy=z.strictObject({enabled:z.boolean(),sourceId:z.enum(['fishery-column-moa','fishery-column-fujian','fishery-column-fujian-notices']),createdAfter:z.iso.datetime(),documentIds:z.array(z.uuid()).min(1).max(20).optional()});
 const stored=policy.extend({revision:z.uuid()});
 export interface AutomaticFlowBinding {revision:string;snapshotHash:string;materialReviewId:number;}
 interface DispatchRow {documentId:string;taskId?:string;state:string;jobId?:string;reason?:string;}
@@ -24,7 +24,7 @@ async function supersedeUnstarted(documentId:string,id:string,expected:{source_r
     await lockAutomaticDocument(tx,documentId);
     const [version]=await tx`SELECT f.revision AS source_revision,o.revision,o.content_hash FROM fishery_documents d JOIN fishery_sources f ON f.source_id=d.source_id
       JOIN LATERAL(SELECT revision,content_hash FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1)o ON true WHERE d.id=${documentId}`;
-    if(!version||version.source_revision!==expected.source_revision||version.revision!==expected.revision||version.content_hash!==expected.content_hash||hash(fisheryConfigurationVersion())!==rulesHash)
+    if(!version||version.source_revision!==expected.source_revision||version.revision!==expected.revision||version.content_hash!==expected.content_hash||hash({execution:fisheryConfigurationVersion(),discovery:'core-news/v1'})!==rulesHash)
       throw new Conflict('Automatic dispatch read an older evidence version; keep the newer task unchanged');
     const [old]=await tx`SELECT id,identity,status,snapshot,draft,stage_requests FROM fishery_flow_tasks WHERE id=${id} FOR UPDATE`;
     if(!old?.identity.startsWith('auto-')||old.status!=='queued'||old.draft||Object.keys(old.stage_requests).length)return;
@@ -51,6 +51,8 @@ export async function automaticFlowPermit(id:string,binding?:AutomaticFlowBindin
     LEFT JOIN LATERAL(SELECT id,decision,revision,source_revision FROM fishery_reviews WHERE document_id=d.id ORDER BY id DESC LIMIT 1)rv ON true
     WHERE t.id=${id} FOR SHARE OF s,f`;
   if(!r||r.source_id!==c.sourceId||new Date(r.created_at)<new Date(c.createdAfter)||c.documentIds&&!c.documentIds.includes(r.document_id))throw new Conflict('Document is outside automatic dispatch scope');
+  if(!(await db`SELECT 1 FROM articles a WHERE a.source_id=${r.source_id} AND a.raw->>'fisheryDocumentId'=${r.document_id} AND NOT a.backfill AND a.body_status='ok'`).length)
+    throw new Conflict('Historical or undated reference is outside automatic news processing');
   if(r.withdrawn_reason||r.participation_mode!=='editorial')throw new Conflict('Source isolated or document withdrawn');
   if(r.decision!=='approved'||r.review_revision!==r.observation_revision||r.review_source_revision!==r.source_revision)throw new Conflict('Waiting for current material approval; no automatic model request');
   const detail=await flowDetail(id);if(detail.stale||!detail.authoritative||!['queued','running'].includes(r.status))throw new Conflict('Current queued/running evidence-bound flow required');
@@ -61,12 +63,13 @@ export async function automaticFlowPermit(id:string,binding?:AutomaticFlowBindin
 export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHeld?:()=>Promise<void>}={}){
   const c=await configuration();if(!c?.enabled)return {enabled:false,rows:[]};
   // The timestamp and optional document allowlist prevent an enable operation from charging for old archives.
-  const rulesHash=hash(fisheryConfigurationVersion());
+  const rulesHash=hash({execution:fisheryConfigurationVersion(),discovery:'core-news/v1'});
   const docs=await sql`SELECT d.id,d.source_id,f.revision AS source_revision,o.revision,o.content_hash,s.participation_mode,rv.id AS review_id
     FROM fishery_documents d JOIN fishery_sources f ON f.source_id=d.source_id JOIN sources s ON s.id=d.source_id
     JOIN LATERAL(SELECT revision,content_hash FROM fishery_observations WHERE document_id=d.id ORDER BY revision DESC LIMIT 1)o ON true
     LEFT JOIN LATERAL(SELECT id FROM fishery_reviews WHERE document_id=d.id ORDER BY id DESC LIMIT 1)rv ON true
     WHERE d.source_id=${c.sourceId} AND d.created_at>=${new Date(c.createdAfter)}
+      AND EXISTS(SELECT 1 FROM articles a WHERE a.source_id=d.source_id AND a.raw->>'fisheryDocumentId'=d.id AND NOT a.backfill AND a.body_status='ok')
       ${c.documentIds?sql`AND d.id IN ${sql(c.documentIds)}`:sql``} ${ids?sql`AND d.id IN ${sql(ids.length?ids:['00000000-0000-0000-0000-000000000000'])}`:sql``}
       AND NOT EXISTS(SELECT 1 FROM audit_log a WHERE a.subject='fishery:'||d.id AND a.action='fishery.flow.auto_checked'
         AND a.after->>'configurationRevision'=${c.revision} AND a.after->>'sourceRevision'=f.revision::text
@@ -77,13 +80,13 @@ export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHe
   for(const d of docs){
     await options.assertHeld?.();
     try{
-      const identity=`auto-${hash({source:d.source_id,sourceRevision:d.source_revision,observation:d.revision,content:d.content_hash,rules:fisheryConfigurationVersion()}).slice(0,48)}`;
+      const identity=`auto-${hash({source:d.source_id,sourceRevision:d.source_revision,observation:d.revision,content:d.content_hash,rules:rulesHash}).slice(0,48)}`;
       // A changed body may supersede only a pristine, never-sent automatic placeholder. Running,
       // failed and receipt-bearing tasks keep their ordinary explicit reconciliation requirements.
       const [old]=await sql`SELECT id,identity,status,snapshot,draft,stage_requests FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY created_at DESC,id DESC LIMIT 1`;
       if(old?.identity.startsWith('auto-')&&old.identity!==identity&&old.status==='queued'&&!old.draft&&!Object.keys(old.stage_requests).length)
         await supersedeUnstarted(d.id,old.id,d as never,rulesHash);
-      const task=await createFlow(d.id,{identity},'automatic-dispatch');
+      const task=await createFlow(d.id,{identity,selection:true},'automatic-dispatch');
       if(!task.identity.startsWith('auto-')||task.status!=='queued'){rows.push({documentId:d.id,taskId:task.id,state:task.status});}
       else {
       await getBoss({schedule:false,supervise:false});

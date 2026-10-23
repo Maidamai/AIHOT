@@ -22,7 +22,8 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
   const o = d.latest?.payload, c = o?.sourceCapture, { run, busy } = useAdminAction(), fresh = useFreshMaterial();
   const me = (useRouteLoaderData("admin-layout") as { me: AdminMe }).me;
   const [flowIdentity,setFlowIdentity]=useState("");
-  const [selection,setSelection]=useState(false);
+  const newsSource=['moa','fujian','fujian-notices'].includes(c?.adapter??'');
+  const [selection,setSelection]=useState(newsSource);
   const [command, setCommand] = useState<Command | null>(null), [ack, setAck] = useState(false), [downloading, setDownloading] = useState(false), [error, setError] = useState<string | null>(null);
   const base = `/api/admin/fishery/documents/${d.id}`, frozen = busy || downloading, terminal = !!d.withdrawnReason || !d.latest;
   const open = (kind: Command["kind"]) => { setAck(false); setError(null); setCommand({ id: d.id, kind, revision: d.latest!.revision, sourceRevision: d.source.revision }); };
@@ -42,6 +43,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
     actions={<Button busy={fresh.state === "loading"} onClick={() => fresh.revalidate()}>重新核对</Button>}>
     <TrialNotice testOnly={d.testOnly} />
     <div className="mb-4 flex flex-wrap gap-2"><StateBadge row={d} /><Badge>观察 v{d.latest?.revision ?? 0} · 来源许可 v{d.source.revision}</Badge><Badge>法律适用性未审核</Badge></div>
+    <p className="mb-4 rounded-control bg-bg-sunk p-3 text-[13px]">{d.timing?.kind==='news'?'近期资讯候选：仍需正文相关性、价值和事实审核。':'历史或日期待核参考：不计作新资讯；政策是否现行有效须另行核验。'} 素材入库不等于读者可见。</p>
     {error && <p role="alert" className="mb-4 rounded-card bg-hot-soft p-3 text-[13px] text-hot">{error}</p>}
     {(d.state === "failed" || d.state === "unverified") && <div role="alert" className="mb-5 rounded-card bg-hot-soft p-4 text-[13px] text-hot ring-1 ring-hot/20"><strong>{c?.httpStatus !== 200 ? `HTTP ${c?.httpStatus}：原文获取失败` : `解析未核验：${c?.parseStatus}`}</strong><p className="mt-1">没有可用正文时不能导出。不会用搜索缓存补正文，也不据此认定官方撤稿。</p></div>}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
@@ -59,18 +61,18 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
           <form className="my-4 flex flex-wrap items-end gap-3" onSubmit={async e=>{e.preventDefault();await run("POST",base+"/flows",{identity:flowIdentity,selection},{success:"任务已创建，可进入查看"});}}>
             <label className="text-[13px]">尝试名称<input aria-label="任务尝试名称" required pattern="[a-zA-Z0-9_-]{1,64}" maxLength={64} value={flowIdentity} onChange={e=>setFlowIdentity(e.target.value)} className="mt-1 block rounded-control border border-line bg-bg-sunk px-3 py-2" placeholder="例如 review-20261020" /></label>
             <Button type="submit" disabled={terminal||frozen||!d.text?.hashMatches}>创建内部审核任务</Button>
-            <label className="text-[13px]"><input type="checkbox" checked={selection} onChange={e=>setSelection(e.target.checked)}/> 本任务先做预筛和双评分（最多新增3次调用，门槛未校准；不代替事实审核）</label>
+            <label className="text-[13px]"><input type="checkbox" checked={newsSource||selection} disabled={newsSource} onChange={e=>setSelection(e.target.checked)}/> 新闻候选先做正文预筛和双评分（最多新增3次调用，门槛未校准；不代替事实审核）</label>
           </form>
           <ul className="space-y-3 text-[13px]">{d.flows.map(task=><li key={task.id}><Link className="text-accent" to={`/admin/fishery/flows/${task.id}`}>{task.identity} · {task.status}</Link>{task.stale&&<span className="ml-2 text-hot">版本已失效</span>}</li>)}</ul>{!d.flows.length&&<p className="text-[13px] text-ink-3">尚无AI审核任务。</p>}
         </Card>
         <Card title="来源与日期"><KV items={[
           ["原始URL", <a className="break-all text-accent" href={d.canonicalUrl} target="_blank" rel="noreferrer">{d.canonicalUrl}</a>],
-          ["来源归属", d.sourceAttribution], ["网页发布机构", "未知（主记录未核验）"], ["政策发文机关", "未知（主记录未核验）"], ["文号", d.documentNumber ?? "未知"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],
-          ["获取时间", c ? `${bj(c.capturedAt, true)} 北京时间` : "未知"], ["发布日期", o ? dateLabel(o.dates.published) : "未知"],
-          ["事件日期", o?.dates.event ? dateLabel(o.dates.event) : "未知，不用抓取或发布日期代替"], ["通过日期", o ? dateLabel(o.dates.adopted) : "未知"],
-          ["生效日期", o ? dateLabel(o.dates.effectiveFrom) : "未知"], ["终止日期", o ? dateLabel(o.dates.effectiveUntil) : "未知"],
-          ["政策状态", ({ unknown: "未知", draft: "草案", adopted: "已通过", repealed: "已废止", superseded: "被替代" } as Record<string, string>)[o?.policyStatus ?? "unknown"]],
-          ["适用区域", o?.scope.regions.join("、") || "未知"], ["鱼种", o?.scope.species.join("、") || "未知"], ["船旗 / 活动", `${o?.scope.flags.join("、") || "未知"} / ${o?.scope.activities.join("、") || "未知"}`],
+          ["来源归属", d.sourceAttribution], ["网页发布机构", "未核实"], ["政策发文机关", "未核实"], ["文号", d.documentNumber ?? "未核实"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],
+          ["获取时间", c ? `${bj(c.capturedAt, true)} 北京时间` : "未知"], ["发布日期", o?.dates.published.precision!=='unknown'&&o?dateLabel(o.dates.published):c?.parseStatus==='failed'||c?.parseStatus==='missing'?'提取失败，日期未核实':c?.parseStatus==='parsed'&&!c.publicationLiteral?'页面发布日期元数据未载明':'未核实（日期证据不足）'],
+          ["事件日期", o?.dates.event.value ? dateLabel(o.dates.event) : "未核实，不用抓取或发布日期代替"], ["通过日期", o?.dates.adopted.value ? dateLabel(o.dates.adopted) : "未核实"],
+          ["生效日期", o?.dates.effectiveFrom.value ? dateLabel(o.dates.effectiveFrom) : "未核实"], ["终止日期", o?.dates.effectiveUntil.value ? dateLabel(o.dates.effectiveUntil) : "未核实"],
+          ["政策状态", ({ unknown: "未核实", draft: "草案", adopted: "已通过", repealed: "已废止", superseded: "被替代" } as Record<string, string>)[o?.policyStatus ?? "unknown"]],
+          ["适用区域", o?.scope.regions.join("、") || "未核实"], ["鱼种", o?.scope.species.join("、") || "未核实"], ["船旗 / 活动", `${o?.scope.flags.join("、") || "未核实"} / ${o?.scope.activities.join("、") || "未核实"}`],
         ]} />{o?.policyContext && <p className="mt-4 rounded-control bg-amber/10 p-3 text-[12.5px] text-ink-2">生效状态：{o.policyContext.entryIntoForce}；异议截止：{dateLabel(o.policyContext.objectionDeadline)}，不是生效日。条款年份：{o.policyContext.provisionYears.join("、") || "未知"}；原文提及不适用：{o.policyContext.nonApplicationMentioned.join("、") || "未知"}。</p>}</Card>
         <Card title="摘要与提取文本"><p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-ink-2">{o?.summaryZh ?? "尚无摘要"}</p>
           <p className="mt-4 text-[12px] text-ink-4">来源原文通过上方链接查看；下方只显示已存的纯文本，不执行原始HTML。</p>
@@ -79,7 +81,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
         </Card>
         <Card title="原件与附件证据"><KV items={[["原件HTTP", c?.httpStatus ?? "未记录"], ["解析状态", c?.parseStatus ?? "未记录"], ["解析器版本", c?.parser ?? "未记录"],
           ["原件SHA-256", <code className="break-all text-[11.5px]">{o?.rawSha256 ?? "未知"}</code>], ["文本SHA-256", <code className="break-all text-[11.5px]">{c?.bodySha256 ?? "无已核验文本"}</code>],
-          ["附件HTTP / 页数", `${c?.attachmentHttpStatus ?? "未记录"} / ${c?.attachmentPages ?? "未记录"}`], ["附件SHA-256", <code className="break-all text-[11.5px]">{c?.attachmentSha256 ?? "未记录"}</code>]]} />
+          ["附件HTTP / 页数", c?.attachmentUrl?`${c.attachmentHttpStatus ?? "未记录"} / ${c.attachmentPages ?? "未核实"}`:"不适用（未关联附件）"], ["附件SHA-256", <code className="break-all text-[11.5px]">{c?.attachmentSha256 ?? "未记录"}</code>]]} />
           <ul className="mt-4 space-y-3">{o?.evidence.map((e, i) => <li key={i} className="min-w-0 rounded-control bg-bg-sunk/60 p-3 text-[12px]"><a href={e.url} target="_blank" rel="noreferrer" className="break-all text-accent">{e.url}</a><p className="mt-1">页码 {e.page ?? "未定位"} · {e.section ?? "未标注章节"}</p><code className="mt-1 block break-all text-[11px] text-ink-3">{e.sha256}</code></li>)}</ul>
           <p className="mt-3 text-[12px] text-ink-4">哈希与收据不是远端签名。正文、附件、解析器或来源许可版本变化后，旧审核不能继续放行。</p>
         </Card>

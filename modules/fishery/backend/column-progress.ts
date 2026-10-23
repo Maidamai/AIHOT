@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import { batchIdSchema, batchRoot, collectColumns, readBatch, type ColumnBatch, type ColumnFetcher } from "./column-batches.ts";
-import { COLUMNS, columnIdSchema, columnPageIndex, type ColumnId } from "./official-columns.ts";
+import { COLUMNS, isNewsColumn, columnIdSchema, columnPageIndex, type ColumnId } from "./official-columns.ts";
 import { linkSchema } from "../contracts.ts";
 import { sha256 } from "./source-adapters.ts";
 
@@ -30,7 +30,7 @@ const root=(dataDir:string)=>path.resolve(dataDir,"fishery-column-progress");
 const stateFile=(dataDir:string,column:ColumnId)=>path.join(root(dataDir),`${column}.json`);
 const equal=isDeepStrictEqual;
 const serial=(value:unknown)=>JSON.stringify(value,null,2)+"\n";
-const profile=(column:ColumnId)=>sha256(JSON.stringify({column:COLUMNS[column],selection:"official-dwf-title-and-body/v1",pagination:"inspected-pagination/v1"}));
+const profile=(column:ColumnId)=>sha256(JSON.stringify({column:COLUMNS[column],selection:isNewsColumn(column)?"official-current-list-body/v2":"official-dwf-title-and-body/v1",pagination:isNewsColumn(column)?"latest-list-incremental/v2":"inspected-pagination/v1"}));
 export const initialColumnProgress=(column:ColumnId):ColumnProgress=>({version:"fishery-column-progress/1",column,profileHash:profile(column),revision:0,cycle:0,cursorUrl:COLUMNS[column].url,completedUrls:[],pendingUrls:[],health:null});
 async function exists(file:string) {try {await stat(file);return true;} catch(error) {if((error as NodeJS.ErrnoException).code==="ENOENT") return false;throw error;}}
 async function atomic(file:string,value:unknown,guard?:()=>Promise<void>,beforeRename?:()=>Promise<void>) {
@@ -63,12 +63,16 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   next.completedUrls=[...new Set([...next.completedUrls,...succeeded.map(i=>i.url)])];
   if(next.completedUrls.length>4096) throw new Error("Cycle identity bound reached; preserve state for operator inspection");
   // An old pending identity disappearing from the new list is unavailable, never a confirmed withdrawal.
-  const unresolvedOld=current.pendingUrls.filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
+  const unresolvedOld=isNewsColumn(current.column)?[]:current.pendingUrls.filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
   next.pendingUrls=[...new Set([...(source.remaining??current.pendingUrls),...unresolvedOld])];
   const error=source.error??(unresolvedOld.length?"Pending identities disappeared from the observed list; inspect without declaring withdrawal":null);
   let coverage:z.infer<typeof healthSchema>["coverage"]="blocked";
   if(!error&&!failed.length&&source.pagination) {
-    if(next.pendingUrls.length) coverage=source.pagination.scope==='verified_pagination'?"more_pages":source.pagination.scope;
+    if(isNewsColumn(current.column)) {
+      next.cursorUrl=COLUMNS[current.column].url;
+      coverage="current_page_only";
+    }
+    else if(next.pendingUrls.length) coverage=source.pagination.scope==='verified_pagination'?"more_pages":source.pagination.scope;
     else if(source.pagination.nextUrl) {next.cursorUrl=source.pagination.nextUrl;coverage="more_pages";}
     else {
       coverage=source.pagination.scope==="verified_pagination"?"cycle_complete":source.pagination.scope;

@@ -10,7 +10,7 @@ import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
 import { readFile, access, chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence, titlePriority } from "../backend/official-columns.ts";
+import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence } from "../backend/official-columns.ts";
 import { batchRoot, collectColumns, listBatches, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
 import { importBatch } from "../backend/import-batch.ts";
 import { config } from "@aihot/backend/config";
@@ -50,7 +50,7 @@ test('Fujian notices fail closed on unsupported, scanned, missing, spoofed and i
  const x=prepareNotice({...receipt,sha256:sha256(xraw)},xraw,[{receipt:{...pr,requestedUrl:xurl,finalUrl:xurl,sha256:sha256(xbytes)},bytes:xbytes}]);
  assert.equal(x.sourceCapture.noticeContext!.attachments[0].format,'office_zip');assert.equal(x.body,null);
  const neutral=prepareNotice(receipt,raw,[{receipt:pr,bytes:f.pdf,parsed:{...parsed,pages:1,text:'--- Page 1 ---\n普通近岸养殖技术安排。'}}]);
- assert.equal(neutral.readyForReview,false,'Copied landing title and attachment label cannot prove DWF relevance');
+ assert.equal(neutral.readyForReview,true,'Complete body is a candidate, not approval');assert.equal(neutral.relevance.decision,'not_proven');
  const mixed=prepareNotice(receipt,raw,[{receipt:pr,bytes:f.pdf,parsed:{...parsed,text:'--- Page 1 ---\n远洋渔业正文\n--- Page 2 ---\n'}}]);assert.equal(mixed.body,null,'Textless pages cannot silently stand for scanned pages');assert.match(mixed.warnings.join(';'),/textless/);
  const n=neutral.sourceCapture.noticeContext!;assert.equal(noticeAttachmentChanged(n,{...n,pageTextSha256:sha256('changed actual landing body'),attachments:n.attachments.map(a=>({...a,httpStatus:404,sha256:sha256('404')}))}),true,'Verified 200 page-body changes invalidate old evidence independently of attachment unavailability');
  assert.throws(()=>noticePage(Buffer.from(f.landing('https://example.org/P0202507289.pdf')),f.url),/origin/);
@@ -292,19 +292,18 @@ test("inspected pagination is bounded to official identities and unverified Fuji
   assert.throws(()=>discoverColumnPagination("iotc",'<ul class="pager"><li class="pager-last"><a href="/cmms/basic?page=10">last</a></li></ul>'),/omits or contradicts/);
 });
 
-test("bounded rounds reach the sixth ready article and a second-page addition then revisit seen bodies",async()=>{
-  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-")),called:string[]=[];let changed=false;
-  const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url||url===COLUMNS.moa.url+"index_1.htm";
-    return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(url===COLUMNS.moa.url?roundListing([1,2,3,4,5,6],0,2):roundListing([7],1,2)):roundArticle(Number(/_(\d+)\.htm$/.exec(url)![1])-99000,changed),headers:{get:()=>"text/html"}};};
+test("news rounds revisit the latest list, reach pending sixth and prioritize new messages without walking history",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-")),called:string[]=[];let added=false;
+  const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url;
+    return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing(added?[7,1,2,3,4,5,6]:[1,2,3,4,5,6],0,2)):roundArticle(Number(/_(\d+)\.htm$/.exec(url)![1])-99000),headers:{get:()=>"text/html"}};};
   const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:5,maxPages:2,fetch,wait:async()=>{}});
   try {
-    const first=await run("sixth-first");assert.equal(first.sources[0]!.after!.pendingUrls.length,1);assert.equal(first.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);
-    const before=called.length,second=await run("sixth-second"),fresh=called.slice(before);
-    assert.ok(fresh.includes(roundUrl(6))&&fresh.includes(roundUrl(7)));assert.ok(!fresh.includes(roundUrl(1)),"Saved successful identities do not monopolize the next bounded round");
-    assert.equal(second.sources[0]!.after!.cycle,1);assert.equal(second.sources[0]!.health!.coverage,"cycle_complete");
-    changed=true;await run("sixth-revisit");
-    const a=await readBatch(dataDir,"sixth-first-moa-p0"),b=await readBatch(dataDir,"sixth-revisit-moa-p0");
-    assert.notEqual(a.items[0]!.prepared!.sourceCapture.bodySha256,b.items[0]!.prepared!.sourceCapture.bodySha256,"New cycle recaptures changed seen URLs for the normal invalidation path");
+    const first=await run("news-first");assert.equal(first.sources[0]!.after!.pendingUrls.length,1);
+    added=true;const before=called.length,second=await run("news-second"),fresh=called.slice(before);
+    assert.deepEqual(fresh.filter(u=>/t2026/.test(u)),[roundUrl(7),roundUrl(6)]);
+    assert.equal(second.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.equal(second.sources[0]!.health!.coverage,"current_page_only");
+    assert.ok(!called.some(u=>u.endsWith('index_1.htm')));
+    const n=called.length;await run("news-unchanged");assert.equal(called.length-n,2,'Unchanged lists read robots and list only');
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
@@ -316,7 +315,7 @@ test("failed articles keep the cursor and pending identity while successful capt
     const a=await collectColumnRound({id:"failure-a",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
     assert.equal(a.outcome,"partial");assert.equal(a.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.deepEqual(a.sources[0]!.after!.pendingUrls,[roundUrl(1)]);assert.equal(a.sources[0]!.health!.lastSuccessAt,null);
     fail=false;articles.length=0;const b=await collectColumnRound({id:"failure-b",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
-    assert.deepEqual(articles,[roundUrl(1)]);assert.equal(b.sources[0]!.after!.cursorUrl,COLUMNS.moa.url+"index_1.htm");
+    assert.deepEqual(articles,[roundUrl(1)]);assert.equal(b.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);
     assert.equal((await readBatch(dataDir,"failure-a-moa-p0")).items[0]!.state,"failed","Failed evidence remains unchanged");
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
@@ -450,17 +449,16 @@ function columnHtml(body="明确推进远洋渔业和南极磷虾产业合规发
 }
 const columnReceipt=(body:Buffer,url=columnUrl,status=200)=>({requestedUrl:url,finalUrl:url,status,finishedAt:"2026-10-20T00:00:00Z",sha256:sha256(body)});
 
-test("official discovery reads present column identities and excludes domestic contract performance",()=>{
+test("official discovery preserves latest list order without title keyword rejection",()=>{
   const html=`<ul class="xw-list-1 gl_list"><li><a href="${columnUrl}">远洋渔业新材料</a><span>2026-05-19</span></li><li><a href="${columnUrl.replace("7149775","9999999")}">近海养殖合同履约</a></li><li><a href="https://example.org/t20260519_1.htm">公海</a></li><li><a href="${columnUrl}">重复</a></li></ul>`;
   const result=discoverColumn("fujian",html);
-  assert.equal(result.listed,2);assert.equal(result.rejected,1);assert.equal(result.candidates.length,1);
+  assert.equal(result.listed,2);assert.equal(result.rejected,0);assert.equal(result.candidates.length,2);
   assert.equal(result.candidates[0]!.url,columnUrl);assert.equal(result.candidates[0]!.listDate,"2026-05-19");
-  assert.equal(titlePriority("近海养殖合同履约"),null);
   const long="中性背景文字".repeat(150)+"公海渔业治理证据";
   assert.ok(relevanceEvidence(long)[0]!.includes("公海渔业治理证据"));
 });
 
-test("cooperation and fisheries safety titles retrieve context but need explicit DWF body evidence",()=>{
+test("complete bodies enter review without title or body keyword approval",()=>{
   // Two inspected official titles and short paragraph-4 excerpts reproduce the missed retrievals.
   const cases=[
     {url:"https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202610/t20261018_7237949.htm",date:"2026-10-19",title:"推进建设21世纪海上丝绸之路高质量发展：国际友城与海洋经济合作研讨会在福州举办",body:"主题发言阶段，新加坡青年海运协会主席周毅恩、摩洛哥国家渔业研究所水产品增值与技术专业中心主任玛丽亚姆・哈鲁比、印中商务中心董事长韩煦雅、福州宏龙海洋水产有限公司副总经理齐琤，围绕海运人才交流、蓝色技术走廊、印尼海洋经济与中印尼海洋产业合作机遇、远洋渔业发展等主题分享实践经验，为海洋经济合作建言献策。",evidence:"远洋渔业发展"},
@@ -471,19 +469,14 @@ test("cooperation and fisheries safety titles retrieve context but need explicit
   const article=(title:string,body:string,date="2026-10-20")=>Buffer.from(`<meta name="ArticleTitle" content="${title}"><meta name="PubDate" content="${date}"><div id="detailCont"><p>${body}</p></div>`);
   for(const c of cases){
     const raw=article(c.title,c.body,c.date),result=prepareColumnArticle("fujian",columnReceipt(raw,c.url),raw,"archive_replay");
-    assert.equal(titlePriority(c.title),"context");assert.equal(result.readyForReview,true);
     assert.equal(result.relevance.decision,"candidate");assert.ok(result.relevance.evidence.some(e=>e.includes(c.evidence)));
     assert.equal(result.dates.published.value,c.date);assert.equal(result.dates.effectiveFrom.precision,"unknown");
   }
-  assert.equal(titlePriority("全省渔业安全生产检查工作部署"),"context");
   const excludedTitles=["全省海洋经济高质量发展大会","近海养殖合同履约","水产养殖安全生产培训","海洋经济合作与近海养殖交流"];
-  for(const title of excludedTitles){
-    assert.equal(titlePriority(title),null,title);
-  }
   // A matching context title cannot upgrade ordinary coastal safety/cooperation text.
   for(const title of [cases[0]!.title,cases[1]!.title,"全省渔业安全生产检查工作部署",...excludedTitles]){
     const raw=article(title,"此次检查聚焦近海渔船安全生产，核查救生消防设备、进出港报告和船员培训情况，要求整改隐患，提升沿海渔港应急处置能力。"),result=prepareColumnArticle("fujian",columnReceipt(raw),raw);
-    assert.equal(result.sourceCapture.parseStatus,"parsed");assert.equal(result.readyForReview,false);
+    assert.equal(result.sourceCapture.parseStatus,"parsed");assert.equal(result.readyForReview,true);
     assert.equal(result.relevance.decision,"not_proven");assert.deepEqual(result.relevance.evidence,[]);
   }
 });

@@ -1,3 +1,4 @@
+import { loadPool } from "@aihot/backend/publication/pool";
 import { publicationQueue } from "../backend/publication-queue.ts";
 import {noticeFixture} from './fixtures.ts';
 
@@ -91,12 +92,12 @@ test('two dispatchers on the same approved snapshot create one task, queue job a
   await boss.cancel(flowQueue.name,jobs[0].id);
  }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
 });
-function selectionMock(body:string,sends:string[],options:{label?:string;failSecond?:()=>boolean;after?:(stage:string)=>Promise<void>;missingEvidence?:boolean}={}){
+function selectionMock(body:string,sends:string[],options:{label?:string;failSecond?:()=>boolean;after?:(stage:string)=>Promise<void>;missingEvidence?:boolean;score?:number}={}){
  return async(q:any)=>{
   const stage=q.purpose==='prefilter_article'?'prefilter':q.purpose==='score_article'?q.subject.includes(':score-1:')?'score-1':'score-2':q.purpose==='fishery_draft'?'generation':'review';
   if(stage==='score-2'&&options.failSecond?.())throw new Error('Synthetic second score before response');
   const e=['p1s1'],u={date:{precision:'unknown',value:null},evidence:[]};
-  const data=stage==='prefilter'?{label:options.label??'PASS',reason:'Synthetic relevant original'}:stage.startsWith('score-')?{attentionScore:95}:stage==='generation'?{
+  const data=stage==='prefilter'?{label:options.label??'PASS',reason:'Synthetic relevant original'}:stage.startsWith('score-')?{attentionScore:options.score??95}:stage==='generation'?{
    relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:options.missingEvidence?'原文没有这个数字9999。':body,evidence:e}],
    dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]
   }:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound source',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
@@ -155,6 +156,8 @@ test('selection BLOCK and UNKNOWN stop scores; high score cannot bless a fact wi
   const d=await selectionFixture(n),sends:string[]=[],result=await runFlow(d.task.id,selectionMock(d.body,sends,{label}));
   assert.equal(result.status,'needs_evidence');assert.deepEqual(sends,['prefilter']);assert.equal(result.selection.outcome.label,label);assert.equal(result.internalArticle,null);assert.equal(await flowRequiredCalls(d.task.id),0);
  }
+ const low=await selectionFixture(68),lowSends:string[]=[],lowResult=await runFlow(low.task.id,selectionMock(low.body,lowSends,{score:10}));
+ assert.equal(lowResult.status,'needs_evidence');assert.deepEqual(lowSends,['prefilter','score-1','score-2']);assert.equal(lowResult.draft,null);assert.match(lowResult.error.reason,/BELOW_VALUE_THRESHOLD/);assert.equal(await flowRequiredCalls(low.task.id),0);
  const bad=await selectionFixture(66),paid:string[]=[],result=await runFlow(bad.task.id,selectionMock(bad.body,paid,{missingEvidence:true}));
  assert.equal(result.status,'failed');assert.equal(result.stage,'generation');assert.equal(result.selection.outcome.attentionCandidate,true);assert.equal(result.internalArticle,null);
  await assert.rejects(decideFlow(bad.task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'High scores do not prove facts'},'tester'),/相关性|Review|review/);
@@ -253,7 +256,7 @@ const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { r
 async function automaticFixture(number:number){
   const body='合成公海远洋渔业事实，仅供自动派发离线测试。',url=`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto${number}.htm`;
   const doc=await importCapturedMaterial({id:'moa',...COLUMNS.moa},url,{...observationFixture,language:'zh',sourceCapture:{adapter:'moa',sourceUrl:url,capturedAt:'2026-10-21T08:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
-  await upsertMaterial({sourceId:'fishery-column-moa',url:`https://example.org/auto-body-${number}`,title:'Synthetic automatic source',bodyText:body,bodyStatus:'ok',via:'fishery-mock',raw:{fisheryDocumentId:doc.id}});
+  await upsertMaterial({sourceId:'fishery-column-moa',url:`https://example.org/auto-body-${number}`,title:'Synthetic automatic source',publishedAt:new Date(),bodyText:body,bodyStatus:'ok',via:'fishery-mock',raw:{fisheryDocumentId:doc.id}});
   return {...doc,body};
 }
 const autoPolicy=(documentIds?:string[])=>({enabled:true,sourceId:'fishery-column-moa',createdAfter:'2026-10-21T00:00:00Z',...documentIds?{documentIds}:{}});
@@ -264,7 +267,7 @@ test('automatic dispatch waits for ordinary material approval, deduplicates queu
   let sends=0;
   const invoke=async(options:any)=>{
     const e=['p1s1'],u={date:{precision:'unknown',value:null},evidence:[]};
-    const data=options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:d.body,evidence:e}],dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound original',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
+    const data=options.purpose==='prefilter_article'?{label:'PASS',reason:'Synthetic source'}:options.purpose==='score_article'?{attentionScore:90}:options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:d.body,evidence:e}],dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound original',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
     const r=await paidRequest({service:'auto-local-mock',model:'mock',purpose:options.purpose,subject:options.subject,identity:{promptVersion:options.promptVersion,system:options.system,user:options.user},attemptTag:options.attemptTag},async()=>{sends++;return {response:data};});
     return {data:options.schema.parse(r.response),receiptId:r.receiptId,reused:r.reused,model:'mock',usage:null};
   };
@@ -280,10 +283,16 @@ test('automatic dispatch waits for ordinary material approval, deduplicates queu
     process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL='https://api.deepseek.com';process.env.LLM_REASONING_TOKENS='0';process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';config.modelCallsEnabled=true;
     await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
     lease=await acquireProcessingLease();await lease.run(()=>runQueuedFlows([job!.data],invoke));
-    let detail=await flowDetail(task.id);assert.equal(detail.status,'needs_human_review');assert.equal(detail.internalArticle,null);assert.equal(sends,2);
-    await lease.run(()=>runQueuedFlows([job!.data],invoke));assert.equal(sends,2,'Redelivery cannot start a second paid attempt');
+    let detail=await flowDetail(task.id);assert.equal(detail.status,'needs_human_review');assert.equal(detail.internalArticle,null);assert.equal(sends,5);
+    await lease.run(()=>runQueuedFlows([job!.data],invoke));assert.equal(sends,5,'Redelivery cannot start a second paid attempt');
+    const [core]=await sql`SELECT id FROM articles WHERE raw->>'fisheryDocumentId'=${d.id}`;
+    await sql`UPDATE articles SET url=${`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto1.htm`},raw=jsonb_set(raw,'{mode}','"verified-news-candidate"') WHERE id=${core.id}`;
     await decideFlow(task.id,{decision:'qualified',snapshotHash:detail.snapshotHash,note:'Synthetic explicit final approval'},'authorized-agent:test-final');
-    detail=await flowDetail(task.id);assert.ok(detail.internalArticle);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,2);
+    const linked=(await syncFisheryPublications('synthetic-news-final')).rows.find(r=>r.itemId===d.id)!;
+    assert.equal(linked.articleId,core.id,'Publication must reuse the exact news material identity');
+    assert.equal((await loadItemDetail(core.id)).kind,'found');
+    assert.ok((await loadPool({channel:'all',category:null,tag:null,includeBackfill:false})).items.some(i=>i.id===core.id));
+    detail=await flowDetail(task.id);assert.ok(detail.internalArticle);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,5);
     await boss.cancel(flowQueue.name,jobId);
   }finally{
     await lease?.release();config.modelCallsEnabled=enabled;keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});
@@ -1214,7 +1223,7 @@ test("human revision preserves received provenance, saves without calls and only
 });
 
 
-test("a verified irrelevant recapture supersedes qualified evidence while 404 and timeout only record unavailability",async()=>{
+test("verified body changes invalidate old approval; keyword absence still enters prefilter and outages retain evidence",async()=>{
   const url="https://yyj.moa.gov.cn/gzdt/202610/t20261020_99821.htm",newUrl=url.replace("99821","99822"),fact="远洋渔业公海履约管理措施已经公布。";
   const relevant=`<p>${fact}</p><p>本材料用于离线采集回归，全部请求由本地合成数据提供，第二段保留完整上下文供审核。</p>`,nearshore="近海养殖场开展池塘设备维护培训。参加人员学习饲料管理、车间清洁和水质监测。本地课程安排另行公布。";
   const capture=async(id:string,target:string,mode:"relevant"|"irrelevant"|"404"|"timeout")=>collectColumns({id,dataDir:config.dataDir,columns:["moa"],limit:1,wait:async()=>{},fetch:async request=>{
@@ -1227,8 +1236,10 @@ test("a verified irrelevant recapture supersedes qualified evidence while 404 an
   await approve(id,1,source!.revision);
   const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
   const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"Synthetic public-sea source evidence",evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",organizations:[],locations:[],uncertainties:[]}:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic source sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevance",evidence}]}),receiptId:999999,model:"mock",reused:false,usage:null});
-  const task=await createFlow(id,{identity:"before-irrelevant-recapture"},"tester"),checked=await runFlow(task.id,invoke);
+  const task=await createFlow(id,{identity:"before-irrelevant-recapture"},"tester"),checked=await runFlow(task.id,async(options:any)=>options.purpose==='prefilter_article'||options.purpose==='score_article'?({data:options.schema.parse(options.purpose==='prefilter_article'?{label:'PASS',reason:'Synthetic relevant original'}:{attentionScore:95}),receiptId:options.subject.includes(':score-2:')?999998:999997,model:'mock',reused:false,usage:null}):invoke(options));
   assert.equal(checked.status,"needs_human_review");await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic original snapshot approved"},"reviewer");
+  await syncFisheryPublications("tester");
+  const [coreBefore]=await sql`SELECT id,revision FROM articles WHERE source_id='fishery-column-moa' AND url=${url} AND raw->>'mode'='verified-news-candidate'`;
   assert.equal((await readerItem(id)).id,id);
   const original=await documentHistory(id),oldCapture=original.observations[0]!.payload.sourceCapture,oldBody=await readCapturedText(config.dataDir,oldCapture.archiveId,oldCapture.bodySha256);
   for(const mode of ["404","timeout"] as const) {
@@ -1240,20 +1251,21 @@ test("a verified irrelevant recapture supersedes qualified evidence while 404 an
     assert.doesNotMatch(audit!.after.reason,/awaiting material review/);
     if(mode==="timeout") assert.match(audit!.after.reason,/timeout/);
   }
-  const recaptured=await capture("recapture-current-irrelevant",url,"irrelevant");assert.equal(recaptured.items[0]!.state,"irrelevant");
+  const recaptured=await capture("recapture-current-irrelevant",url,"irrelevant");assert.equal(recaptured.items[0]!.state,"ready");
   const update=await importBatch(recaptured.id,"tester");
-  assert.deepEqual(update.rows,[],"Irrelevant updates cannot seed processing tasks");
+  assert.equal(update.rows[0]!.id,id,"Verified body changes reuse the same document");
+  const [coreAfter]=await sql`SELECT id,revision,body_text FROM articles WHERE id=${coreBefore.id}`;assert.ok(coreAfter.revision>coreBefore.revision);assert.equal(coreAfter.body_text,nearshore);
   const history=await documentHistory(id);assert.equal(history.observations.length,2);assert.equal(history.observations[1]!.revision,2);assert.equal(history.reviews.length,1);
-  const latest=history.observations[1]!.payload;assert.match(latest.summaryZh,/未提供明确远洋/);assert.equal(await readCapturedText(config.dataDir,latest.sourceCapture.archiveId,latest.sourceCapture.bodySha256),nearshore);
+  const latest=history.observations[1]!.payload;assert.match(latest.summaryZh,/待人工核对原文/);assert.equal(await readCapturedText(config.dataDir,latest.sourceCapture.archiveId,latest.sourceCapture.bodySha256),nearshore);
   assert.equal(await readCapturedText(config.dataDir,oldCapture.archiveId,oldCapture.bodySha256),oldBody,"The previous source archive is retained");
   const stale=await flowDetail(task.id);assert.equal(stale.stale,true);assert.equal(stale.internalArticle,null);await assert.rejects(readerItem(id),/No current/);
   const [trace]=await sql`SELECT after FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`;
-  assert.equal(trace!.after.outcome,"irrelevant");assert.equal(trace!.after.relevance.decision,"not_proven");
-  assert.match(trace!.after.reason,/No explicit DWF evidence/);assert.doesNotMatch(trace!.after.reason,/No verified source body/);
+  assert.equal(trace!.after.outcome,"ready");assert.equal(trace!.after.relevance.decision,"not_proven");
+  assert.match(trace!.after.reason,/No explicit DWF retrieval cue/);assert.doesNotMatch(trace!.after.reason,/No verified source body/);
   await importBatch(recaptured.id,"tester");assert.equal((await documentHistory(id)).observations.length,2);
   assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`fishery:${id}`} AND action='fishery.acquisition' AND after->>'batchId'=${recaptured.id}`)[0]!.n,1,"Reimporting the same archive does not fabricate another acquisition");
   const newIrrelevant=await capture("recapture-new-irrelevant",newUrl,"irrelevant");await importBatch(newIrrelevant.id,"tester");
-  assert.equal((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${newUrl}`).length,0,"A new irrelevant URL is not registered as a fishery material");
+  assert.equal((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${newUrl}`).length,1,"Complete bodies await relevance review; keywords never approve or reject them");
 });
 
 test("synthetic interrupted-before-request reconciliation is leased, fingerprinted, zero-call and preserves saved generation",async()=>{
@@ -1740,7 +1752,7 @@ async function archiveFixture(){
 async function dueArchive(){await sql`UPDATE settings SET value=jsonb_set(value,'{nextAt}',${sql.json('2020-01-01T00:00:00.000Z')}) WHERE key=${ARCHIVE_KEY}`;await sql`UPDATE sources SET next_fetch_at='2020-01-01' WHERE id=${bridgeSource}`;}
 async function testArchiveBoss(){const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'archive_test_boss',schedule:false,supervise:false});b.on('error',()=>{});await b.start();await b.createQueue(ARCHIVE_QUEUE,{policy:'short',retryLimit:0});return b;}
 async function claimArchive(b:PgBoss,revision:string){const claimed=await archiveTick(b,revision);assert.ok('roundId' in claimed);await b.fetch(ARCHIVE_QUEUE);await b.complete(ARCHIVE_QUEUE,(claimed as {jobId:string}).jobId);return {revision,roundId:(claimed as {roundId:string}).roundId};}
-test('continuous archive imports five then sixth as pending without core content, model, publication or paid queue side effects',async()=>{
+test('continuous news imports five then sixth into core material without approval, model or publication',async()=>{
   await archiveFixture();const b=await testArchiveBoss();let gets=0;
   const mock:import('../backend/column-batches.ts').ColumnFetcher=async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([1,2,3,4,5,6]):archiveBody(Number(/_(\d+)\.htm/.exec(url)![1])-97000)};};
   const [before]=await sql`SELECT (SELECT count(*) FROM articles) AS articles,(SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_reviews) AS reviews,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_flow_tasks) AS flows`;
@@ -1753,7 +1765,7 @@ test('continuous archive imports five then sixth as pending without core content
     s=await archiveStatus();assert.equal(s.validationClaimed,2);assert.match(s.pausedReason!,/two-round/);assert.equal(s.pendingCandidates,0);
     await dueArchive();assert.ok('skipped' in await archiveTick(b,c.revision));assert.equal(gets,n+3);
     const docs=await sql`SELECT d.id,o.revision,r.id AS review FROM fishery_documents d JOIN fishery_observations o ON o.document_id=d.id LEFT JOIN fishery_reviews r ON r.document_id=d.id WHERE d.canonical_url=${archiveUrl(6)}`;assert.equal(docs.length,1);assert.equal(docs[0].revision,1);assert.equal(docs[0].review,null);
-    const [after]=await sql`SELECT (SELECT count(*) FROM articles) AS articles,(SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_reviews) AS reviews,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_flow_tasks) AS flows`;assert.deepEqual(after,before);
+    const [after]=await sql`SELECT (SELECT count(*) FROM articles) AS articles,(SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_reviews) AS reviews,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_flow_tasks) AS flows`;assert.equal(after.articles,before.articles+6);assert.deepEqual({...after,articles:before.articles},before);
     const bad=await sql`SELECT name FROM archive_test_boss.job WHERE name ~ 'analyze|translate|report|flow|publication'`;assert.equal(bad.length,0);
     const hourly=await configureArchive({enabled:true,mode:'hourly',runId:'hourly-followup'});assert.ok(Date.parse(hourly.nextAt!)>Date.now()+3500_000);
     await runArchiveJob(j2,{fetch:mock});assert.equal(gets,n+3);assert.ok('skipped' in await archiveTick(b,c.revision));

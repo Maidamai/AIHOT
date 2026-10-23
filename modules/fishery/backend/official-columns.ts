@@ -28,6 +28,8 @@ export const COLUMNS = {
 } as const;
 export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
+// News lists and regulatory inventories have different time semantics.
+export const isNewsColumn = (id: ColumnId) => id !== "npfc" && id !== "iotc";
 export interface ColumnPagination { pageUrl:string; pageIndex:number; nextUrl:string|null; totalPages:number|null; scope:"verified_pagination"|"current_page_only"|"pagination_unverified"; }
 export function columnPageIndex(id:ColumnId,input:string) {
   const url=new URL(input),base=new URL(COLUMNS[id].url);
@@ -68,16 +70,7 @@ export function discoverColumnPagination(id:ColumnId,html:string,pageUrl=COLUMNS
 export const unknownDate = () => ({ precision: "unknown" as const, value: null });
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 const direct = /远洋|公海|境外入渔|南极磷虾|国际渔业|IOTC|NPFC|SPRFMO|WCPFC|CCAMLR/i;
-const contextual = /渔业法|渔业发展|渔业支持|渔业委员会|渔业合作|涉渔船舶安全|渔业安全|海洋经济合作/;
-
 export interface Candidate { url: string; title: string; listDate: string | null; priority: "direct" | "context"; }
-export function titlePriority(title: string): Candidate["priority"] | null {
-  if (direct.test(title)) return "direct";
-  // Context only widens retrieval; the article body must still supply explicit DWF evidence.
-  if (/养殖|增殖放流|伏季休渔|近海|职工|党课|离退休/.test(title)) return null;
-  if (/海洋经济/.test(title) && !/海洋经济合作/.test(title)) return null;
-  return contextual.test(title) ? "context" : null;
-}
 
 export function discoverColumn(id: ColumnId, html: string): { candidates: Candidate[]; rejected: number; listed: number } {
   if (id === "iotc") return discoverIotc(html);
@@ -91,8 +84,9 @@ export function discoverColumn(id: ColumnId, html: string): { candidates: Candid
     try { url = new URL(href, column.url); } catch { continue; }
     if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname) || !/\/t\d{8}_\d+\.s?html?$/.test(url.pathname) || !linkSchema.safeParse(url.href).success || seen.has(url.href)) continue;
     seen.add(url.href); listed++;
-    const title = collapse(node.attr("title") || node.text()), priority = titlePriority(title)??(id==='fujian-notices'&&/强企惠渔|渔业.*(?:补助|补贴|资金|保险|条例)/.test(title)?'context':null);
-    if (!priority) { rejected++; continue; }
+    // Discover every article in list order. Relevance is decided from the complete body.
+    const title = collapse(node.attr("title") || node.text()), priority = "context" as const;
+    if (!title) { rejected++; continue; }
     const date = /\b\d{4}-\d{2}-\d{2}\b/.exec(node.closest("li").text())?.[0] ?? null;
     candidates.push({ url: url.href, title, listDate: date, priority });
   }
@@ -144,12 +138,12 @@ export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc"|'fujian
     }
   }
   const evidence = body ? relevanceEvidence(body) : [];
-  if (body && !evidence.length) warnings.push("No explicit DWF evidence in the article body; do not import as a DWF material");
+  if (body && !evidence.length) warnings.push("No explicit DWF retrieval cue; relevance requires full-body prefilter review");
   const capture = captureSchema.parse({ adapter: id, acquisitionMode, sourceUrl: receipt.finalUrl, capturedAt: receipt.finishedAt,
     httpStatus: receipt.status, rawSha256: sha256(raw), bodySha256: body ? sha256(body) : null,
     parser: `official-column/${id}/v1`, parseStatus, attachmentSha256: null,
     publishedAt, publicationLiteral, conflicts });
   return { title, body, dates: { published, event: unknownDate(), adopted: unknownDate(), effectiveFrom: unknownDate(), effectiveUntil: unknownDate() },
-    sourceCapture: capture, readyForReview: parseStatus === "parsed" && !!body && !!evidence.length,
+    sourceCapture: capture, readyForReview: parseStatus === "parsed" && !!body,
     relevance: { decision: evidence.length ? "candidate" as const : "not_proven" as const, method: "explicit_dwf_terms" as const, evidence }, warnings };
 }

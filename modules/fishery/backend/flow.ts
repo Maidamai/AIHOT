@@ -85,8 +85,10 @@ async function assertNoQueuedReplacement(documentId:string,db:Db) {
   if(queued) throw new Conflict(`Document task ${queued.id} is queued; explicitly reject it before creating a different candidate`);
 }
 export async function createFlow(documentId:string,raw:unknown,actor:string) {
-  // Opt-in only. Existing automatic dispatch and existing tasks retain their two-call pipeline.
+  // News candidates use the shared prefilter and scores; legacy references retain their existing task mode.
   const data=z.strictObject({identity,selection:z.boolean().default(false)}).parse(raw),current=await snapshot(documentId);
+  const [news]=await sql`SELECT id FROM articles WHERE raw->>'fisheryDocumentId'=${documentId} AND raw->>'mode'='verified-news-candidate' LIMIT 1`;
+  if(news)data.selection=true;
   return sql.begin(async tx=>{
     await lockDocument(tx,documentId);
     await assertDocumentSettled(documentId,tx);
@@ -162,7 +164,7 @@ export async function createHumanRevision(id:string,raw:unknown,actor:string) {
     if(same) return same;
     await assertNoQueuedReplacement(context.documentId,tx);
     const [parent]=await tx`SELECT selection,snapshot FROM fishery_flow_tasks WHERE id=${id}`;
-    if(parent?.selection&&parent.selection.outcome?.label!=='SCORED')throw new Conflict('Selection must complete before revising an article candidate');
+    if(parent?.selection&&(parent.selection.outcome?.label!=='SCORED'||!parent.selection.outcome.attentionCandidate))throw new Conflict('Selection must complete before revising an article candidate');
     if(parent?.selection&&hash(parent.snapshot)!==context.snapshotHash)throw new Conflict('Selection belongs to older evidence; a manual revision cannot inherit its scores');
     const [row]=await tx`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor,draft,selection) VALUES (${randomUUID()},${context.documentId},${data.identity},${tx.json(current.value)},'queued','review',${actor},${tx.json(JSON.parse(JSON.stringify(draft)))},${parent?.selection?tx.json(parent.selection):null}) RETURNING *`;
     await audit(actor,"fishery.flow.human_revision",`fishery:${context.documentId}`,data.reason,null,{id:row!.id,snapshotHash:context.snapshotHash,...provenance},{db:tx});
@@ -240,7 +242,7 @@ async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=fals
       const result=row.selection.results[step],receipt=receipts.find(r=>r.id===result?.receiptId&&r.subject===request.subject&&r.purpose===request.purpose);
       if(!receipt||!['received','completed'].includes(receipt.status)||!receipt.response)reasons.push('Prior selection stage lacks a reusable saved result');
     }
-    if(!isSelectionStage(row.stage)&&row.selection.outcome?.label!=='SCORED')reasons.push('Complete selection required before generation/review recovery');
+    if(!isSelectionStage(row.stage)&&(row.selection.outcome?.label!=='SCORED'||!row.selection.outcome.attentionCandidate))reasons.push('Complete selection required before generation/review recovery');
     if(isSelectionStage(row.stage)&&(row.draft||row.quality_review))reasons.push('Selection recovery cannot contain a later article candidate');
   }
   let reusableGenerationReceiptId:number|null=null;
@@ -429,12 +431,12 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
             });stage=next;receiptId=null;
           });
           state.outcome=outcome;
-          const stopped=outcome.label!=='SCORED';
+          const stopped=outcome.label!=='SCORED'||!outcome.attentionCandidate;
           stage=stopped?(outcome.label==='BLOCK'||outcome.label==='UNKNOWN'?'prefilter':String(stage)==='generation'?'score-2':stage):'generation';
-          await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(state)},stage=${stage},status=${stopped?'needs_evidence':'running'},error=${stopped?tx.json({code:'FISHERY_SELECTION_STOP',stage,phase:'selection',reason:outcome.label+'; selection is not fact approval',receiptId:null,noAutomaticRetry:true}):null},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);});
+          await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(state)},stage=${stage},status=${stopped?'needs_evidence':'running'},error=${stopped?tx.json({code:'FISHERY_SELECTION_STOP',stage,phase:'selection',reason:(outcome.label==='SCORED'?'BELOW_VALUE_THRESHOLD':outcome.label)+'; selection is not fact approval',receiptId:null,noAutomaticRetry:true}):null},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);});
           if(stopped)return;
         }
-        if(claimed.selection.outcome?.label!=='SCORED')throw new Conflict('Complete PASS and two independent scores required before article generation or review');
+        if(claimed.selection.outcome?.label!=='SCORED'||!claimed.selection.outcome.attentionCandidate)throw new Conflict('Complete PASS and two qualifying independent scores required before article generation or review');
       }
       if(draft?.provenance?.origin==="human_revision") {
         if(stage!=="review"||draft.provenance.candidateHash!==sha256(JSON.stringify(fisheryDraftSchema.parse(draft.draft)))) throw new Conflict("Human revision candidate hash or review-only stage changed");
@@ -514,7 +516,7 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
     if(data.snapshotHash!==hash(row.snapshot)) throw new Conflict("Review snapshot changed");
     if(row.status==="running") throw new Conflict("Running task must finish or be reconciled before a human decision");
     if(data.decision==="qualified") {
-      if(row.selection&&row.selection.outcome?.label!=='SCORED')throw new Conflict('Selection is incomplete; a high score never replaces evidence review');
+      if(row.selection&&(row.selection.outcome?.label!=='SCORED'||!row.selection.outcome.attentionCandidate))throw new Conflict('Selection is incomplete or below value threshold; scores never replace evidence review');
       const [latest]=await tx`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
       if(latest?.id!==id) throw new Conflict("A newer authoritative task supersedes this internal article");
       if(await currentMaterialDecision(row.document_id,tx)!=="approved") throw new Conflict("Current material observation and source revision must be approved; pending or rejected material blocks internal qualification");
@@ -537,6 +539,7 @@ export async function flowRequiredCalls(id:string) {
   const [task]=await sql`SELECT draft,stage,stage_requests,generation_attempt,review_attempt,selection FROM fishery_flow_tasks WHERE id=${id}`;
   if(!task) throw new NotFound("Flow not found");
   if(task.selection&&isSelectionStage(task.stage)&&task.selection.results.prefilter&&task.selection.results.prefilter.data.label!=='PASS')return 0;
+  if(task.selection?.outcome?.label==='SCORED'&&!task.selection.outcome.attentionCandidate)return 0;
   let calls=0;
   for(const stage of remainingStages(task)) {
     const attempt=stageAttempt(task,stage),bound=task.stage_requests[`${stage}:${attempt}`];

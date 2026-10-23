@@ -5,7 +5,7 @@ import type { ComponentProps, LoaderArgs, MetaFunction } from "@aihot/web/lib/ro
 import { AdminPage, Badge, Button, Card, Empty, Input, Select, Stat } from "@aihot/web/features/admin/ui";
 import { bj } from "@aihot/web/features/admin/format";
 import { MATERIAL_STATES, type Workbench } from "../ui-contracts.ts";
-import { acquisitionLabel, noStore, StateBadge, TrialNotice, useFreshMaterial } from "./shared.tsx";
+import { acquisitionLabel, dateLabel, noStore, StateBadge, TrialNotice, useFreshMaterial } from "./shared.tsx";
 
 export const headers = noStore;
 export const meta: MetaFunction = () => [{ title: `渔业素材 · ${SITE.name} 后台` }];
@@ -51,7 +51,7 @@ export default function Materials({ loaderData: data }: ComponentProps<typeof lo
     <Card pad={false} title={`材料列表 · 共 ${data.total} 条`} right={<span>第 {data.page} 页 · 每页 {data.limit} 条</span>}>
       {rows.length ? <ul className="divide-y divide-line">{rows.map(row => <li key={row.id} className="px-4 py-4 hover:bg-bg-sunk/40">
         <div className="flex flex-wrap items-start justify-between gap-2"><Link to={`/admin/fishery/${row.id}`} className="min-w-0 flex-1 break-words text-[14px] font-medium text-ink hover:text-accent">{row.title}</Link><StateBadge row={row} /></div>
-        <div className="mt-2 flex flex-wrap gap-1.5">{row.testOnly && <Badge tone="warn">合成许可 / 测试审批</Badge>}<Badge>观察 v{row.latest?.revision ?? 0} · 许可 v{row.source.revision}</Badge></div>
+        <div className="mt-2 flex flex-wrap gap-1.5">{row.testOnly && <Badge tone="warn">合成许可 / 测试审批</Badge>}<Badge>{row.timing?.kind==='news'?'近期资讯候选':'历史 / 日期待核参考'}</Badge><Badge>原文 {row.latest?dateLabel(row.latest.payload.dates.published):'未核实'}</Badge><Badge>观察 v{row.latest?.revision ?? 0} · 许可 v{row.source.revision}</Badge></div>
         <p className="mt-2 break-words text-[12.5px] text-ink-3">{row.issuer} · {row.latest?.payload.sourceCapture ? `${acquisitionLabel(row.latest.payload.sourceCapture.acquisitionMode)} · ${bj(row.latest.payload.sourceCapture.capturedAt, true)} 北京时间` : "未记录获取时间"}</p>
         <p className="mt-1 break-words text-[12px] text-ink-4">{row.blockers.length ? `不可导出：${row.blockers.map(b => b.message).join("；")}` : "可申请手动导出；提交时再次核对后端门禁"}</p>
       </li>)}</ul> : <Empty>当前条件下没有素材。调整关键词、状态或素材范围。</Empty>}

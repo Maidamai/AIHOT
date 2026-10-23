@@ -1,6 +1,7 @@
 import type { ReferenceMetadata } from "@aihot/contracts/site";
 import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { publicationDecisionCurrent, type PublicationJob } from "./publication-queue.ts";
+import { CATEGORIES } from "@aihot/industry/taxonomy";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
 import { beijingAt, beijingDate } from "@aihot/contracts/time";
 import type postgres from "postgres";
@@ -26,7 +27,7 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
     : await eligibleBusinessGuideItems(db, now, target?.id ?? null);
   return [
     ...articles.map(item => ({ kind: "article" as const, id: item.id, documentId: item.id, title: item.title,
-      summary: item.summary.map(s => s.sentence).join("\n"), category: item.category.id, tags: [], url: item.source.url,
+      summary: item.summary.map(s => s.sentence).join("\n"), category: item.category.id, tags: [CATEGORIES.find(c=>c.key===item.category.id)!.label], url: item.source.url,
       publicationTime: item.dates.published.precision === "day" ? item.dates.published.value : null,
       binding: hash({ task: taskBindings.get(item.id), title: item.title, source: item.source, category: item.category, summary: item.summary, dates: item.dates, verification: item.verification }) })),
     ...guides.map(item => {
@@ -117,7 +118,9 @@ export async function syncFisheryPublications(actor: string, now = new Date(), o
       const fresh = (await currentProjections(now, tx, { kind: projection.kind, id: projection.id }))[0];
       if (!fresh || fresh.binding !== projection.binding) return null;
       const [before] = await tx`SELECT * FROM fishery_publication_bindings WHERE kind=${projection.kind} AND item_id=${projection.id} FOR UPDATE`;
-      const material = await upsertMaterial({ sourceId: document.source_id, url: projection.url, title: projection.title,
+      const [news]=projection.kind==='article'?await tx`SELECT id AS "articleId" FROM articles
+        WHERE source_id=${document.source_id} AND url=${projection.url} AND raw->>'fisheryDocumentId'=${projection.documentId} AND raw->>'mode'='verified-news-candidate' ORDER BY discovered_at LIMIT 1`:[];
+      const material = news ?? await upsertMaterial({ sourceId: document.source_id, url: projection.url, title: projection.title,
         identityKey: `fishery-publication:${projection.kind}:${projection.id}`, language: "zh", publicationTime: projection.publicationTime,
         publishedAt: projection.publicationTime ? beijingAt(projection.publicationTime, "00:00") : null,
         bodyStatus: "none", via: "fishery-reviewed-publication", backfill: "reviewed-reference-archive",

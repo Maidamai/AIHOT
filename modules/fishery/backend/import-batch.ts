@@ -1,8 +1,8 @@
 import { withColumnLease } from "./column-lease.ts";
 import { config } from "@aihot/backend/config";
-import { COLUMNS } from "./official-columns.ts";
+import { COLUMNS, isNewsColumn } from "./official-columns.ts";
 import { readBatch, verifyBatchItem } from "./column-batches.ts";
-import { importCapturedMaterial,recordCapturedAcquisition } from "./store.ts";
+import { importCapturedMaterial,recordCapturedAcquisition,storeCapturedNews } from "./store.ts";
 import { sha256 } from "./source-adapters.ts";
 
 export async function importBatch(id:string,actor:string):Promise<Awaited<ReturnType<typeof importBatchContents>>> {
@@ -19,7 +19,7 @@ async function importBatchContents(id: string, actor: string) {
     try {return {item,result:await verifyBatchItem(config.dataDir,batch,item),error:null};}
     catch(error) {if(item.state==="ready") throw error;return {item,result:null,error:String((error as Error).message).slice(0,500)};}
   }));
-  const rows = [],evidenceUpdates = [],acquisitions = [];
+  const rows = [],evidenceUpdates = [],acquisitions = [],materials = [];
   for (const {item,result:r,error} of verified) {
     let confirmedChange=false;
     const capture = r?.sourceCapture;
@@ -37,7 +37,10 @@ async function importBatchContents(id: string, actor: string) {
         scope:{regions:[],species:[],flags:[],activities:[],unknownFields:["regions","species","flags","activities"]},
         evidence:"evidence" in r! ? r!.evidence : [{url:capture!.sourceUrl,sha256:capture!.rawSha256,page:null,section:"官方栏目正文；日期、地域及政策适用性待核"}],
       };
-      if(outcome==="ready") rows.push(await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,input,actor));
+      if(outcome==="ready") {
+        const row=await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,input,actor);rows.push(row);
+        if(isNewsColumn(item.column))materials.push(await storeCapturedNews(item.column,row.id,r!.body!,actor));
+      }
       else {
         const update=await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,input,actor,{existingOnly:true,...(!confirmedBody?{changedRequiredEvidenceOnly:true}:{})});
         if(update){evidenceUpdates.push(update);confirmedChange=!update.unchanged;}
@@ -52,5 +55,5 @@ async function importBatchContents(id: string, actor: string) {
   // Only ready imports can seed new processing tasks; irrelevant updates merely invalidate old evidence snapshots.
   const {dispatchAutomaticDocuments}=await import('./automatic-flows.ts');
   const automatic=await dispatchAutomaticDocuments(rows.map(row=>String(row.id)));
-  return { batchId:id,rows,evidenceUpdates,acquisitions,automatic,reviewState:"unreviewed",published:false };
+  return { batchId:id,rows,evidenceUpdates,acquisitions,materials,automatic,reviewState:"unreviewed",published:false };
 }

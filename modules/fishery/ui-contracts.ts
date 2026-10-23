@@ -11,6 +11,7 @@ export interface MaterialSource {
 export interface MaterialObservation { revision: number; observedAt: string; actor: string; contentHash: string; payload: Observation; }
 export interface MaterialReview { revision: number; sourceRevision: number; decision: "approved" | "rejected"; note: string; actor: string; reviewedAt: string; applicabilityReviewed: boolean; }
 export interface MaterialRow {
+  timing?:{kind:'reference'|'news';publishedAt:string|null;discoveredAt:string;reason:string|null};
   id: string; sourceId: string; title: string; issuer: string; sourceAttribution:string;legacyIssuerMeaning:"source_attribution_only";canonicalUrl: string; documentNumber: string | null;
   articleId: string | null; withdrawnReason: string | null; source: MaterialSource; latest: MaterialObservation | null;
   review: MaterialReview | null; state: MaterialState; blockers: Blocker[]; testOnly: boolean;

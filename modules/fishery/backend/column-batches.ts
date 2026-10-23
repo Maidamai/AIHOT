@@ -5,7 +5,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { guardedFetch } from "@aihot/backend/lib/http-fetch";
-import { COLUMNS, columnIdSchema, columnPageIndex, discoverColumn, discoverColumnPagination, prepareColumnArticle, type ColumnId, type ColumnPagination } from "./official-columns.ts";
+import { COLUMNS, isNewsColumn, columnIdSchema, columnPageIndex, discoverColumn, discoverColumnPagination, prepareColumnArticle, type ColumnId, type ColumnPagination } from "./official-columns.ts";
 import { archiveReceiptSchema, sha256, type PdfText } from "./source-adapters.ts";
 import { assertIotcRobots, discoverIotc, iotcAttachment, prepareIotc } from "./iotc-columns.ts";
 import { extractPdf } from "./pdf-text.ts";
@@ -303,11 +303,16 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || ((column === "iotc"||column==='npfc') && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
       if(options.page&&listing.receipt.finalUrl!==listingUrl) throw new Error("Incremental listing redirected to a different page");
       const html=new TextDecoder("utf8", { fatal: true }).decode(listing.body),discovered = discoverColumn(column, html);
-      if(options.page) source.pagination=discoverColumnPagination(column,html,listingUrl);
+      if(options.page) {
+        source.pagination=isNewsColumn(column)
+          ? {pageUrl:listingUrl,pageIndex:0,nextUrl:null,totalPages:null,scope:"current_page_only"}
+          : discoverColumnPagination(column,html,listingUrl);
+        if(isNewsColumn(column)&&listingUrl!==config.url) throw new Error("News collection must start from the current list; reconcile the old archive cursor first");
+      }
       source.listed = discovered.listed; source.titleFiltered = discovered.rejected;
       if (!discovered.listed) throw new Error("Official listing selector returned no article identities");
       let ready = 0;
-      let candidates = [...discovered.candidates].sort((a, b) => Number(a.priority === "context") - Number(b.priority === "context"));
+      let candidates = [...discovered.candidates];
       if(column==='fujian-notices'&&options.noticeSelect?.length){if(options.noticeSelect.some(url=>!candidates.some(c=>c.url===url)))throw new Error('Requested notice absent from current listing; no direct URL bypass');candidates=candidates.filter(c=>options.noticeSelect!.includes(c.url));}
       if(options.page) candidates=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));else candidates=candidates.slice(0,12);
       const iotcCandidates = column === "iotc" ? discoverIotc(new TextDecoder("utf8", { fatal: true }).decode(listing.body)).candidates : [];

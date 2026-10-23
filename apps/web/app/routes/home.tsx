@@ -1,4 +1,4 @@
-import { redirect, useLoaderData } from "react-router";
+import { Link, redirect, useLoaderData } from "react-router";
 import type { Route } from "./+types/home";
 import type { PoolResponse, TimelineResponse } from "@aihot/contracts/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
@@ -25,10 +25,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   const upstream = new Headers();
   const data = await loadOr404<TimelineResponse>(listPath("/api/site/timeline", filterParams(filters)), { responseHeaders: upstream, signal: request.signal });
   if (data.cards.length > 0) return cachedPage(60, { mode: "timeline" as const, data, filters }, upstream);
-  // Qualified references can be readable before any report earns a selected timeline seat.
-  // Keep their original publication/collection dates and selection state from the shared pool.
+  // Reviewed news may precede a selected event. Historical backfills remain in /all.
   const page = Math.min(Math.max(Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1, 1), 50);
-  const pool = await loadOr404<PoolResponse>(listPath("/api/site/pool", { ...filterParams(filters), page: page > 1 ? page : null }), { responseHeaders: upstream, signal: request.signal });
+  const pool = await loadOr404<PoolResponse>(listPath("/api/site/pool", { ...filterParams(filters), history:"exclude", page: page > 1 ? page : null }), { responseHeaders: upstream, signal: request.signal });
   return cachedPage(60, { mode: "pool" as const, data: pool, filters }, upstream);
 }
 
@@ -36,17 +35,17 @@ export function meta({ loaderData }: Route.MetaArgs) {
   const page = loaderData?.mode === "pool" ? loaderData.data.page : 1;
   const path = listPath("/", { ...(loaderData ? filterParams(loaderData.filters) : {}), page: page > 1 ? page : null });
   const titles = loaderData?.mode === "pool" ? loaderData.data.items.map(i => i.title) : loaderData?.data.cards.map(c => c.item.title) ?? [];
-  return pageMeta({ path, noindex: hasFeedFilters(loaderData?.filters), jsonLd: path === "/" ? [...siteLd(), itemListLd("/", loaderData?.mode === "pool" ? "行业动态与资料" : "精选", titles)] : undefined });
+  return pageMeta({ path, noindex: hasFeedFilters(loaderData?.filters), jsonLd: path === "/" ? [...siteLd(), itemListLd("/", loaderData?.mode === "pool" ? "行业动态" : "精选", titles)] : undefined });
 }
 
 export default function Home() {
   const loaded = useLoaderData<typeof loader>();
   const { filters } = loaded;
-  const title = filters.tag ? `#${filters.tag}` : loaded.mode === "pool" ? "行业动态与资料" : "精选";
+  const title = filters.tag ? `#${filters.tag}` : loaded.mode === "pool" ? "行业动态" : "精选";
   return (
     <div className="pb-6">
       {/* Phones: the bar (精选 | 全部, filter, search), the filter in use, today's hot topics, the feed. */}
-      <FeedBar featuredLabel={loaded.mode === "pool" ? "动态与资料" : undefined} base="/" category={filters.category} channel={filters.channel} />
+      <FeedBar featuredLabel={loaded.mode === "pool" ? "行业动态" : undefined} base="/" category={filters.category} channel={filters.channel} />
       <ActiveFilters base="/" category={filters.category} channel={filters.channel} tag={filters.tag} />
       <div className={loaded.mode === "pool" ? "mt-3 lg:mt-0" : "hidden lg:block"}>
         <h1 className="text-[24px] font-semibold leading-[1.3] text-ink">{title}</h1>
@@ -58,11 +57,8 @@ export default function Home() {
 
       {loaded.mode === "pool" ? (
         <>
-          <p className="mb-5 mt-2 text-[13px] leading-relaxed text-ink-3">按实际收录展示，尚未标为精选。资料的收录时间不代表原文发布或更新；历史依据与适用条件请核对原文。</p>
-          {loaded.data.items.length > 0 ? <>
-            {loaded.data.items.some(i => !i.reference && i.category !== "reference") && <section aria-label="行业文章"><h2 className="mt-5 text-[18px] font-semibold">行业文章</h2><DayList items={loaded.data.items.filter(i => !i.reference && i.category !== "reference")} /></section>}
-            {loaded.data.items.some(i => !!i.reference || i.category === "reference") && <section aria-label="参考资料"><h2 className="mt-7 text-[18px] font-semibold">参考资料</h2><p className="mt-1 text-[13px] text-ink-3">按内容分类归档，包含历史与时效未知资料，不代表正在开放办理。</p><DayList items={loaded.data.items.filter(i => !!i.reference || i.category === "reference")} /></section>}
-          </> : <EmptyState title="暂无相关资讯与资料">这个筛选下暂时没有可读内容，可切换分类或使用搜索。</EmptyState>}
+          <p className="mb-5 mt-2 text-[13px] leading-relaxed text-ink-3">已完成审核的行业资讯。<Link to="/all" className="text-accent">历史政策与参考资料</Link>单独保留，发现时间不冒充原文发布时间。</p>
+          {loaded.data.items.length > 0 ? <DayList items={loaded.data.items} /> : <EmptyState title="暂无通过审核的新资讯">当前没有合格新消息。可查看<Link to="/all" className="text-accent">历史政策与参考资料</Link>，其现行效力和适用条件需核对原文。</EmptyState>}
           <Pagination page={loaded.data.page} pageCount={loaded.data.pageCount} href={page => listPath("/", { ...filterParams(filters), page: page > 1 ? page : null })} />
         </>
       ) : (

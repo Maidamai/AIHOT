@@ -1,6 +1,8 @@
 import { capturedTransaction } from "./column-lease.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
+import { upsertMaterial } from "@aihot/backend/content/materials";
+import { beijingAt } from "@aihot/contracts/time";
 import { audit, Conflict } from "@aihot/backend/audit";
 import { documentSchema, observationSchema, reviewSchema, sourceSchema, withdrawSchema, canExportSummary, type SourceProfile } from "../contracts.ts";
 
@@ -220,5 +222,29 @@ export async function recordCapturedAcquisition(columnId:string,canonicalUrl:str
     if(!prior)
       await audit(actor,"fishery.acquisition",subject,record.confirmedChange?"Confirmed source page or required-attachment change; previous approval invalidated":record.outcome==="unavailable"?"Acquisition unavailable; no confirmed source-body change":"Verified archived acquisition result",null,record,{db:tx});
     return {documentId:String(document.id),...record};
+  });
+}
+
+/** Verified news candidates enter the core URL/revision/timeline ledger before editorial review. */
+export async function storeCapturedNews(columnId:string,documentId:string,body:string,actor:string) {
+  return capturedTransaction(columnId,async tx=>{
+    const [source]=await tx`SELECT id,participation_mode FROM sources WHERE id=${`fishery-column-${columnId}`} FOR SHARE`;
+    if(source?.participation_mode!=='editorial')throw new Conflict('Source is isolated; news material import disabled');
+    const doc=await lockDocument(tx,documentId);
+    const [observation]=await tx`SELECT payload FROM fishery_observations WHERE document_id=${documentId} ORDER BY revision DESC LIMIT 1`;
+    const payload=observation?.payload,capture=payload?.sourceCapture;
+    if(capture&&capture.bodySha256!==createHash("sha256").update(body).digest("hex"))return {skipped:"Superseded archived body; current material retained"};
+    if(doc.withdrawn_reason||!capture||capture.parseStatus!=="parsed"||capture.conflicts.length)
+      throw new Conflict("Current verified news body required");
+    // Previously published reference identities remain stable; no implicit migration or republishing.
+    const [bound]=await tx`SELECT b.article_id FROM fishery_publication_bindings b JOIN articles a ON a.id=b.article_id WHERE b.kind='article' AND b.document_id=${documentId} AND a.raw->>'mode' IS DISTINCT FROM 'verified-news-candidate'`;
+    if(bound)return {articleId:String(bound.article_id),existingPublication:true};
+    const publicationTime=capture.publishedAt??(payload.dates.published.precision==='day'?payload.dates.published.value:null);
+    const material=await upsertMaterial({sourceId:doc.source_id,url:doc.canonical_url,title:payload.originalTitle??payload.title,
+      language:payload.language,bodyText:body,bodyStatus:'ok',publicationTime,
+      publishedAt:publicationTime?publicationTime.length===10?beijingAt(publicationTime,'00:00'):new Date(publicationTime):null,
+      discoveredAt:new Date(doc.created_at),via:'fishery-news',raw:{fisheryDocumentId:documentId,mode:'verified-news-candidate'}},tx);
+    if(material.created||material.revised)await audit(actor,'fishery.news.material',`fishery:${documentId}`,'Verified body enters core material and timeline rules; no approval or publication',null,material,{db:tx});
+    return material;
   });
 }

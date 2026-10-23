@@ -83,7 +83,7 @@ export function prepareNotice(input:unknown,raw:Buffer,files:NoticeAttachment[]=
   publicationLiteral:page.literal,publishedAt:date?.publishedAt&&/\d{1,2}:\d{2}/.test(page.literal!)?new Date(date.publishedAt).toISOString():null,
   attachmentSha256:first?.sha256??null,attachmentUrl:first?.url??null,attachmentHttpStatus:first?.httpStatus??null,attachmentPages:first?.pages??null,attachmentCapturedAt:firstFile?archiveReceiptSchema.parse(firstFile.receipt).finishedAt:null});
  return {title:page.title,body,dates:{published:date?.publishedAt?{precision:'day' as const,value:beijingDate(date.publishedAt)}:unknownDate(),event:unknownDate(),adopted:unknownDate(),effectiveFrom:unknownDate(),effectiveUntil:unknownDate()},sourceCapture,
-  readyForReview:!!body&&!!evidence.length,relevance:{decision:evidence.length?'candidate' as const:'not_proven' as const,method:'explicit_dwf_terms' as const,evidence},warnings,
+  readyForReview:!!body,relevance:{decision:evidence.length?'candidate' as const:'not_proven' as const,method:'explicit_dwf_terms' as const,evidence},warnings,
   evidence:[{url:r.finalUrl,sha256:sha256(raw),page:null,section:'Official notice landing; attachment links and publication metadata'},...context.attachments.filter(a=>!!a.sha256).map(a=>({url:a.url,sha256:a.sha256!,page:null,section:`Required attachment; ${a.parseStatus}; no policy validity inference`}))]};
 }
 // Unavailability is not withdrawal. A verified changed link set or new 200 bytes is evidence of dependency change.
