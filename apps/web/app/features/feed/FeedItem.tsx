@@ -79,7 +79,7 @@ export const FeedItem = memo(function FeedItem({ item, group, filters, read = fa
       </header>
 
       {item.reference && <p role="status" aria-label="文载时效" className="mt-2 text-[13px] font-semibold text-note">
-        {item.reference.expiryDate && item.reference.expiryDate < referenceDay ? "已过文载失效日期 · 仅供历史参考" : item.reference.deadlineDate && item.reference.deadlineDate < referenceDay ? "已截止（按原文日期）· 仅供历史参考" : "可申请状态未知／待核实"}
+        {item.reference.expiryDate && item.reference.expiryDate < referenceDay ? "已过文载失效日期 · 仅供历史参考" : item.reference.deadlineDate && item.reference.deadlineDate < referenceDay ? "已截止（按原文日期）· 仅供历史参考" : "适用状态待核实"}
       </p>}
       {showTags && (
         <p className="mt-2 text-[12px] font-medium leading-relaxed text-ink-3">

@@ -158,11 +158,9 @@ v5.2规则将reported_occurred的否定范围跨过“正式/如期/按期”等
 
 DTO仅有经当前人工快照绑定的原观察标题、短摘要/原文短引、来源安全链接、原始日期精度、原文年龄与核对标签。没有完整私有正文、审核note/actor、prompt/receipt/key/cost。版权unknown仍可内部阅读，不放宽公开或全文导出；所有读取不生成任务或模型调用。分类是对实际可读资料的规则分组，只返回非零类，不显示不存在的来源/文章统计。合成DB门禁测试不算真实业务稿件验收。
 
-行业登录预览位于 `/fishery` 与 `/fishery/:documentId`，后台导航有“行业阅读预览”入口。Web只经adminGet转发正常访问者Cookie读取上述管理员API，不读取Cookie值、不自建会话、不扩大既有登录return白名单。未登录照既有登录流程回后台，再从预览入口进入。没有修改站点根URL、正式品牌或条款。
+阅读统一使用主站 `/all`、`/topics`、`/items/:articleId`。旧 `/fishery` 与专题入口完成正常鉴权后跳转；旧文章和指南链接须先由 `reader-target` 解析当前可读投影，撤审、失效或不存在时保留404，故障不伪装为空列表。旧独立阅读壳与样式已删除；主站和后台鉴权边界、部署的私有预览设置不变。上述旧管理员reader API仅保留证据投影与诊断用途，不再构成第二套读者内容集合。
 
-共享Web仅新增可选root.shell插口（modules.ts/root.tsx）；管理员chrome优先，匹配/fishery边界的正常页与错误页均使用模块导航，不显示旧AI分类、搜索、TabBar或“回到精选”。普通站点保持原导航与RSS链接。预览HTML、.data和错误响应均private/no-store/noindex，未知子路径也在同一正常鉴权边界内。历史日期及发布日期未知按原值展示，不把采集或核查时间改称新闻日期。
-
-UI浏览器验收使用显式合成API，不能当真实流水线验收。生产构建后可单独执行 `node --test --test-timeout=120000 modules/fishery/web/tests/reader.browser.ts`（配置已安装的PLAYWRIGHT_BROWSERS_PATH，不下载）。覆盖HTML/.data/404/503私有响应、正常登录重定向、默认站导航/RSS保持，以及320/393/1024列表、引证详情、错误与空态截图。测试不加入默认后端DB测试的浏览器依赖。
+UI浏览器验收使用显式合成API，不能当真实流水线验收。生产构建后可单独执行相关名称的 `modules/fishery/web/tests/reader.browser.ts`；不运行全量套件，不下载浏览器。覆盖旧入口鉴权、主站映射及失败响应，并保留后台审核行为测试。
 
 v5.3使用`fishery-spans-v2`可读目录：每个ID紧邻完整quote，body仍保留完整上下文；只改变呈现，不改分段、页区间、连续字面匹配和claim原ID子集约束。PDF每句摘要可选最多4条证据，与既有schema一致；可行性、安全、例外等限定须完整支持，4条仍不足则换可完整支持的事实或退人工。机构value使用所引原文的精确字面。累计entry9/生产receipt1的原始错ID响应固定为失败fixture：标题不是机构、定义不是禁捕/释放义务，原响应始终拒绝，不补换ID。完整6页19,598bytes的实际离线预检生成约75.7k、最大核查包络94,233bytes，低于96,000但余量有限；任何后续文案变化都须重测，超限零调用退人工，不提高上限。旧v1/v5.2目录与产物仅保留追溯，不能作为当前版本结果复用；合成案例只验证绑定/阻断，不是模型语义质量证明。
 
@@ -201,3 +199,12 @@ v5.5对reported_occurred补充保守的转述纠正、否认和歧义门禁：�
 manifest 使用严格版本 `manual-official-source/1`：`id,url,name,attribution,title,publishedAt,publicationLiteral,rawSha256,bodySha256,parser`，HTML另需已核定的 `bodySelector`。parser 为 `manual-official-html/v1` 或 `manual-official-pdf/v1`。日期未知用null，PDF签署日不代替网页发布日期。receipt使用现有 `requestedUrl,finalUrl,status,finishedAt,sha256` 结构；只接收HTTP200，原件字节和回执/manifest哈希均需一致。所有读取拒绝目录或文件软链接、非法ID及超限文件。
 
 HTML以明确正文容器提取全部文字、段落和表格，不截断；图片附件不OCR、不伪合并成人工正文。PDF通过现有extractPdf重新解析，要求完整连续页码和正文，缺失工具、空白页或结构解析失败会显示不可导入。服务器重新解析的正文必须逐字节等于body.txt，不能仅信任人工提供的body/hash。回执、哈希和手动核验不是网站签名；来源归属、正文意义、日期冲突、适用性和权利仍需普通人工审核。新来源自动采集、全文及各项使用许可关闭；导入仍经过既有source/document/observation链，不自动产生文章或流程任务。
+
+
+## 阅读入口、字段状态与实际调度（2026-10-23）
+
+信源列表和详情通过模块 `sourceRuntime` 读取受控调度的启停、健康、频率、心跳、成功及下次执行时刻；启用/健康过滤和统计使用同一实际状态。MARA正常模式60分钟、NPFC360分钟。外部受控来源保留核心enabled=false，禁止另改核心频率/配置或重复排核心采集队列；普通来源原操作保留。任务详情的归组失败恢复直接使用现有editorial/retry API，绑定投影和版本，区分同次恢复与新增付费尝试；不替代普通阶段恢复和对账。
+
+指南兼容旧documented/unknown载荷，旧unknown显示未核实且不自动迁移。可显式记录unverified、extraction_failed、not_stated、not_applicable及原因。not_applicable须有原文证据；not_stated须经完整原文对照，可在完整覆盖时无引证支持该缺载断言。二者均是新增审核claim，改变内容后原AI结果与终审失效。只对出现新断言的请求追加规则并改变prompt hash，旧载荷的规则与审核绑定不变。时效提示按船员、补贴、合规等业务类型显示，日期比较不确认现行效力或业务资格。
+
+受控串行processor复用原hot_rankings和story_heat_hourly：有当前已审近期事件输入时每5分钟排名、每小时采样，无候选不写空期刊或调用模型。热度参与证据同样读取当前审核门禁，撤审即停止贡献；停机后下次维护按持久化时间继续。日报/周报/月报沿用原已审内容编排边界，不新增综述模型或分发。暂缺符合条件的内容时页面明确显示暂无近期热点/已发布期刊。

@@ -230,7 +230,7 @@ export async function eligibleBusinessGuideItems(db: Db, now: Date, onlyId: stri
     const attachmentUrl = observation?.payload.sourceCapture?.attachmentUrl;
     items.push({ id: row.id, documentId: row.document_id, revision: row.revision, payload: row.payload, source: context.source, snapshot: context.snapshot,
       evidence: Object.fromEntries(context.catalog.spans.filter(s => ids.has(s.id)).map(s => [s.id, { quote: s.quote, paragraph: s.paragraph, page: s.page, url: s.source?.url ?? (capture && s.page !== null && attachmentUrl ? attachmentUrl : context.source.url), ...(s.source ? { sourceId: s.source.id, sha256: s.source.sha256 } : {}) }])),
-      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), qualification: { status: "qualified", label: "AI对照核查及最终审核通过" }, verification: { executorKind: ["human", "authorized_agent"].includes(row.human_decision?.executorKind) ? row.human_decision.executorKind : "unspecified", origin: "human_editorial", aiStatus: "passed", label: "编审整理，经AI对照核查及最终审核的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
+      verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now, row.payload.topicId), qualification: { status: "qualified", label: "AI对照核查及最终审核通过" }, verification: { executorKind: ["human", "authorized_agent"].includes(row.human_decision?.executorKind) ? row.human_decision.executorKind : "unspecified", origin: "human_editorial", aiStatus: "passed", label: "编审整理，经AI对照核查及最终审核的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
       eligibility: { canApply: null, canFish: null }, internalOnly: true });
   }
   return items;

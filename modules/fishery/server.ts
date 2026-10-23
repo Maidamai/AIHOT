@@ -1,7 +1,8 @@
+import { fisheryReaderTarget } from "./backend/publication-bridge.ts";
 import { newsQueue, retryNewsEditorial } from "./backend/news-editorial.ts";
 import { publicationQueue } from "./backend/publication-queue.ts";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata } from "./backend/publication-bridge.ts";
-import {archiveSourceStatuses,startArchiveProfile} from "./backend/archive-worker.ts";
+import {archiveSourceStatuses,archiveSourceRuntimes,startArchiveProfile} from "./backend/archive-worker.ts";
 import { defineServerModule } from "@aihot/backend/modules";
 import { adminHandler, type AdminHandler } from "@aihot/api/routes/admin-auth";
 import { sendProblem } from "@aihot/api/http/respond";
@@ -32,9 +33,13 @@ const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin
 const param = (req: { params: unknown }) => idSchema.parse((req.params as Record<string, string>).id);
 
 export default defineServerModule({
-  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, queues:[flowQueue,publicationQueue,newsQueue],
+  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, sourceRuntime:archiveSourceRuntimes, queues:[flowQueue,publicationQueue,newsQueue],
   publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
   http(app) {
+    app.get("/api/admin/fishery/reader-target/:kind/:id", guarded(async req => {
+      const {kind,id}=z.strictObject({kind:z.enum(["article","business_guide"]),id:idSchema}).parse(req.params);
+      return fisheryReaderTarget(kind,id);
+    }));
     installManualSourceRoutes(app);
     registerBusinessGuideRoutes(app);
     app.get("/api/admin/fishery/reader", guarded(async req=>readerPage(z.strictObject({category:z.enum(Object.keys(READER_CATEGORIES) as [keyof typeof READER_CATEGORIES,...(keyof typeof READER_CATEGORIES)[]]).optional(),page:z.coerce.number().int().positive().max(100000).optional()}).parse(req.query))));

@@ -50,8 +50,11 @@ export interface ReferenceMetadata {
     dates: Record<"published" | "effectiveFrom" | "deadline" | "expiresAt", {
       value: { precision: "unknown"; value: null } | { precision: "year" | "month" | "day"; value: string };
       evidence: string[];
+      state?: "unverified" | "extraction_failed" | "not_stated" | "not_applicable";
+      reason?: string;
     }>;
-    documentStatus: { state: "unknown"; value: null; evidence: [] } | { state: "documented"; value: "formal" | "consultation"; evidence: string[] };
+    documentStatus: { state: "unknown"; value: null; evidence: [] } | { state: "documented"; value: "formal" | "consultation"; evidence: string[] }
+      | { state: "unverified" | "extraction_failed" | "not_stated" | "not_applicable"; value: null; evidence: string[]; reason: string };
     deadlinePassed: boolean | null;
     /** Comparison against the source's expiry date, not a legal repeal determination. */
     policyExpired: boolean | null;

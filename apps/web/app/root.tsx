@@ -29,10 +29,6 @@ export const links: Route.LinksFunction = () => [
   { rel: "manifest", href: "/manifest.webmanifest" },
 ];
 
-function moduleShell(pathname: string) {
-  if (pathname === "/admin" || pathname.startsWith("/admin/")) return undefined;
-  return webModules().find(m => m.root?.shell?.matches(pathname))?.root?.shell;
-}
 const privateShellHeaders = { "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow" };
 export const headers = ({ loaderHeaders }: Route.HeadersArgs) => loaderHeaders;
 
@@ -40,7 +36,6 @@ export const headers = ({ loaderHeaders }: Route.HeadersArgs) => loaderHeaders;
 export async function loader({ request }: Route.LoaderArgs) {
   const release = process.env.AIHOT_RELEASE ?? null;
   const privatePreview = process.env.PRIVATE_PREVIEW === "true";
-  if (moduleShell(new URL(request.url).pathname)) return data({ changelogVersion: null, release, privatePreview }, { headers: privateShellHeaders });
   try {
     const meta = await apiGet<SiteMeta>("/api/site/meta", {
       headers: Object.assign({}, ...webModules().map((m) => m.root?.documentHeaders?.(request) ?? {})),
@@ -58,7 +53,6 @@ export const shouldRevalidate: ShouldRevalidateFunction = () => isPrivatePreview
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const site = useRouteLoaderData<typeof loader>("root");
-  const shell = moduleShell(useLocation().pathname);
   const [documentRelease] = useState(site?.release ?? null);
   return (
     <html lang={SITE.locale} data-private-preview={site?.privatePreview ? "true" : undefined} suppressHydrationWarning>
@@ -68,12 +62,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6" />
         <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13191c" />
-        <meta name="apple-mobile-web-app-title" content={shell?.title ?? SITE.name} />
+        <meta name="apple-mobile-web-app-title" content={SITE.name} />
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
         {webModules().map((m) => m.root?.bootScript && <script key={m.name} dangerouslySetInnerHTML={{ __html: m.root.bootScript }} />)}
         <Meta />
         <Links />
-        {!shell && <link rel="alternate" type="application/rss+xml" title={`${SITE.name} — 精选`} href="/feed.xml" />}
+        <link rel="alternate" type="application/rss+xml" title={`${SITE.name} — 精选`} href="/feed.xml" />
       </head>
       <body>
         {children}
@@ -85,11 +79,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 /** Only a page nobody matched falls back to this; every page names itself. */
-export function meta({ error, location }: Route.MetaArgs) {
+export function meta({ error }: Route.MetaArgs) {
   if (!error) return [];
   const notFound = isRouteErrorResponse(error) && error.status === 404;
-  const shell = moduleShell(location.pathname);
-  return [{ title: shell ? `${notFound ? "资料暂不可读" : "暂时无法加载"} · ${shell.title}` : titled(notFound ? "页面不存在" : "暂时无法加载") }, { name: "robots", content: "noindex" }];
+  return [{ title: titled(notFound ? "页面不存在" : "暂时无法加载") }, { name: "robots", content: "noindex" }];
 }
 
 /** Sidebar, main column and phone tab bar around a page (or an error). */
@@ -136,8 +129,6 @@ export default function App() {
   }, []);
   // The admin has its own chrome.
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return <Outlet />;
-  const shell = moduleShell(pathname);
-  if (shell) return <shell.Component><Outlet /></shell.Component>;
   return (
     <>
       <SiteShell changelogVersion={meta.changelogVersion}>
@@ -180,7 +171,5 @@ export function ErrorBoundary() {
   );
   // Admin errors stay inside the admin's own chrome.
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return body;
-  const shell = moduleShell(pathname);
-  if (shell) return <shell.Component><shell.Error status={status} /></shell.Component>;
   return <SiteShell changelogVersion={site?.changelogVersion ?? null}>{body}</SiteShell>;
 }

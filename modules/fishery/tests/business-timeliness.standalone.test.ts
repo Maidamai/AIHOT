@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { projectBusinessTimeliness } from "../business-timeliness.ts";
+import { businessTimelinessGuidance, projectBusinessTimeliness } from "../business-timeliness.ts";
 import type { BusinessGuidePayload } from "../business-contracts.ts";
 
 type SourceDate = BusinessGuidePayload["dates"]["deadline"]["value"];
@@ -11,14 +11,14 @@ test("past source dates are prominent while future and unknown dates never imply
   const now = new Date("2026-10-21T02:00:00Z");
   const past = projectBusinessTimeliness(dates({ precision: "day", value: "2026-10-20" }), now);
   assert.deepEqual(past.deadline, { state: "elapsed", lastDate: "2026-10-20" });
-  assert.equal(past.label, "已截止（按原文日期）；可申请状态未知/待核实");
+  assert.equal(past.label, "已截止（按原文日期）；适用状态待核实");
   const expired = projectBusinessTimeliness(dates({ precision: "day", value: "2026-10-20" }, { precision: "day", value: "2026-10-19" }), now);
-  assert.equal(expired.label, "已过文载失效日期；已截止（按原文日期）；可申请状态未知/待核实");
+  assert.equal(expired.label, "已过文载失效日期；已截止（按原文日期）；适用状态待核实");
   const future = projectBusinessTimeliness(dates({ precision: "day", value: "2026-12-01" }), now);
-  assert.equal(future.deadline.state, "date_not_elapsed"); assert.equal(future.label, "可申请状态未知/待核实");
+  assert.equal(future.deadline.state, "date_not_elapsed"); assert.equal(future.label, "适用状态待核实");
   const missing = projectBusinessTimeliness(dates(), now);
   assert.deepEqual(missing.deadline, { state: "unknown", lastDate: null }); assert.deepEqual(missing.expiry, missing.deadline);
-  assert.equal(missing.label, "可申请状态未知/待核实");
+  assert.equal(missing.label, "适用状态待核实");
   for (const result of [past, expired, future, missing]) {
     assert.equal(result.checkedAt, now.toISOString()); assert.equal(result.timeZone, "Asia/Shanghai");
     assert.equal(Object.values(result).includes(true), false);
@@ -49,4 +49,14 @@ test("projection preserves source precision and invalid dates remain unknown", (
   const input = dates({ precision: "month", value: "2026-02" }), before = structuredClone(input);
   projectBusinessTimeliness(input, new Date("2026-02-14T00:00:00Z")); assert.deepEqual(input, before);
   for (const value of ["2026-02-30", "2026-13-01", "2026-1-1"]) assert.deepEqual(projectBusinessTimeliness(dates({ precision: "day", value }), new Date("2026-10-21T00:00:00Z")).deadline, { state: "unknown", lastDate: null });
+});
+
+
+test("business notices distinguish crew work from funding and never infer current eligibility", () => {
+  const now = new Date("2026-10-23T00:00:00Z");
+  assert.equal(projectBusinessTimeliness(dates(), now, "crew").label, "用工适用状态待核实");
+  assert.match(businessTimelinessGuidance("crew"), /船员证书/);
+  assert.doesNotMatch(businessTimelinessGuidance("crew"), /申报|捕捞资格/);
+  assert.equal(projectBusinessTimeliness(dates(), now, "funding").label, "申报状态待核实");
+  assert.match(businessTimelinessGuidance("funding"), /本年度通知/);
 });

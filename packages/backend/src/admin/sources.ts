@@ -2,7 +2,7 @@
 // duplicate checks, pause/resume and manual collection. Every change is audited.
 import { z } from "zod";
 import { SOURCE_DEFAULTS } from "@aihot/site";
-import type { AdminSource, AdminSourceCreated, AdminSourceDetail, AdminSourcePreview, AdminSourceRow, AdminSources, BeforeJson } from "@aihot/contracts/admin";
+import type { AdminSourceRuntime, AdminSource, AdminSourceCreated, AdminSourceDetail, AdminSourcePreview, AdminSourceRow, AdminSources, BeforeJson } from "@aihot/contracts/admin";
 import { REPLACEABLE_SOURCE_KINDS } from "@aihot/contracts/admin";
 import { audit, auditHistory, Conflict } from "../audit.ts";
 import { groupingReset } from "../content/provenance.ts";
@@ -31,32 +31,38 @@ export interface SourceListFilters {
   page?: number;
 }
 
+async function sourceRuntimes(): Promise<Record<string, AdminSourceRuntime>> {
+  const maps = await Promise.all(serverModules().map(m => m.sourceRuntime?.() ?? {}));
+  return Object.assign({}, ...maps);
+}
+
 export async function listSources(f: SourceListFilters): Promise<BeforeJson<AdminSources>> {
-  const page = Math.max(1, f.page ?? 1);
-  const q = f.q?.trim() ? `%${f.q.trim()}%` : null;
+  const page = Math.max(1, f.page ?? 1), q = f.q?.trim() ? `%${f.q.trim()}%` : null;
+  const runtimes = Object.entries(await sourceRuntimes()).map(([id, payload]) => ({ id, payload }));
+  const effective = sql`SELECT s.*, r.payload AS runtime,
+    coalesce((r.payload->>'enabled')::boolean,s.enabled) AS effective_enabled,
+    coalesce(r.payload->>'health',CASE WHEN s.enabled THEN s.health ELSE 'paused' END) AS effective_health
+    FROM sources s LEFT JOIN jsonb_to_recordset(${sql.json(runtimes as never)}::jsonb) AS r(id text,payload jsonb) ON r.id=s.id`;
   const [rows, [totals]] = await Promise.all([
-    sql<BeforeJson<AdminSourceRow>[]>`
-    SELECT s.id, s.name, s.kind, s.tier, s.participation_mode, s.enabled, s.health, s.fail_count, s.interval_minutes,
-           s.last_ok_at, s.last_fetch_at, s.last_error, (s.tier = 'T1') AS first_party, s.next_fetch_at,
-           (SELECT count(*)::int FROM articles a WHERE a.source_id = s.id AND a.discovered_at > now() - interval '7 days') AS items_7d,
-           (SELECT count(*)::int FROM publications p WHERE p.source_id = s.id AND p.selected AND p.discovered_at > now() - interval '30 days') AS selected_30d
-    FROM (
-      SELECT * FROM sources
-      WHERE (${q}::text IS NULL OR name ILIKE ${q} OR id ILIKE ${q} OR config::text ILIKE ${q})
-        AND (${f.kind ?? null}::text IS NULL OR kind = ${f.kind ?? null})
-        AND (${f.health ?? null}::text IS NULL OR health = ${f.health ?? null})
-        AND (${f.mode ?? null}::text IS NULL OR participation_mode = ${f.mode ?? null})
-        AND (${f.enabled ?? null}::text IS NULL OR enabled = (${f.enabled ?? null} = 'true'))
-      ORDER BY enabled DESC, CASE health WHEN 'failing' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END, name, id
-      LIMIT 100 OFFSET ${(page - 1) * 100}
-    ) s
-    ORDER BY s.enabled DESC, CASE s.health WHEN 'failing' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END, s.name, s.id`,
-    sql<{ total: number; enabled: number; failing: number; degraded: number }[]>`
-    SELECT count(*)::int AS total, count(*) FILTER (WHERE enabled)::int AS enabled,
-           count(*) FILTER (WHERE health = 'failing')::int AS failing, count(*) FILTER (WHERE health = 'degraded')::int AS degraded
-    FROM sources`,
+    sql<BeforeJson<AdminSourceRow>[]>`SELECT s.id,s.name,s.kind,s.tier,s.participation_mode,s.enabled,s.health,s.fail_count,s.interval_minutes,
+      s.last_ok_at,s.last_fetch_at,s.last_error,s.next_fetch_at,s.runtime,
+      (s.tier='T1') AS first_party,
+      (SELECT count(*)::int FROM articles a WHERE a.source_id=s.id AND a.discovered_at>now()-interval '7 days') AS items_7d,
+      (SELECT count(*)::int FROM publications p WHERE p.source_id=s.id AND p.selected AND p.discovered_at>now()-interval '30 days') AS selected_30d
+      FROM (${effective}) s
+      WHERE (${q}::text IS NULL OR s.name ILIKE ${q} OR s.id ILIKE ${q} OR s.config::text ILIKE ${q})
+        AND (${f.kind??null}::text IS NULL OR s.kind=${f.kind??null})
+        AND (${f.health??null}::text IS NULL OR s.effective_health=${f.health??null})
+        AND (${f.mode??null}::text IS NULL OR s.participation_mode=${f.mode??null})
+        AND (${f.enabled??null}::text IS NULL OR s.effective_enabled=(${f.enabled??null}='true'))
+      ORDER BY CASE s.effective_health WHEN 'failing' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,s.effective_enabled DESC,s.name,s.id
+      LIMIT 100 OFFSET ${(page-1)*100}`,
+    sql<{total:number;enabled:number;failing:number;degraded:number}[]>`SELECT count(*)::int AS total,
+      count(*) FILTER(WHERE effective_enabled)::int AS enabled,
+      count(*) FILTER(WHERE effective_health='failing')::int AS failing,
+      count(*) FILTER(WHERE effective_health='degraded')::int AS degraded FROM (${effective}) s`,
   ]);
-  return { page, rows, totals };
+  return {page,rows,totals:totals!};
 }
 
 export async function sourceDetail(id: string): Promise<BeforeJson<AdminSourceDetail> | null> {
@@ -74,7 +80,7 @@ export async function sourceDetail(id: string): Promise<BeforeJson<AdminSourceDe
     auditHistory(`source:${id}`),
     sql<{ value: Record<string, unknown> }[]>`SELECT value FROM settings WHERE key = ${republishKey(id)}`,
   ]);
-  return { source, runs, items, stats: stats!, history, republish: republish?.value ?? null };
+  return { source: { ...source, runtime: (await sourceRuntimes())[id] ?? null }, runs, items, stats: stats!, history, republish: republish?.value ?? null };
 }
 
 /** A stored source fetched now without storing anything; null when there is no such source. */
@@ -135,6 +141,8 @@ const kindHooks = (kind: string) => serverModules().flatMap((m) => m.sourceKinds
 
 export async function updateSource(id: string, input: { patch: unknown; version: string; reason?: string }, actor: string) {
   const patch = EDITABLE.parse(input.patch);
+  if ((await sourceRuntimes())[id] && ["enabled","interval_minutes","kind","config"].some(k => k in patch))
+    throw new Conflict("此来源由受控采集管理，请在实际运行状态页核对；核心采集配置不可单独修改");
   return sql.begin(async (tx) => {
     // Creation and address edits share the lock: checking then inserting must not race.
     if (patch.config) await tx`SELECT pg_advisory_xact_lock(hashtext('admin-source-identity'))`;
@@ -271,6 +279,7 @@ export async function createSource(input: unknown, actor: string): Promise<Befor
 }
 
 export async function fetchNow(id: string, actor: string) {
+  if ((await sourceRuntimes())[id]) throw new Conflict("此来源由受控采集管理，不能另行排入核心采集队列");
   const [s] = await sql<{ id: string; kind: string; config: Record<string, unknown> }[]>`SELECT id, kind, config FROM sources WHERE id = ${id}`;
   if (!s) return null;
   const own = kindHooks(s.kind).find((h) => h.fetchNow)?.fetchNow;

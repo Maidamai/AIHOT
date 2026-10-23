@@ -28,13 +28,14 @@ export const guideAIResultSchema = z.strictObject({
 });
 export type GuideAIResult = z.infer<typeof guideAIResultSchema>;
 export function guideAIClaims(payload: BusinessGuidePayload) {
-  const claims: { id: string; assertion: unknown; evidenceIds: string[] }[] = [];
-  const add = (id: string, value: { evidence: string[] }) => claims.push({ id, assertion: value, evidenceIds: value.evidence });
+  const claims: { id: string; assertion: unknown; evidenceIds: string[]; notStated?: true }[] = [];
+  const add = (id: string, value: { evidence: string[]; state?: string }) => claims.push({ id, assertion: value, evidenceIds: value.evidence, ...(value.state === "not_stated" ? { notStated: true as const } : {}) });
+  const asserted = (state?: string) => state === "documented" || state === "not_stated" || state === "not_applicable";
   add("title", payload.title); payload.summary.forEach((v, i) => add(`summary.${i}`, v));
   for (const key of ["audience", "opportunity", "restrictions", "materials", "documentStatus", "serviceEntry"] as const)
-    if (payload[key].state === "documented") add(key, payload[key]);
-  for (const [key, value] of Object.entries(payload.applicability)) if (value.state === "documented") add(`applicability.${key}`, value);
-  for (const [key, value] of Object.entries(payload.dates)) if (value.value.precision !== "unknown") add(`dates.${key}`, value);
+    if (asserted(payload[key].state)) add(key, payload[key]);
+  for (const [key, value] of Object.entries(payload.applicability)) if (asserted(value.state)) add(`applicability.${key}`, value);
+  for (const [key, value] of Object.entries(payload.dates)) if (value.value.precision !== "unknown" || asserted(value.state)) add(`dates.${key}`, value);
   payload.relations.forEach((v, i) => add(`relations.${i}`, v));
   return claims;
 }
@@ -76,7 +77,8 @@ export function buildGuideAIReviewRequest(input: EvidenceInput, raw: unknown, mo
       if (f.verdict !== "supported" && f.evidence.length > 4) fail("Problem evidence is capped at four IDs; cannot repair the candidate");
       const claim = claims.find(c => c.id === f.claimId);
       if (!claim) fail("Unrequested claim");
-      if (f.verdict === "supported" && (!f.evidence.length || f.evidence.some(id => !claim?.evidenceIds.includes(id)))) fail("Supported finding cannot replace or supplement original claim anchors");
+      const checkedAbsence = claim?.notStated === true && value.coverage === "complete_input" && f.evidence.length === 0;
+      if (f.verdict === "supported" && !checkedAbsence && (!f.evidence.length || f.evidence.some(id => !claim?.evidenceIds.includes(id)))) fail("Supported finding cannot replace or supplement original claim anchors");
       if (f.verdict !== "contradicted" && f.evidence.some(id => !claim?.evidenceIds.includes(id))) fail("Only contradiction may introduce other source IDs");
     }
   });
@@ -90,8 +92,12 @@ export function buildGuideAIReviewRequest(input: EvidenceInput, raw: unknown, mo
   }).transform(v => ({ coverage: (["complete_input", "partial_input", "unknown"] as const)[v.c]!,
     findings: v.f.map(([i, code, ids, text]) => ({ claimId: claims[i]!.id, verdict: (["supported", "contradicted", "not_found", "ambiguous"] as const)[code]!, evidence: ids.map(i => catalog.spans[i]!.id), reason: `核查代码释义：${reasonCodes[code]}` })),
     omissions: v.o.map(([i, code, ids, text]) => ({ field: omissionIds[i]!, verdict: code === 0 ? "none" as const : code === 3 ? "ambiguous" as const : "material_omission" as const, evidence: ids.map(i => catalog.spans[i]!.id), reason: `核查代码释义：${reasonCodes[code]}` })) })).pipe(resultSchema);
+  // Preserve the request binding of existing approved guides. Only newly asserted missing-field
+  // states use the additional rules; edits still require a new comparison and final approval.
+  const reviewSystem = claims.some(c => (c.assertion as { state?: string }).state === "not_applicable" || c.notStated)
+    ? system + " 新增缺值状态规则：unverified/extraction_failed仅说明尚未确认，不作为事实断言。not_applicable断言该字段不适用于本事项，必须由候选原锚直接支持，不得凭常识推断。not_stated断言所给完整原文未载明该字段，必须核对完整正文和附件范围；只有coverage=complete_input且确实未载明时才可supported，此状态是supported允许空alias数组的唯一例外。reason是待核查的候选说明，不是证据；原文有该项内容时须contradicted并指出原文alias，不得把提取遗漏判为未载明。" : system;
   const request: ChatJsonOptions<typeof schema> = { model, purpose: "fishery_business_quality_review", subject: `guide:${hash(payload)}`,
-    promptVersion: `${GUIDE_AI_RULES_VERSION}:${FISHERY_RULES_VERSION}:${catalog.version}:${hash(system)}`, system,
+    promptVersion: `${GUIDE_AI_RULES_VERSION}:${FISHERY_RULES_VERSION}:${catalog.version}:${hash(reviewSystem)}`, system: reviewSystem,
     // Full body appears once. IDs point to exact UTF-16 intervals; no selected-page/sentence truncation.
     user: JSON.stringify({ candidateAnchors: catalog.spans.flatMap((span, alias) => claims.some(c => c.evidenceIds.includes(span.id)) ? [{ alias, id: span.id, quote: span.quote }] : []), source: { body: input.body, offsetUnit: "UTF-16", evidenceCatalog: { ...evidenceBinding(catalog), columns: ["alias", "id", "paragraph", "page", "start", "end"], spans: catalog.spans.map(({ id, paragraph, page, start, end }, alias) => [alias, id, paragraph, page, start, end]) },
       pageColumns: ["page", "start", "end"], pages: catalog.pages.map(p => [p.page, p.start, p.end]), ...(catalog.pdfBlankReview?{reviewedBlankPages:catalog.pdfBlankReview}:{}), ...(catalog.sections ? { sourceSections: catalog.sections, spanSources: catalog.spans.map(s => ({ id: s.id, source: s.source })), pageSources: catalog.pages.map(p => ({ page: p.page, start: p.start, source: p.source })) } : {}) }, candidate: payload,

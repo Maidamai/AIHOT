@@ -210,3 +210,13 @@ export async function startArchiveProfile():Promise<()=>Promise<void>>{
  const stop=async()=>{if(stopped)return;stopped=true;clearInterval(heartbeat);cancelColumnArchives();await boss.stop({graceful:true,timeout:30_000});};
  const heartbeat=setInterval(()=>{if(busy)return;busy=true;void(async()=>{await assertArchiveSchedules(boss);for(const c of controllers)await isolated(c,()=>refresh(c));})().catch(error=>{console.error('[archive global invariant]',String(error));void stop();}).finally(()=>{busy=false;});},15_000);heartbeat.unref();return stop;
 }
+
+/** Read-only administration projection; it never changes the core source enable switch. */
+export async function archiveSourceRuntimes() {
+  return Object.fromEntries((await archiveSourceStatuses()).filter(s => s.sourceId).map(s => [s.sourceId!, {
+    enabled:s.enabled, health:s.coreSourceEnabled===null || !s.mode ? 'unknown' : s.consecutiveFailures>=3 ? 'failing' : s.lastError ? 'degraded' : s.enabled ? 'ok' : 'paused',
+    intervalMinutes:s.mode==='hourly'?60:s.mode==='six_hourly'?360:null,
+    nextRunAt:s.nextRunAt,lastSuccessAt:s.lastSuccessAt,heartbeatAt:s.heartbeatAt,lastError:s.lastError??s.pausedReason,
+    label:'受控采集',detailPath:'/admin/fishery/collect',
+  }]));
+}

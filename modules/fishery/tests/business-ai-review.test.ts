@@ -102,6 +102,28 @@ test("claim and omission checks independently block contradiction, missing evide
   assert.throws(() => assessGuideAIResult(input, p, dup), /exactly once/);
 });
 
+test("missing field claims preserve old payloads and require complete absence checks or scope evidence", () => {
+  const old = payload({ catalog: buildEvidenceCatalog(input) });
+  const before = buildGuideAIReviewRequest(input, old);
+  assert.deepEqual(before.payload, old);
+  const p = structuredClone(old);
+  p.opportunity = { state: "not_stated", value: null, reason: "全文未载明办理费用", evidence: [] };
+  p.applicability.species = { state: "not_applicable", value: null, reason: "仅对企业身份规定要求", evidence: ["p2s1"] };
+  p.dates.expiresAt = { value: { precision: "unknown", value: null }, state: "extraction_failed", reason: "待核对原件", evidence: [] };
+  const prepared = buildGuideAIReviewRequest(input, p), good = answer(p);
+  assert.notEqual(prepared.request.promptVersion, before.request.promptVersion);
+  assert.equal(assessGuideAIResult(input, p, good).pass, true);
+  assert.equal(guideAIClaims(p).some(c => c.id === "dates.expiresAt"), false);
+  const partial = structuredClone(good); partial.coverage = "partial_input";
+  assert.throws(() => assessGuideAIResult(input, p, partial), /original claim anchors/);
+  const unsupported = structuredClone(good); unsupported.findings.find(f => f.claimId === "applicability.species")!.evidence = [];
+  assert.throws(() => assessGuideAIResult(input, p, unsupported), /original claim anchors/);
+  p.applicability.species.evidence = [];
+  assert.throws(() => buildGuideAIReviewRequest(input, p));
+  const invalidDate = structuredClone(old); invalidDate.dates.deadline.state = "not_stated"; invalidDate.dates.deadline.reason = "不可覆盖原文已有日期";
+  assert.throws(() => buildGuideAIReviewRequest(input, invalidDate), /Missing date state/);
+});
+
 test("whole source and guide are isolated from human metadata, oversized wire fails without truncation", () => {
   const p = payload({ catalog: buildEvidenceCatalog(input) }), request = buildGuideAIReviewRequest(input, p).request;
   assert.equal(JSON.parse(String(request.user)).source.body, body);

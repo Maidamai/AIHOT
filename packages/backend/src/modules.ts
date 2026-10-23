@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import type { AdminSourceRuntime } from "@aihot/contracts/admin";
 // The backend's sockets for modules (modules/<name>/server.ts). The api and worker processes install the
 // site's list when they start (site/modules/server.ts); the engine reads the sockets when it needs them and
 // never imports a module, so it runs the same with none installed: the open-source edition, and the
@@ -255,6 +256,8 @@ export interface ServerModule {
   }>;
   /** Lines of the Monday source-health report (operations/reports.ts), after the source counts. */
   sourceHealth?: (now: number) => Promise<string[]>;
+  /** Actual collection state for sources owned by a module, consumed by source administration. */
+  sourceRuntime?: () => Promise<Record<string, AdminSourceRuntime>>;
   /** Job queues of its own (jobs/queue.ts). */
   queues?: ModuleQueue[];
   /** Follow-ups (level later), after the engine's (operations/alerts.ts). */

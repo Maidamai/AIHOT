@@ -145,7 +145,7 @@ export async function loadStoryDetail(storyId: number, now = new Date()): Promis
   if (!content) return null;
   const { s, reports, developments, latestReport, firstReportAt } = content;
   const [why] = await sql<{ p48: number; p6: number; r24: number }[]>`
-    WITH cs AS (SELECT * FROM ${currentSignals()} c WHERE story_id = ${storyId} AND observed_at <= ${now})
+    WITH cs AS (SELECT * FROM ${(await currentSignals()).query} c WHERE story_id = ${storyId} AND observed_at <= ${now})
     SELECT count(DISTINCT participant_key) FILTER (WHERE observed_at > ${now}::timestamptz - interval '48 hours') AS p48,
            count(DISTINCT participant_key) FILTER (WHERE observed_at > ${now}::timestamptz - interval '6 hours'
              AND participant_key NOT IN (SELECT participant_key FROM cs x WHERE x.observed_at <= ${now}::timestamptz - interval '6 hours')) AS p6,
@@ -158,7 +158,7 @@ export async function loadStoryDetail(storyId: number, now = new Date()): Promis
   // Complete when none of the sources behind the last 48 hours' participants is behind on collection.
   const behind = behindSources(await sourceClocks(), now.getTime(), true);
   const [partial] = behind.length
-    ? await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM ${currentSignals()} cs WHERE story_id = ${storyId} AND source_id = ANY(${behind}::text[])
+    ? await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM ${(await currentSignals()).query} cs WHERE story_id = ${storyId} AND source_id = ANY(${behind}::text[])
                                   AND observed_at > ${now}::timestamptz - interval '48 hours' AND observed_at <= ${now}`
     : [{ n: 0 }];
   const [related, topics, texts] = await Promise.all([relatedStories(storyId, now), topicsOfStory(storyId, now), storyTexts([storyId], now)]);

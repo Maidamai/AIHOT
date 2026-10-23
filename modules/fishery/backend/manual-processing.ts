@@ -1,4 +1,4 @@
-import { newsQueue, composeApprovedReports, type NewsJob } from "./news-editorial.ts";
+import { newsQueue, composeApprovedReports, refreshApprovedHot, type NewsJob } from "./news-editorial.ts";
 import { publicationQueue, type PublicationJob } from "./publication-queue.ts";
 // Approved flows and their core publication/event continuations share one serial consumer.
 import type { PgBoss } from "pg-boss";
@@ -79,7 +79,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     let maintaining=false;
     const maintain=async()=>{
       if(stopping) return;if(maintaining) return publicationMaintenance;maintaining=true;
-      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await boss.supervise(newsQueue.name);await boss.supervise(QUEUES.republishSource);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});await serialRun(()=>composeApprovedReports());}
+      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await boss.supervise(newsQueue.name);await boss.supervise(QUEUES.republishSource);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});await serialRun(async()=>{await refreshApprovedHot();await composeApprovedReports();});}
       catch {if(!stopping) console.error(JSON.stringify({level:"error",msg:"fishery publication queue maintenance failed",queue:publicationQueue.name}));}
       finally {maintaining=false;}
     };

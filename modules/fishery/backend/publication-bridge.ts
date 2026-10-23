@@ -1,7 +1,8 @@
 import { approvedNewsRun, projectNewsAnalysis, enqueueNews } from "./news-editorial.ts";
 import type { AnalysisRun } from "@aihot/backend/editorial/analyze";
 import type { ReferenceMetadata } from "@aihot/contracts/site";
-import { projectBusinessTimeliness } from "../business-timeliness.ts";
+import { BUSINESS_FIELD_STATE_LABELS } from "../business-contracts.ts";
+import { businessTimelinessGuidance, projectBusinessTimeliness } from "../business-timeliness.ts";
 import { publicationDecisionCurrent, type PublicationJob } from "./publication-queue.ts";
 import { CATEGORIES } from "@aihot/industry/taxonomy";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
@@ -15,7 +16,8 @@ import { upsertMaterial } from "@aihot/backend/content/materials";
 import { publishArticleTx } from "@aihot/backend/publication/publish";
 import { eligibleReaderItems } from "./reader.ts";
 import { eligibleBusinessGuideItems, businessGuideReaderItem } from "./business-guides.ts";
-import { lockDocument, hash } from "./store.ts";
+import { loadItemDetail } from "@aihot/backend/publication/detail";
+import { lockDocument, hash, NotFound } from "./store.ts";
 
 type Projection = { analysis?:AnalysisRun; reference?: ReferenceMetadata; kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; tags: string[]; score: number | null; url: string; publicationTime: string | null; binding: string };
 
@@ -48,15 +50,15 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
       const topic = BUSINESS_TOPICS.find(topic => topic.id === item.payload.topicId);
       if (!topic) throw new Conflict("Reviewed guide topic is absent from the configured business topics");
       const tags = [topic.label, "资料"];
-      const time = projectBusinessTimeliness(item.payload.dates, now);
+      const time = projectBusinessTimeliness(item.payload.dates, now, item.payload.topicId);
       const dateLabels = { published: "原文发布日期", effectiveFrom: "文载生效日期", deadline: "办理截止日期", expiresAt: "文载失效日期" };
       const fromMetadata = item.payload.dates.published.value.precision === "unknown" && item.source.published.precision !== "unknown";
       const published = fromMetadata ? item.source.published : item.payload.dates.published.value;
       const dates = Object.entries(item.payload.dates).map(([key, field]) => key === "published" && fromMetadata
         ? `来源元数据发布日期：${published.value}（${published.precision}；正文日期证据未核实）`
-        : `${dateLabels[key as keyof typeof dateLabels]}：${field.value.value ?? "未知"}（${field.value.precision}）`).join("；");
-      const nature = item.payload.documentStatus.value === "formal" ? "正式文件" : item.payload.documentStatus.value === "consultation" ? "征求意见稿" : "未知";
-      const notice = `读取时状态（对照${beijingDate(now)}，${time.timeZone}）：${time.label}；${dates}；文件性质：${nature}；法律效力未知，办理截止不等于政策废止；${item.qualification.label}。核查时间和采集时间均不是原文发布日期。`;
+        : `${dateLabels[key as keyof typeof dateLabels]}：${field.value.value ?? BUSINESS_FIELD_STATE_LABELS[field.state ?? "unknown"]}（${field.value.precision}）`).join("；");
+      const nature = item.payload.documentStatus.value === "formal" ? "正式文件" : item.payload.documentStatus.value === "consultation" ? "征求意见稿" : BUSINESS_FIELD_STATE_LABELS[item.payload.documentStatus.state];
+      const notice = `读取时状态（对照${beijingDate(now)}，${time.timeZone}）：${time.label}；${dates}；文件性质：${nature}；法律效力待核实；${businessTimelinessGuidance(item.payload.topicId)}${item.qualification.label}。核查时间和采集时间均不是原文发布日期。`;
       return { reference: { kind: "business_guide" as const, checkedAt: time.checkedAt, deadlineDate: time.deadline.lastDate, expiryDate: time.expiry.lastDate,
         lifecycle: { timeZone: time.timeZone, dates: item.payload.dates, documentStatus: item.payload.documentStatus,
           deadlinePassed: time.deadline.state === "unknown" ? null : time.deadline.state === "elapsed",
@@ -198,4 +200,11 @@ export async function fisheryReferenceMetadata(articleIds: string[], now: Date):
     const projection = byId.get(binding.item_id);
     return projection?.reference && projection.binding === binding.projection_hash ? [[binding.article_id, projection.reference]] : [];
   }));
+}
+
+/** Legacy reader links resolve only through the canonical publication's current read gate. */
+export async function fisheryReaderTarget(kind:'article'|'business_guide',id:string) {
+  const [binding]=await sql`SELECT article_id FROM fishery_publication_bindings WHERE kind=${kind} AND item_id=${id}`;
+  if(!binding || (await loadItemDetail(binding.article_id)).kind==='not_found') throw new NotFound('No current readable publication');
+  return {url:`/items/${encodeURIComponent(binding.article_id)}`};
 }

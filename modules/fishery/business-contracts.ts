@@ -8,13 +8,26 @@ export const businessTopicIdSchema = z.enum(BUSINESS_TOPICS.map(t => t.id) as [s
 export const businessGuideKindSchema = z.enum(["business_guide", "policy_reference"]);
 const evidence = z.array(z.string().regex(/^p\d+s\d+$/)).max(12).refine(ids => new Set(ids).size === ids.length, "Duplicate evidence ID");
 export const businessTextSchema = z.strictObject({ value: z.string().trim().min(1).max(1000), evidence: evidence.min(1) });
+const missingState = z.enum(["unverified", "extraction_failed", "not_stated", "not_applicable"]);
+const missingReason = z.string().trim().min(1).max(2000);
+export const BUSINESS_FIELD_STATE_LABELS = { unknown: "未核实", unverified: "未核实", extraction_failed: "提取失败", not_stated: "原文未载明", not_applicable: "不适用", documented: "原文已载明" } as const;
+const missingFields = [
+  z.strictObject({ state: z.literal("unverified"), value: z.null(), evidence: z.tuple([]), reason: missingReason }),
+  z.strictObject({ state: z.literal("extraction_failed"), value: z.null(), evidence: z.tuple([]), reason: missingReason }),
+  z.strictObject({ state: z.literal("not_stated"), value: z.null(), evidence: z.tuple([]), reason: missingReason }),
+  z.strictObject({ state: z.literal("not_applicable"), value: z.null(), evidence: evidence.min(1), reason: missingReason }),
+] as const;
 export const businessFieldSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("unknown"), value: z.null(), evidence: z.tuple([]) }),
   z.strictObject({ state: z.literal("documented"), value: z.string().trim().min(1).max(2000), evidence: evidence.min(1) }),
+  ...missingFields,
 ]);
-const date = z.strictObject({ value: dateSchema, evidence }).superRefine((v, ctx) => {
-  if (v.value.precision === "unknown" ? v.evidence.length !== 0 : v.evidence.length === 0)
-    ctx.addIssue({ code: "custom", message: "Known date needs evidence; unknown date has no assertion" });
+const date = z.strictObject({ value: dateSchema, evidence, state: missingState.optional(), reason: missingReason.optional() }).superRefine((v, ctx) => {
+  if (v.state ? v.value.precision !== "unknown" || !v.reason : v.reason !== undefined)
+    ctx.addIssue({ code: "custom", message: "Missing date state requires an unknown value and a reason" });
+  const needsEvidence = v.value.precision !== "unknown" || v.state === "not_applicable";
+  if (needsEvidence ? !v.evidence.length : v.evidence.length !== 0)
+    ctx.addIssue({ code: "custom", message: "Known or not-applicable date needs evidence; other missing dates have no anchors" });
 });
 export const businessGuidePayloadSchema = z.strictObject({
   topicId: businessTopicIdSchema, kind: businessGuideKindSchema,
@@ -24,11 +37,13 @@ export const businessGuidePayloadSchema = z.strictObject({
   documentStatus: z.discriminatedUnion("state", [
     z.strictObject({ state: z.literal("unknown"), value: z.null(), evidence: z.tuple([]) }),
     z.strictObject({ state: z.literal("documented"), value: z.enum(["formal", "consultation"]), evidence: evidence.min(1) }),
+    ...missingFields,
   ]),
   dates: z.strictObject({ published: date, effectiveFrom: date, deadline: date, expiresAt: date }),
   serviceEntry: z.discriminatedUnion("state", [
     z.strictObject({ state: z.literal("unknown"), label: z.null(), url: z.null(), evidence: z.tuple([]) }),
     z.strictObject({ state: z.literal("documented"), label: z.string().trim().min(1).max(200), url: linkSchema, evidence: evidence.min(1) }),
+    ...missingFields.map(field => field.omit({ value: true }).extend({ label: z.null(), url: z.null() })),
   ]),
   relations: z.array(z.strictObject({ type: z.enum(["amends", "repeals", "interprets", "supersedes"]), title: z.string().trim().min(1).max(300), url: linkSchema.nullable(), evidence: evidence.min(1) })).max(12).default([]),
 });

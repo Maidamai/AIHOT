@@ -153,7 +153,7 @@ test("reader recomputes current timeliness instead of verification time and keep
   const before = await sql`SELECT count(*)::int AS n FROM audit_log WHERE subject=${`business-guide:${row.id}`}`;
   const notElapsed = await businessGuideReaderItem(row.id, new Date("2026-11-01T23:59:59+08:00"));
   const elapsed = await businessGuideReaderItem(row.id, new Date("2026-11-02T00:00:00+08:00"));
-  assert.equal(notElapsed.timeliness.deadline.state, "date_not_elapsed"); assert.equal(notElapsed.timeliness.label, "可申请状态未知/待核实");
+  assert.equal(notElapsed.timeliness.deadline.state, "date_not_elapsed"); assert.equal(notElapsed.timeliness.label, "申报状态待核实");
   assert.equal(elapsed.timeliness.deadline.state, "elapsed"); assert.equal(elapsed.timeliness.expiry.state, "elapsed");
   assert.match(elapsed.timeliness.label, /^已过文载失效日期/); assert.match(elapsed.timeliness.label, /已截止（按原文日期）/);
   assert.equal(elapsed.verifiedAt, approved.verifiedAt); assert.notEqual(elapsed.timeliness.checkedAt, elapsed.verifiedAt);
@@ -489,9 +489,9 @@ test("original RSS and v1 routes project guide dates at Beijing midnight without
     assert.ok(Object.keys(last.reference.lifecycle.evidence).length > 0);
     assert.equal(last.publishedAt, null); assert.equal(last.approvedSummary, undated.payload.summary.map(s => s.value).join("\n"));
     assert.match(last.summary, /派生状态提示.*已截止（按原文日期）/s);
-    assert.match(last.summary, /办理截止不等于政策废止/); assert.match(last.summary, /可申请状态未知/);
+    assert.match(last.summary, /办理截止不等于政策废止/); assert.match(last.summary, /申报状态待核实/);
     assert.doesNotMatch(before.rss, /已截止（按原文日期）/);
-    assert.match(after.rss, /派生状态提示.*已截止（按原文日期）/s); assert.match(after.rss, /原文发布日期：未知/);
+    assert.match(after.rss, /派生状态提示.*已截止（按原文日期）/s); assert.match(after.rss, /原文发布日期：未核实/);
     assert.match(after.rss, /AI对照核查及最终审核通过/);
     assert.doesNotMatch(before.markdown!.body, /已截止（按原文日期）/);
     assert.match(after.markdown!.body, /## 派生状态提示\n\n.*已过文载失效日期.*已截止（按原文日期）/s);

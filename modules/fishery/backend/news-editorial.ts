@@ -6,6 +6,7 @@ import { Conflict, audit } from '@aihot/backend/audit';
 import { defineQueue } from '@aihot/backend/modules';
 import { enqueueOn, getBoss } from '@aihot/backend/jobs/queue';
 import { normalizeAnalysis, type AnalysisRun } from '@aihot/backend/editorial/analyze';
+import { computeHotRanking, snapshotHeat, storedHotRanking, currentSignals } from '@aihot/backend/events/hot';
 import { groupArticle } from '@aihot/backend/events/group';
 import { publishArticle } from '@aihot/backend/publication/publish';
 import { currentPublicationCondition, selectedCondition } from '@aihot/backend/publication/scope';
@@ -129,4 +130,22 @@ export async function composeApprovedReports(now=new Date()) {
     }
   }
   return {generated};
+}
+
+
+/** Reuse the original derived ranking and hourly series inside the retained serial lease. No models. */
+export async function refreshApprovedHot(now = new Date()) {
+  await assertProcessingLease();
+  const [recent] = await sql`SELECT EXISTS(SELECT 1 FROM ${(await currentSignals(now)).query} cs
+    JOIN publications p ON p.article_id=cs.article_id WHERE NOT p.backfill
+      AND cs.kind='editorial' AND cs.observed_at>${new Date(now.getTime()-48*3600000)} AND cs.observed_at<=${now}) AS present`;
+  const last = await storedHotRanking();
+  if (!recent.present && !last?.entries.length) return { ranked: false, sampled: false };
+  const ranked = !last || Date.parse(last.computedAt) <= now.getTime()-5*60000;
+  if (ranked) await computeHotRanking(now);
+  const hour = new Date(Math.floor(now.getTime()/3600000)*3600000);
+  const [sample] = await sql`SELECT max(hour) AS hour FROM story_heat_hourly`;
+  const sampled = !!recent.present && (!sample.hour || new Date(sample.hour).getTime()<hour.getTime());
+  if (sampled) await snapshotHeat(now);
+  return { ranked, sampled };
 }

@@ -69,7 +69,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
           ["原始URL", <a className="break-all text-accent" href={d.canonicalUrl} target="_blank" rel="noreferrer">{d.canonicalUrl}</a>],
           ["来源归属", d.sourceAttribution], ["网页发布机构", "未核实"], ["政策发文机关", "未核实"], ["文号", d.documentNumber ?? "未核实"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],
           ["获取时间", c ? `${bj(c.capturedAt, true)} 北京时间` : "未知"], ["发布日期", o?.dates.published.precision!=='unknown'&&o?dateLabel(o.dates.published):c?.parseStatus==='failed'||c?.parseStatus==='missing'?'提取失败，日期未核实':c?.parseStatus==='parsed'&&!c.publicationLiteral?'页面发布日期元数据未载明':'未核实（日期证据不足）'],
-          ["事件日期", o?.dates.event.value ? dateLabel(o.dates.event) : "未核实，不用抓取或发布日期代替"], ["通过日期", o?.dates.adopted.value ? dateLabel(o.dates.adopted) : "未核实"],
+          ["事件日期", o?.dates.event?.value ? dateLabel(o.dates.event) : "未核实，不用抓取或发布日期代替"], ["通过日期", o?.dates.adopted.value ? dateLabel(o.dates.adopted) : "未核实"],
           ["生效日期", o?.dates.effectiveFrom.value ? dateLabel(o.dates.effectiveFrom) : "未核实"], ["终止日期", o?.dates.effectiveUntil.value ? dateLabel(o.dates.effectiveUntil) : "未核实"],
           ["政策状态", ({ unknown: "未核实", draft: "草案", adopted: "已通过", repealed: "已废止", superseded: "被替代" } as Record<string, string>)[o?.policyStatus ?? "unknown"]],
           ["适用区域", o?.scope.regions.join("、") || "未核实"], ["鱼种", o?.scope.species.join("、") || "未核实"], ["船旗 / 活动", `${o?.scope.flags.join("、") || "未核实"} / ${o?.scope.activities.join("、") || "未核实"}`],

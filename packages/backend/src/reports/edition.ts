@@ -254,7 +254,7 @@ async function missedFacts(start: Date, end: Date): Promise<Array<{ key: string;
     SELECT fa.fact_id
     FROM active JOIN fact_articles fa ON fa.fact_id = active.fact_id
     JOIN publications p ON p.article_id = fa.article_id
-    JOIN ${currentSignals()} cs ON cs.article_id = fa.article_id
+    JOIN ${(await currentSignals()).query} cs ON cs.article_id = fa.article_id
     WHERE ${evidenceCondition()} AND cs.observed_at < ${end}
       AND NOT EXISTS (SELECT 1 FROM fact_articles sfa JOIN publications sp ON sp.article_id = sfa.article_id
                       WHERE sfa.fact_id = fa.fact_id AND sfa.role <> 'mention' AND sp.selected AND sp.visibility = 'public')
@@ -322,7 +322,7 @@ export async function dailyEdition(date: string, start: Date, end: Date): Promis
   const [talk, named] = await Promise.all([
     storyIds.length
       ? sql<{ story_id: number; participants: number }[]>`
-        SELECT cs.story_id, count(DISTINCT cs.participant_key)::int AS participants FROM ${currentSignals()} cs
+        SELECT cs.story_id, count(DISTINCT cs.participant_key)::int AS participants FROM ${(await currentSignals()).query} cs
         WHERE cs.story_id = ANY(${storyIds}::bigint[]) AND cs.observed_at >= ${start} AND cs.observed_at < ${end}
         GROUP BY cs.story_id`
       : [],

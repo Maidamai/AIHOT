@@ -28,7 +28,7 @@ export async function loader({ request }: { request: Request }) {
 export function meta({ loaderData }: { loaderData?: { hot: HotResponse } }) {
   return pageMeta({
     title: withSubject("热点榜"),
-    description: !loaderData?.hot.entries.length ? "热度榜尚未启用，暂无已生成的热度排名。可阅读行业动态与资料。" : `${subjectAfter("过去 48 小时", "圈")}讨论最多的 10 个事件：热度、走势，以及都有谁在报道。`,
+    description: !loaderData?.hot.entries.length ? "暂无符合近期热度规则的事件，可阅读行业动态与资料。" : `${subjectAfter("过去 48 小时", "圈")}讨论最多的 10 个事件：热度、走势，以及都有谁在报道。`,
     path: "/hot",
     image: "/og/pages/hot.png",
   });
@@ -248,7 +248,7 @@ export default function HotPage() {
         large
         sub={
           <>
-            {lead ? <>过去 {hot.windowHours}{`${subjectAfter(" 小时", "圈")}讨论最多的 `}{hot.entries.length || 10} 件事</> : "暂无已生成的热度排名"}
+            {lead ? <>过去 {hot.windowHours}{`${subjectAfter(" 小时", "圈")}讨论最多的 `}{hot.entries.length || 10} 件事</> : "暂无符合近期热度规则的事件"}
             {hot.computedAt && (
               <>
                 {" · "}
@@ -270,10 +270,10 @@ export default function HotPage() {
               <span className={`absolute inline-flex size-full rounded-full bg-hot opacity-30 ${lead ? "animate-ping" : "hidden"}`} />
               <span className="relative inline-flex size-2 rounded-full bg-hot" />
             </span>
-            {lead ? "实时热度" : "热度榜尚未启用"}
+            {lead ? "实时热度" : "暂无近期热点"}
           </div>
           <h1 className="mt-1.5 text-[24px] font-bold leading-[1.3] tracking-[-0.01em] text-ink lg:text-[26px]">{withSubject("热点榜")}</h1>
-          <p className="mt-1.5 text-[13.5px] text-ink-3">{lead ? <>过去 {hot.windowHours}{` 小时，${withSubject("圈")}讨论最多的 `}{hot.entries.length || 10} 件事</> : "暂无已生成的热度排名"}</p>
+          <p className="mt-1.5 text-[13.5px] text-ink-3">{lead ? <>过去 {hot.windowHours}{` 小时，${withSubject("圈")}讨论最多的 `}{hot.entries.length || 10} 件事</> : "暂无符合近期热度规则的事件"}</p>
         </div>
         {hot.computedAt && (
           <p className="text-[12px] text-ink-4">
@@ -284,7 +284,7 @@ export default function HotPage() {
 
       {!lead ? (
         <div className="card rounded-sheet">
-          <EmptyState title="热度榜尚未启用">暂无已生成的热度排名。<Link to="/" className="mt-3 block text-accent">阅读行业动态与资料 →</Link></EmptyState>
+          <EmptyState title="暂无近期热点">近期已审资讯尚未形成符合热度规则的事件。<Link to="/" className="mt-3 block text-accent">阅读行业动态与资料 →</Link></EmptyState>
         </div>
       ) : (
         <>

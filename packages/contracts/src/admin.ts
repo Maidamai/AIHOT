@@ -75,7 +75,14 @@ export interface AdminSourceUpdate {
   reason?: string;
 }
 
+export interface AdminSourceRuntime {
+  enabled: boolean; health: string; intervalMinutes: number | null;
+  nextRunAt: string | null; lastSuccessAt: string | null; heartbeatAt: string | null; lastError: string | null;
+  label: string; detailPath: string;
+}
+
 export interface AdminSourceRow {
+  runtime?: AdminSourceRuntime | null;
   id: string;
   name: string;
   kind: string;
@@ -101,6 +108,7 @@ export interface AdminSources {
 }
 
 export interface AdminSource {
+  runtime?: AdminSourceRuntime | null;
   id: string;
   name: string;
   kind: string;

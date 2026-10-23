@@ -1,5 +1,5 @@
 import { loadReport } from "@aihot/backend/publication/reports";
-import { runNewsEditorial, composeApprovedReports, retryNewsEditorial, newsQueue } from "../backend/news-editorial.ts";
+import { runNewsEditorial, composeApprovedReports, refreshApprovedHot, retryNewsEditorial, newsQueue } from "../backend/news-editorial.ts";
 import { recallFacts } from "@aihot/backend/events/recall";
 import { reportText } from "@aihot/backend/events/relate";
 import { loadPool } from "@aihot/backend/publication/pool";
@@ -184,7 +184,7 @@ import { config } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
 import { installModules } from "@aihot/backend/modules";
 import { setVisibility } from "@aihot/backend/admin/content";
-import { updateSource } from "@aihot/backend/admin/sources";
+import { listSources, sourceDetail, fetchNow, updateSource } from "@aihot/backend/admin/sources";
 import { republishKey } from "@aihot/backend/jobs/publication";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { publishArticle } from "@aihot/backend/publication/publish";
@@ -2054,6 +2054,8 @@ test('reviewed news facts reuse core events, selection and editions; replay, wit
     globalThis.fetch=async()=>{paid++;return Response.json({model:TRIAL.model,choices:[{message:{content:JSON.stringify({query:'synthetic',decisions:[{id:'C1',relation:'SAME_OCCURRENCE',confidence:1}],selection:{addsValue:false,reason:'Synthetic same fact'}})}}],usage:{prompt_tokens:200,completion_tokens:80}});};
     lease=await acquireProcessingLease();
     assert.deepEqual(await lease.run(()=>composeApprovedReports()),{generated:[]});assert.equal(paid,0);
+    assert.deepEqual(await lease.run(()=>refreshApprovedHot()),{ranked:false,sampled:false});
+    assert.equal((await sql`SELECT count(*)::int AS n FROM hot_rankings`)[0].n,0);
     const first=await make(71);
     const before=(await sql`SELECT selected,selection_candidate FROM publications WHERE article_id=${first.articleId}`)[0];assert.equal(before.selected,false);assert.equal(before.selection_candidate,true);
     await lease.release();lease=undefined;
@@ -2064,6 +2066,10 @@ test('reviewed news facts reuse core events, selection and editions; replay, wit
     const firstPub=(await sql`SELECT selected,story_id,fact_id FROM publications WHERE article_id=${first.articleId}`)[0];assert.equal(firstPub.selected,true);assert.ok(firstPub.fact_id);
     const second=await make(72);await lease.run(()=>runNewsEditorial(second.job));assert.equal(paid,1,'Second same-fact report uses the original batch judgement');
     const secondPub=(await sql`SELECT fact_id FROM publications WHERE article_id=${second.articleId}`)[0];assert.equal(secondPub.fact_id,firstPub.fact_id);
+    const hotAt=new Date(Date.now()+3600000),firstHot=await lease.run(()=>refreshApprovedHot(hotAt));assert.equal(firstHot.ranked,true);assert.equal(firstHot.sampled,true);assert.equal(paid,1);
+    assert.deepEqual(await lease.run(()=>refreshApprovedHot(hotAt)),{ranked:false,sampled:false});
+    const {fisheryReaderTarget}=await import('../backend/publication-bridge.ts');
+    assert.deepEqual(await fisheryReaderTarget('article',first.id),{url:`/items/${first.articleId}`});
     const [ledger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;assert.equal(ledger.value.entries.length,1);assert.equal(ledger.value.entries[0].state,'received');
     await syncFisheryPublications('synthetic replay');await lease.run(()=>runNewsEditorial(first.job));await lease.run(()=>runNewsEditorial(second.job));assert.equal(paid,1);
     assert.equal((await sql`SELECT count(*)::int AS n FROM analyses WHERE article_id=${first.articleId}`)[0].n,1);
@@ -2072,6 +2078,9 @@ test('reviewed news facts reuse core events, selection and editions; replay, wit
     await decideFlow(first.task.id,{decision:'rejected',snapshotHash:first.detail.snapshotHash,note:'Synthetic withdrawal'},'tester');
     assert.equal((await loadItemDetail(first.articleId)).kind,'not_found');await assert.rejects(lease.run(()=>runNewsEditorial(first.job)),/Current approved/);assert.equal(paid,1);
     await decideFlow(second.task.id,{decision:'rejected',snapshotHash:second.detail.snapshotHash,note:'Synthetic withdrawal of remaining evidence'},'tester');
+    await assert.rejects(fisheryReaderTarget('article',first.id),/No current readable/);
+    const {currentSignals}=await import('@aihot/backend/events/hot');
+    assert.equal((await sql`SELECT count(*)::int AS n FROM ${(await currentSignals()).query} cs WHERE article_id IN (${first.articleId},${second.articleId})`)[0].n,0,'Revoked evidence stops contributing heat before projection jobs run');
     for(const issue of reports.generated){const [kind,key]=issue.split(':');const detail=await loadReport(kind as 'daily'|'weekly'|'monthly',key);assert.equal(detail!.lead,null);const citations=[...detail!.sections.flatMap(s=>s.items),...detail!.flashes];assert.ok(citations.length);for(const citation of citations){assert.equal(citation.available,false);assert.equal(citation.summary,null);assert.equal(citation.sourceUrl,'');}}
     assert.equal((await recallFacts('another',reportText('测试机构发布远洋船队申报安排',first.body),0.6,10)).length,0,'Revoked articles cannot supply event identity');
     await decideFlow(second.task.id,{decision:'qualified',snapshotHash:second.detail.snapshotHash,note:'Synthetic reapproval before revision'},'tester');await syncFisheryPublications('synthetic reapproval');
@@ -2111,4 +2120,24 @@ test('news structure receipt survives persistence failure and fact edits invalid
     assert.equal((await flowDetail(task.id)).reviewBound,false);
     await assert.rejects(decideFlow(task.id,{decision:'qualified',snapshotHash:done.snapshotHash,note:'Must not approve altered fact'},'tester'),/Structured news identity/);
   }finally{await sql.unsafe('DROP TRIGGER IF EXISTS structure_save_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION structure_save_fault()');}
+});
+
+
+test('managed source status uses real cadence, effective filters and guarded core controls', async()=>{
+  await archiveFixture();
+  await configureArchive({enabled:true,mode:'hourly',runId:'reader-runtime-moa'});
+  await sql`INSERT INTO sources(id,name,kind,enabled,participation_mode) VALUES('fishery-column-npfc','Synthetic NPFC runtime','external',false,'editorial') ON CONFLICT(id) DO UPDATE SET enabled=false,kind='external',participation_mode='editorial',fail_count=0,last_error=NULL`;
+  await sql`DELETE FROM settings WHERE key=${npfcArchive.key}`;
+  await npfcArchive.configureArchive({enabled:true,mode:'six_hourly',runId:'reader-runtime-npfc'});
+  const all=await listSources({q:'fishery-column',enabled:'true'});
+  assert.equal(all.rows.find(s=>s.id===bridgeSource)?.runtime?.intervalMinutes,60);
+  assert.equal(all.rows.find(s=>s.id==='fishery-column-npfc')?.runtime?.intervalMinutes,360);
+  assert.equal(all.rows.find(s=>s.id===bridgeSource)?.enabled,false,'Underlying external source stays disabled');
+  assert.ok(all.totals.enabled>=2);
+  const detail=await sourceDetail(bridgeSource);assert.equal(detail?.source.runtime?.enabled,true);
+  await assert.rejects(updateSource(bridgeSource,{patch:{interval_minutes:30},version:new Date(detail!.source.updated_at).toISOString()},'tester'),/受控采集/);
+  await assert.rejects(fetchNow(bridgeSource,'tester'),/受控采集/);
+  await configureArchive({enabled:false,mode:'hourly',runId:'reader-runtime-moa'});
+  assert.ok((await listSources({health:'paused'})).rows.some(s=>s.id===bridgeSource));
+  assert.equal((await listSources({enabled:'true'})).rows.some(s=>s.id===bridgeSource),false);
 });

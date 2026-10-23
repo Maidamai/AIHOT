@@ -141,13 +141,6 @@ export interface WebModule {
   };
   /** Parts of every public page (root.tsx); the admin has its own chrome and gets none of them. */
   root?: {
-    /** A module may own the chrome of a bounded route subtree. Admin chrome always takes priority. */
-    shell?: {
-      matches: (pathname: string) => boolean;
-      title: string;
-      Component: ComponentType<{ children: ReactNode }>;
-      Error: ComponentType<{ status: number }>;
-    };
     /** An inline script in <head>, after the theme's: it runs before the page paints. */
     bootScript?: string;
     /** Above the page's content. */
