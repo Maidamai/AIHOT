@@ -13,11 +13,13 @@ import {assertNpfcRobots,discoverNpfc,npfcAttachment,prepareNpfc} from './npfc-c
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { captureNpfcPdf, verifyNpfcPdf, type ConditionalHeaders } from "./npfc-pdf-cache.ts";
 import {noticePage,attachmentFormat,prepareNotice,type NoticeAttachment} from './fujian-notices.ts';
+import {isBusinessSource,assertBusinessRobots,discoverBusinessListing,prepareBusinessCapture,businessAttachments,type BusinessSourceId} from './business-capture.ts';
+import type {BusinessAttachment} from './business-sources.ts';
 import {assertJfaRobots,discoverJfaPress,jfaPage,prepareJfaPress,jfaNeedsReview,type JfaAttachment} from './jfa-press.ts';
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
-export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc> | ReturnType<typeof prepareNpfc> | ReturnType<typeof prepareNotice>;
+export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc> | ReturnType<typeof prepareNpfc> | ReturnType<typeof prepareNotice> | ReturnType<typeof prepareBusinessCapture>;
 export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "needs_review" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
@@ -87,7 +89,19 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
   if (receipt.requestedUrl !== item.url) throw new Error("Discovery URL/receipt mismatch");
   if(item.archiveId !== `${batch.id}_${sha256(item.column+item.url).slice(0,16)}`) throw new Error("Archive identity mismatch");
   let result: PreparedArticle;
-  if (item.column === "iotc") {
+  if(isBusinessSource(item.column)){
+    const robots=await readArchive(root,`${item.column}-robots`,256*1024);assertBusinessRobots(item.column,robots.receipt,robots.body);
+    const listing=await readArchive(root,`${item.column}-list`,6*1024*1024);
+    const candidate=discoverBusinessListing(item.column,listing.receipt,listing.body).native.find(c=>c.url===item.url);
+    if(!candidate)throw new Error('Business article absent from archived listing');
+    const files:BusinessAttachment[]=[];
+    for(const [i] of businessAttachments(item.column,candidate,receipt,raw).entries()){
+      const a=await readArchive(root,`${item.archiveId}-attachment-${i}`,10*1024*1024).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
+      if(!a)break;
+      files.push({receipt:a.receipt,bytes:a.body,parsed:await(options.parsePdf??extractPdf)(a.body)});
+    }
+    result=prepareBusinessCapture(item.column,candidate,receipt,raw,files);
+  } else if (item.column === "iotc") {
     const robots = await readArchive(root, "iotc-robots", 256 * 1024);
     assertIotcRobots(robots.receipt, robots.body);
     const listing = await readArchive(root, "iotc-list", 6 * 1024 * 1024);
@@ -318,16 +332,17 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       const config = COLUMNS[column];
       const robots = await get(new URL("/robots.txt", config.url).href, `${column}-robots`);
       // Inspected sources currently return 404. Any new policy or denial needs operator inspection.
-      if (column === "iotc") assertIotcRobots(robots.receipt, robots.body);
+      if(isBusinessSource(column))assertBusinessRobots(column,robots.receipt,robots.body);
+      else if (column === "iotc") assertIotcRobots(robots.receipt, robots.body);
       else if(column==='npfc')assertNpfcRobots(robots.receipt,robots.body);
       else if(column==='jfa-press')assertJfaRobots(robots.receipt,robots.body);
       else if (robots.receipt.status !== 404) throw new Error(`Robots status ${robots.receipt.status}; stop for policy inspection`);
-      const delay = column === "iotc"||column==='npfc' ? 10_000 : column==='fujian-notices'||column==='jfa-press'?3000:1200;
+      const delay = column === "iotc"||column==='npfc' ? 10_000 : column==='fujian-notices'||column==='jfa-press'||isBusinessSource(column)?3000:1200;
       await wait(delay);
       const listingUrl=options.page?.url??config.url,listing = await get(listingUrl, `${column}-list`);
       if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || ((column === "iotc"||column==='npfc'||column==='jfa-press') && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
       if(options.page&&listing.receipt.finalUrl!==listingUrl) throw new Error("Incremental listing redirected to a different page");
-      const html=new TextDecoder("utf8", { fatal: true }).decode(listing.body),discovered = discoverColumn(column, html);
+      const html=new TextDecoder("utf8", { fatal: true }).decode(listing.body),discovered = isBusinessSource(column)?discoverBusinessListing(column,listing.receipt,listing.body):discoverColumn(column, html);
       if(options.page) {
         source.pagination=isNewsColumn(column)
           ? {pageUrl:listingUrl,pageIndex:0,nextUrl:null,totalPages:null,scope:"current_page_only"}
@@ -377,7 +392,15 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           await wait(delay);
           const article = await get(candidate.url, archiveId);
           let prepared: PreparedArticle;
-          if (column === "iotc") {
+          if(isBusinessSource(column)){
+            const native=discoverBusinessListing(column,listing.receipt,listing.body).native.find(c=>c.url===candidate.url)!;
+            const files:BusinessAttachment[]=[];
+            for(const [i,a] of businessAttachments(column,native,article.receipt,article.body).entries()){
+              try{await wait(delay);const file=await get(a.url,`${archiveId}-attachment-${i}`);files.push({receipt:file.receipt,bytes:file.body,parsed:await(options.parsePdf??extractPdf)(file.body)});await check();}
+              catch(error){await check();item.error=String((error as Error).message).slice(0,500);break;}
+            }
+            prepared=prepareBusinessCapture(column,native,article.receipt,article.body,files);
+          } else if (column === "iotc") {
             let pdf: Parameters<typeof prepareIotc>[3];
             if (article.receipt.status === 200) {
               const url = iotcAttachment(article.body, article.receipt.finalUrl);

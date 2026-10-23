@@ -1206,11 +1206,11 @@ test("ID expansion retains occurrence, date, unit, role and expanded review-enve
   const body="会议A已召开。会议B拟召开。会议未召开。如果会议召开则另行通知。公海是治理领域。船队10艘。会议于5月16日召开。",input=idTestInput(body),request=buildFisheryDraftRequest(input,"mock");
   const parse=(patch:object)=>validateFisheryDraft(input,request.schema.parse({...idTestDraft(),...patch}));
   assert.doesNotThrow(()=>parse({eventStatus:{value:"reported_occurred",evidence:["p1s1"]}}));
-  for(const text of ["会议已正式召开。","报道记载会议已正式召开。","会议如期举行。","工作已按期完成。","The meeting was held.","The meeting took place."]) {
+  for(const text of ["“新形势下远洋渔业可持续发展”专题研讨班在福州举办。","报道记载会议已正式召开。","会议如期举行。","工作已按期完成。","The meeting was held.","The meeting took place."]) {
     const positive=idTestInput(text),positiveRequest=buildFisheryDraftRequest(positive,"mock");
     assert.doesNotThrow(()=>validateFisheryDraft(positive,positiveRequest.schema.parse({...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]}})),text);
   }
-  for(const text of ["报道声称会议已召开，但事实并非如此。","据称会议已召开。","会议已召开一说未经证实。","主办方否认会议已召开。","会议是否已召开尚不清楚。","会议已召开？","The meeting allegedly took place.","It was claimed that the meeting was held, but that was not the case.","The meeting took place according to an unverified claim.","The organizer denied that the meeting took place.","会议未举行。","工作未完成。","会议并未正式召开。","会议未如期召开。","工作未能按期完成。","会议尚未正式举行。","The meeting never took place.","The meeting was not actually held.","The work was never completed.","会议取消召开。","会议延期举行。","若条件具备会议召开。","会议A已召开，会议B拟召开。","The meeting was not held.","The meeting was held if conditions were met.","The meeting was held but cancelled."]) {
+  for(const text of ["会议未如期举办。","会议拟举办。","会议将举办。","会议已举办但随后辟谣。","据称会议已举办。","报道声称会议已召开，但事实并非如此。","据称会议已召开。","会议已召开一说未经证实。","主办方否认会议已召开。","会议是否已召开尚不清楚。","会议已召开？","The meeting allegedly took place.","It was claimed that the meeting was held, but that was not the case.","The meeting took place according to an unverified claim.","The organizer denied that the meeting took place.","会议未举行。","工作未完成。","会议并未正式召开。","会议未如期召开。","工作未能按期完成。","会议尚未正式举行。","The meeting never took place.","The meeting was not actually held.","The work was never completed.","会议取消召开。","会议延期举行。","若条件具备会议召开。","会议A已召开，会议B拟召开。","The meeting was not held.","The meeting was held if conditions were met.","The meeting was held but cancelled."]) {
     const negative=idTestInput(text),negativeRequest=buildFisheryDraftRequest(negative,"mock");
     assert.throws(()=>validateFisheryDraft(negative,negativeRequest.schema.parse({...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]}})),/Reported occurrence/,text);
   }
@@ -1241,6 +1241,13 @@ test("review wire only supports original claim ID subsets and preserves complete
 
 
 test("saved generation and review cannot inherit a new prompt/schema or catalog version",()=>{
+  const legacy={...idTestInput("专题研讨班在福州举办。"),rulesVersion:"fishery-rules-v5.5" as const};
+  const oldRequest=buildFisheryDraftRequest(legacy,"mock"),wire={...idTestDraft(),eventStatus:{value:"reported_occurred",evidence:["p1s1"]}};
+  assert.throws(()=>validateFisheryDraft(legacy,oldRequest.schema.parse(wire)),/Reported occurrence/);
+  const current={...legacy,rulesVersion:undefined};
+  assert.doesNotThrow(()=>validateFisheryDraft(current,buildFisheryDraftRequest(current,"mock").schema.parse(wire)));
+  assert.notEqual(oldRequest.promptVersion,buildFisheryDraftRequest(current,"mock").promptVersion);
+
   const input=idTestInput("合成公海会议已召开。"),catalog=buildEvidenceCatalog(input),generation=buildFisheryDraftRequest(input,"mock"),draft=validateFisheryDraft(input,generation.schema.parse({...idTestDraft(),summaryZh:[{sentence:"合成公海会议已召开。",evidence:["p1s1"]}]}));
   for(const [request,schemaVersion] of [[generation,"fishery-draft-wire-v5"],[buildFisheryReviewRequest(input,draft,"mock"),"fishery-review-wire-v3"]] as const) {
     const expected={promptVersion:request.promptVersion,schemaVersion},saved={...expected,evidenceCatalog:evidenceBinding(catalog)};
@@ -1747,4 +1754,29 @@ test('business sources: mismatched originals and redirects cannot produce review
  const raw=faoBusinessHtml(),receipt=businessReceipt(faoBusinessUrl,raw);
  for(const altered of [{...receipt,status:404},{...receipt,sha256:'0'.repeat(64)},{...receipt,finalUrl:'https://other.example/page'}])assert.throws(()=>prepareBusinessArticle('fao-tuna',faoBusinessCandidate,altered,raw),/HTTP 200/);
  const rawLarge=faoBusinessHtml('09/11/2023','A'.repeat(64001));assert.equal(prepareBusinessArticle('fao-tuna',faoBusinessCandidate,businessReceipt(faoBusinessUrl,rawLarge),rawLarge).body,null);
+});
+
+import {businessMpaFixture} from './fixtures.ts';
+import {businessEvidenceSections,discoverBusinessListing,businessDependencyChanged} from '../backend/business-capture.ts';
+test('business capture: native RSS, bounded archive, reconstructed evidence and dependency changes',async()=>{
+ const f=businessMpaFixture(),dir=await mkdtemp(path.join(tmpdir(),'business-capture-'));
+ const fetch=(mode='ok'):ColumnFetcher=>async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=>null},body:Buffer.from(url.endsWith('robots.txt')?'Not found':url===COLUMNS['mpa-port'].url?f.listing:url===f.url?f.landing()+(mode==='chrome'?'<footer>Changed chrome</footer>':''):mode==='bad-pdf'?'changed unreadable bytes':f.pdf)});
+ try{
+  const listing=discoverBusinessListing('mpa-port',businessReceipt(COLUMNS['mpa-port'].url,Buffer.from(f.listing)),Buffer.from(f.listing));
+  assert.equal(listing.listed,2);assert.equal(listing.candidates.length,1);assert.equal(listing.candidates[0].listDate,'2026-10-22');assert.equal(listing.native[0].bodyText,null);
+  const batch=await collectColumns({id:'business-archive',dataDir:dir,columns:['mpa-port'],limit:1,wait:async()=>{},fetch:fetch(),parsePdf:f.parsePdf});
+  assert.equal(batch.items[0].state,'ready',batch.items[0].error??'');
+  const p=await verifyBatchItem(dir,batch,batch.items[0],{parsePdf:f.parsePdf});
+  assert.equal(p.dates.published.value,'2026-10-22');assert.equal(p.sourceCapture.adapter,'mpa-port');assert.equal(businessEvidenceSections(p.body!,p.sourceCapture)!.length,2);
+  const original=JSON.stringify(p),forged=structuredClone(batch.items[0]);forged.prepared!.sourceCapture.businessContext!.sections[1].sourceUrl='https://example.org/forged.pdf';
+  assert.equal(JSON.stringify(await verifyBatchItem(dir,batch,forged,{parsePdf:f.parsePdf})),original,'Manifest edits cannot replace raw source proof');
+  const observation=(v:typeof p)=>({...observationFixture,sourceCapture:v.sourceCapture,rawSha256:v.sourceCapture.rawSha256,dates:v.dates});
+  const revisit=await collectColumns({id:'business-revisit',dataDir:dir,columns:['mpa-port'],limit:1,wait:async()=>{},fetch:fetch('chrome'),parsePdf:f.parsePdf}),again=await verifyBatchItem(dir,revisit,revisit.items[0],{parsePdf:f.parsePdf});
+  assert.equal(evidenceIdentity(observation(p)),evidenceIdentity(observation(again)));assert.notEqual(p.sourceCapture.rawSha256,again.sourceCapture.rawSha256);
+  const failed=await collectColumns({id:'business-failed',dataDir:dir,columns:['mpa-port'],limit:1,wait:async()=>{},fetch:fetch('bad-pdf'),parsePdf:f.parsePdf});
+  assert.equal(failed.items[0].state,'failed');const unavailable=await verifyBatchItem(dir,failed,failed.items[0],{parsePdf:f.parsePdf});
+  assert.equal(unavailable.body,null);assert.equal(businessDependencyChanged(p.sourceCapture,unavailable.sourceCapture),true);
+  let sends=0;const stopped=await collectColumns({id:'business-robots-denied',dataDir:dir,columns:['mpa-port'],limit:1,wait:async()=>{},fetch:async url=>{sends++;return {url,status:403,body:Buffer.from('denied'),headers:{get:()=>null}};}});
+  assert.equal(sends,1);assert.equal(stopped.items.length,0);assert.match(stopped.sources[0].error!,/robots/);
+ }finally{await rm(dir,{recursive:true,force:true});}
 });

@@ -1,3 +1,4 @@
+import {businessEvidenceSections} from './business-capture.ts';
 import { enqueuePublication, publicationDecisionHash } from "./publication-queue.ts";
 // Human editorial authorship with independent AI comparison and explicit final human approval.
 import { randomUUID } from "node:crypto";
@@ -46,7 +47,7 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
   }
   if (!body || sha256(body) !== capture.bodySha256) throw new Conflict("Complete archived body missing or changed");
   let sections: EvidenceCatalog["sections"];
-  try { sections = capture.adapter === "fujian-notices" ? noticeEvidenceSections(body, capture) : capture.adapter==='jfa-press'?jfaEvidenceSections(body,capture):undefined; }
+  try { sections = capture.adapter === "fujian-notices" ? noticeEvidenceSections(body, capture) : capture.adapter==='jfa-press'?jfaEvidenceSections(body,capture):businessEvidenceSections(body,capture); }
   catch (error) { throw new Conflict(`Business evidence unavailable: ${(error as Error).message}`); }
   let pages: { page: number; text: string }[] | undefined;
   if (!sections && capture.attachmentPages) {

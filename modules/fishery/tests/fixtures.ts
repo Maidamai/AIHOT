@@ -131,3 +131,14 @@ export function pdfFixture(blank = false, encrypted = false, text = "Synthetic f
   chunks.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${encrypted ? ` /Encrypt 6 0 R /ID [<${id.toString("hex")}><${id.toString("hex")}>]` : ""} >>\nstartxref\n${size}\n%%EOF\n`));
   return Buffer.concat(chunks);
 }
+
+// Complete synthetic port notice; real Linux PDF coverage is validated separately from source archives.
+export function businessMpaFixture(){
+ const url='https://www.mpa.gov.sg/media-centre/details/synthetic-port-notice',pdfUrl='https://www.mpa.gov.sg/api/media/test/synthetic.pdf';
+ const title='PORT MARINE NOTICE NO. 142 OF 2026 - CREW OFFICE',text='PORT MARINE NOTICE NO. 142 OF 2026. Synthetic crew office operations.';
+ const pdf=pdfFixture(false,false,text);
+ const listing=`<rss version="2.0"><channel><title>Synthetic</title><item><title>${title}</title><link>${url}</link><pubDate>Wed, 21 Oct 2026 17:00:00 GMT</pubDate><description>Incomplete RSS teaser</description></item><item><title>Keynote Speech</title><link>https://www.mpa.gov.sg/media-centre/details/speech</link></item></channel></rss>`;
+ const landing=(href=pdfUrl)=>`<div class="news-header"><h3>${title}</h3><div class="news-header__date">Published 22 Oct 2026</div></div><div class="news-detail__content">Notice<a href="${href}">Complete PDF</a></div>`;
+ const parsePdf=async(bytes:Buffer)=>({status:'parsed' as const,rawSha256:createHash('sha256').update(bytes).digest('hex'),parser:'synthetic/v1',pages:1,text:'--- Page 1 ---\n'+text});
+ return {url,pdfUrl,title,pdf,listing,landing,parsePdf};
+}

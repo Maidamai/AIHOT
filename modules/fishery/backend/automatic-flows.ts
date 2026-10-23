@@ -106,6 +106,8 @@ export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHe
       // A changed body may supersede only a pristine, never-sent automatic placeholder. Running,
       // failed and receipt-bearing tasks keep their ordinary explicit reconciliation requirements.
       const [old]=await sql`SELECT id,identity,status,snapshot,draft,stage_requests FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY created_at DESC,id DESC LIMIT 1`;
+      if(old&&old.snapshot.sourceRevision===d.source_revision&&old.snapshot.observationRevision===d.revision&&old.snapshot.observationHash===d.content_hash&&old.snapshot.executionConfig!==fisheryConfigurationVersion()&&(!old.identity.startsWith('auto-')||old.status!=='queued'||old.draft||Object.keys(old.stage_requests).length))
+        throw new Conflict('Rules changed for an existing attempted or decided task; explicit current-version review required, no automatic repeat charge');
       if(old?.identity.startsWith('auto-')&&old.identity!==identity&&old.status==='queued'&&!old.draft&&!Object.keys(old.stage_requests).length)
         await supersedeUnstarted(d.id,old.id,d as never,rulesHash);
       const task=await createFlow(d.id,{identity,selection:true},'automatic-dispatch');

@@ -9,7 +9,9 @@ import { completeReceipt } from "@aihot/backend/providers/receipts";
 import type { BusinessGuidePayload } from "../business-contracts.ts";
 import { businessGuideContext, validateBusinessGuidePayload } from "./business-guides.ts";
 import { buildEvidenceCatalog, evidenceBinding, type EvidenceInput } from "./evidence.ts";
-import { FISHERY_RULES_VERSION } from "./ai-draft.ts";
+// Guide validation did not change with the article-only v5.6 relevance/occurrence fix.
+// Preserve its exact existing binding; bump this when guide deterministic validation changes.
+const GUIDE_DETERMINISTIC_RULES_VERSION = "fishery-rules-v5.5";
 import { fisheryWireBytes } from "./ai-review.ts";
 import { readSourceBody } from "./source-body.ts";
 import { hash, NotFound } from "./store.ts";
@@ -97,7 +99,7 @@ export function buildGuideAIReviewRequest(input: EvidenceInput, raw: unknown, mo
   const reviewSystem = claims.some(c => (c.assertion as { state?: string }).state === "not_applicable" || c.notStated)
     ? system + " 新增缺值状态规则：unverified/extraction_failed仅说明尚未确认，不作为事实断言。not_applicable断言该字段不适用于本事项，必须由候选原锚直接支持，不得凭常识推断。not_stated断言所给完整原文未载明该字段，必须核对完整正文和附件范围；只有coverage=complete_input且确实未载明时才可supported，此状态是supported允许空alias数组的唯一例外。reason是待核查的候选说明，不是证据；原文有该项内容时须contradicted并指出原文alias，不得把提取遗漏判为未载明。" : system;
   const request: ChatJsonOptions<typeof schema> = { model, purpose: "fishery_business_quality_review", subject: `guide:${hash(payload)}`,
-    promptVersion: `${GUIDE_AI_RULES_VERSION}:${FISHERY_RULES_VERSION}:${catalog.version}:${hash(reviewSystem)}`, system: reviewSystem,
+    promptVersion: `${GUIDE_AI_RULES_VERSION}:${GUIDE_DETERMINISTIC_RULES_VERSION}:${catalog.version}:${hash(reviewSystem)}`, system: reviewSystem,
     // Full body appears once. IDs point to exact UTF-16 intervals; no selected-page/sentence truncation.
     user: JSON.stringify({ candidateAnchors: catalog.spans.flatMap((span, alias) => claims.some(c => c.evidenceIds.includes(span.id)) ? [{ alias, id: span.id, quote: span.quote }] : []), source: { body: input.body, offsetUnit: "UTF-16", evidenceCatalog: { ...evidenceBinding(catalog), columns: ["alias", "id", "paragraph", "page", "start", "end"], spans: catalog.spans.map(({ id, paragraph, page, start, end }, alias) => [alias, id, paragraph, page, start, end]) },
       pageColumns: ["page", "start", "end"], pages: catalog.pages.map(p => [p.page, p.start, p.end]), ...(catalog.pdfBlankReview?{reviewedBlankPages:catalog.pdfBlankReview}:{}), ...(catalog.sections ? { sourceSections: catalog.sections, spanSources: catalog.spans.map(s => ({ id: s.id, source: s.source })), pageSources: catalog.pages.map(p => ({ page: p.page, start: p.start, source: p.source })) } : {}) }, candidate: payload,
@@ -134,7 +136,7 @@ async function prepare(guideId: string, db: Db = sql) {
   const editorialRevision = guide.status === "approved" && human?.mode === "final" && human.revision === guide.revision && Number.isInteger(human.aiEditorialRevision)
     ? human.aiEditorialRevision : guide.revision;
   const binding = { editorialRevision, payloadHash: guide.payload_hash, snapshotHash: context.snapshotHash, evidence: evidenceBinding(prepared.catalog), schemaVersion: "fishery-business-review-compact-wire/3", rulesVersion: GUIDE_AI_RULES_VERSION,
-    deterministicRules: FISHERY_RULES_VERSION, promptVersion: prepared.request.promptVersion, model: TRIAL.model, maxTokens: TRIAL.maxOutputTokens, maxWireBytes: TRIAL.maxWireBytes };
+    deterministicRules: GUIDE_DETERMINISTIC_RULES_VERSION, promptVersion: prepared.request.promptVersion, model: TRIAL.model, maxTokens: TRIAL.maxOutputTokens, maxWireBytes: TRIAL.maxWireBytes };
   const bindingHash = hash(binding);
   prepared.request.subject = `fishery-guide:${guideId}:${bindingHash}:review:1`;
   prepared.request.attemptTag = `fishery-guide:${guideId}:${bindingHash}:review:1`;

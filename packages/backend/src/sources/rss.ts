@@ -165,9 +165,14 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
     return { candidates: [], validator, notModified: true };
   }
   requireOk(res);
+  return { candidates: parseRss(source, res.text(), res.url), validator, notModified: false };
+}
+
+/** Parse exact archived feed bytes with the same native identity/date/body rules, without another GET. */
+export function parseRss(source: SourceRow, xml: string, responseUrl: string): Candidate[] {
   let doc: Record<string, any>;
   try {
-    doc = parser.parse(res.text());
+    doc = parser.parse(xml);
   } catch (e) {
     throw new FetchError(`feed parse error: ${String(e).slice(0, 200)}`);
   }
@@ -181,7 +186,7 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
       const guid = text(it.guid);
       // A site-relative link resolves against the fetched document, as Atom links do; absolute ones stay as given.
       const href = text(it.link);
-      const page = (href && !/^[a-z][a-z\d+.-]*:/i.test(href) ? URL.parse(href, res.url)?.toString() : href) || (normalizeUrl(guid) ? guid : "");
+      const page = (href && !/^[a-z][a-z\d+.-]*:/i.test(href) ? URL.parse(href, responseUrl)?.toString() : href) || (normalizeUrl(guid) ? guid : "");
       const enclosures = arr(it.enclosure as Record<string, string> | Array<Record<string, string>>);
       // An episode with no page (no <link>, a guid that is no address) links to its audio or video file,
       // which a browser plays. Its identity stays the one its guid gives, and it has no page to read a body from.
@@ -213,13 +218,13 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
         raw: { guid: guid || null },
       });
     }
-    return { candidates: out, validator, notModified: false };
+    return out;
   }
 
   const feed = doc.feed;
   if (feed) {
     // XML Base is inherited; redirects determine the document's base, not the configured URL.
-    const feedBase = new URL(feed["@xml:base"] ?? "", res.url).toString();
+    const feedBase = new URL(feed["@xml:base"] ?? "", responseUrl).toString();
     for (const e of arr(feed.entry)) {
       const entryBase = new URL(e["@xml:base"] ?? "", feedBase).toString();
       const entryUrl = atomLink(e.link, entryBase);
@@ -246,7 +251,7 @@ export async function fetchRss(source: SourceRow, opts: { force?: boolean } = {}
         raw: { id: text(e.id) || null },
       });
     }
-    return { candidates: out, validator, notModified: false };
+    return out;
   }
   throw new FetchError("not an RSS/Atom document");
 }

@@ -7,9 +7,13 @@ import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { archiveReceiptSchema, sha256 } from "./source-adapters.ts";
 import { discoverIotc } from "./iotc-columns.ts";
 import {discoverNpfc,NPFC_LIST} from './npfc-columns.ts';
+import {isBusinessSource,type BusinessSourceId} from './business-capture.ts';
 import {JFA_PRESS,discoverJfaPress,prepareJfaPress} from './jfa-press.ts';
 
 export const COLUMNS = {
+  'itf-fisheries':{name:'ITF · 渔业劳动资讯',url:'https://www.itfglobal.org/en/sector/fisheries',list:'article.node--type-news.node--view-mode-teaser',body:'.field--name-body',issuer:'International Transport Workers’ Federation (ITF)'},
+  'fao-tuna':{name:'FAO GLOBEFISH · 金枪鱼市场分析',tier:'T1',url:'https://www.fao.org/in-action/globefish/species-analysis/tuna/en',list:'.d-list-content',body:'.news-detail__body',issuer:'Food and Agriculture Organization (FAO)'},
+  'mpa-port':{name:'MPA · 港口作业通知',tier:'T1',url:'https://www.mpa.gov.sg/feeds/media-releases',list:'rss',body:'.news-detail__content',issuer:'Maritime and Port Authority of Singapore (MPA)'},
   'jfa-press':{name:'日本水产厅 · 新闻发布',tier:'T1',url:JFA_PRESS,list:'#main_content dl.list_item dd a[href]',body:'#main_content',issuer:'日本水产厅（Fisheries Agency of Japan）'},
   moa: {
     name: "农业农村部渔业渔政管理局 · 工作动态", tier: "T1", url: "https://yyj.moa.gov.cn/gzdt/",
@@ -28,7 +32,7 @@ export const COLUMNS = {
   },
   npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',tier:'T1',url:NPFC_LIST,list:'.region-content .view-document-list td.views-field-title > a[href]',body:'.region-content',issuer:'North Pacific Fisheries Commission (NPFC)'},
 } as const;
-export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices", "jfa-press"]);
+export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices", "jfa-press", "itf-fisheries", "fao-tuna", "mpa-port"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
 // News lists and regulatory inventories have different time semantics.
 export const isNewsColumn = (id: ColumnId) => id !== "npfc" && id !== "iotc";
@@ -57,7 +61,7 @@ export function discoverColumnPagination(id:ColumnId,html:string,pageUrl=COLUMNS
     return {...base,scope:"verified_pagination",totalPages:Number(count[1]),nextUrl:pageIndex+1<Number(count[1])?new URL(`index_${pageIndex+1}.htm`,COLUMNS.moa.url).href:null};
   }
   if(id==="fujian"||id==='fujian-notices') return base; // The observed JS pagebar does not disclose a verified URL mechanism.
-  if(id==='npfc'||id==='jfa-press')return {...base,scope:'current_page_only'};
+  if(id==='npfc'||id==='jfa-press'||isBusinessSource(id))return {...base,scope:'current_page_only'};
   const $=cheerio.load(html),links=$("ul.pager li.pager-next a[href]").toArray().map(a=>new URL($(a).attr("href")!,pageUrl).href);
   if(new Set(links).size>1) throw new Error("Conflicting IOTC next-page links");
   const nextUrl=links[0]??null;
@@ -75,6 +79,7 @@ const direct = /远洋|公海|境外入渔|南极磷虾|国际渔业|IOTC|NPFC|S
 export interface Candidate { url: string; title: string; listDate: string | null; priority: "direct" | "context"; }
 
 export function discoverColumn(id: ColumnId, html: string): { candidates: Candidate[]; rejected: number; listed: number } {
+  if(isBusinessSource(id))throw new Error("Business discovery requires its archived receipt");
   if (id === "iotc") return discoverIotc(html);
   if (id === 'npfc')return discoverNpfc(html);
   if (id === 'jfa-press')return discoverJfaPress(html);
@@ -104,7 +109,7 @@ export function relevanceEvidence(body: string): string[] {
   }).slice(0, 8);
 }
 
-export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc"|'fujian-notices'>, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
+export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc"|'fujian-notices'|BusinessSourceId>, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
   if(id==='jfa-press')return prepareJfaPress(receiptInput,raw,[],acquisitionMode);
   const receipt = archiveReceiptSchema.parse(receiptInput), column = COLUMNS[id], origin = new URL(column.url).origin;
   const conflicts: string[] = [], warnings: string[] = [];

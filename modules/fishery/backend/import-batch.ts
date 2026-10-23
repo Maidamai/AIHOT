@@ -1,4 +1,5 @@
 import { withColumnLease } from "./column-lease.ts";
+import {isBusinessSource} from './business-capture.ts';
 import { config } from "@aihot/backend/config";
 import { COLUMNS, isNewsColumn } from "./official-columns.ts";
 import { readBatch, verifyBatchItem } from "./column-batches.ts";
@@ -28,11 +29,11 @@ async function importBatchContents(id: string, actor: string) {
     const relevance=r&&"relevance" in r?r.relevance:null;
     // NPFC reconstruction verifies PDF acquisition before interpreting its measure/date claims.
     // A contradictory new PDF still changes the evidence, while a URL-only change needs verified landing identity.
-    const changedDependency=capture?.httpStatus===200&&(item.column==='fujian-notices'&&!capture.conflicts.length&&!!capture.noticeContext||item.column==='jfa-press'&&!capture.conflicts.length&&!!capture.jfaContext||item.column==='npfc'&&!!capture.attachmentUrl&&(!capture.conflicts.length||capture.attachmentHttpStatus===200&&!!capture.attachmentSha256));
+    const changedDependency=capture?.httpStatus===200&&(isBusinessSource(item.column)&&!!capture.businessContext||item.column==='fujian-notices'&&!capture.conflicts.length&&!!capture.noticeContext||item.column==='jfa-press'&&!capture.conflicts.length&&!!capture.jfaContext||item.column==='npfc'&&!!capture.attachmentUrl&&(!capture.conflicts.length||capture.attachmentHttpStatus===200&&!!capture.attachmentSha256));
     if(confirmedBody||changedDependency) {
       const input={expectedRevision:0,originalTitle:r!.title,title:r!.title,
         summaryZh:!confirmedBody?"必需附件已确认变更，但完整正文尚未核验；旧审核失效，待补证。":outcome==="ready"?"待人工核对原文；尚未生成业务摘要，关键词命中仅是检索线索。":"最新归档正文未提供明确远洋渔业证据；仅保留变更证据，旧摘要不可继承，待人工核对。",
-        language:item.column==='jfa-press'?'ja':item.column === "iotc"||item.column==='npfc' ? "en" : "zh",rawSha256:capture!.rawSha256,dates:r!.dates,policyStatus:capture?.noticeContext?.nature==='consultation'?'draft':'unknown',sourceCapture:capture,
+        language:item.column==='jfa-press'?'ja':item.column === "iotc"||item.column==='npfc'||isBusinessSource(item.column) ? "en" : "zh",rawSha256:capture!.rawSha256,dates:r!.dates,policyStatus:capture?.noticeContext?.nature==='consultation'?'draft':'unknown',sourceCapture:capture,
         ...("policyContext" in r! && r!.policyContext ? {policyContext:r!.policyContext} : {}),
         scope:{regions:[],species:[],flags:[],activities:[],unknownFields:["regions","species","flags","activities"]},
         evidence:"evidence" in r! ? r!.evidence : [{url:capture!.sourceUrl,sha256:capture!.rawSha256,page:null,section:"官方栏目正文；日期、地域及政策适用性待核"}],

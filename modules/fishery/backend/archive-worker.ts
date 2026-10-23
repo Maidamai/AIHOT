@@ -13,7 +13,7 @@ import {collectColumnRound,columnProgressCoordinator} from './column-progress.ts
 import {columnDbProgress,COLUMN_CURSOR_KEY} from './column-db-progress.ts';
 import {importBatch} from './import-batch.ts';
 import {readBatch,type ColumnFetcher} from './column-batches.ts';
-export const ARCHIVE_COLUMNS=['moa','npfc','fujian','fujian-notices','jfa-press'] as const;
+export const ARCHIVE_COLUMNS=['moa','npfc','fujian','fujian-notices','jfa-press','itf-fisheries','fao-tuna','mpa-port'] as const;
 export type ArchiveColumn=typeof ARCHIVE_COLUMNS[number];
 export const ARCHIVE_KEY='fishery.archive.moa',ARCHIVE_TICK='fishery.archive.moa.tick',ARCHIVE_QUEUE='fishery.archive.moa';
 const stateSchema=z.object({enabled:z.boolean(),revision:z.uuid(),mode:z.enum(['hourly','six_hourly','validation']),runId:z.string().regex(/^[a-zA-Z0-9-]{1,40}$/),intervalSeconds:z.number().int().min(10).max(21600),claimed:z.number().int().nonnegative(),pausedReason:z.string().nullable(),nextAt:z.iso.datetime().nullable(),
@@ -21,12 +21,13 @@ const stateSchema=z.object({enabled:z.boolean(),revision:z.uuid(),mode:z.enum(['
 type ArchiveConfig=z.infer<typeof stateSchema>;
 type ArchiveJob={revision:string;roundId:string;column?:ArchiveColumn};
 export interface ArchiveStatus {registered?:boolean;adapted?:boolean;normalCycleVerified?:boolean;latestPending?:number|null;historyDeferred?:number|null;revisionChecks?:number|null;enabled:boolean;coreSourceEnabled:boolean|null;sourceId?:string;sourceName?:string;mode:'hourly'|'six_hourly'|'validation'|null;runId:string|null;heartbeatAt:string|null;lastSuccessAt:string|null;lastFailureAt:string|null;lastError:string|null;currentRound:string|null;lastRound:string|null;pendingCandidates:number|null;cursorUrl:string|null;coverage:string|null;maxPages:1;maxArticles:1|5;nextRunAt:string|null;consecutiveFailures:number;pausedReason:string|null;validationClaimed:number|null;validationLimit:2|null;}
+import {isBusinessSource} from './business-capture.ts';
 import {COLUMNS} from './official-columns.ts';
 export async function assertArchiveSchedules(boss:PgBoss){const allowed=ARCHIVE_COLUMNS.map(c=>`fishery.archive.${c}.tick`),foreign=(await boss.getSchedules()).filter(s=>!allowed.includes(s.name));if(foreign.length)throw new Error(`Archive profile refuses foreign schedules (preserved): ${foreign.map(s=>s.name).join(', ')}`);}
 export function createArchiveController(column:ArchiveColumn){
  if(!ARCHIVE_COLUMNS.includes(column))throw new Error('Unsupported archive source');
  const ARCHIVE_KEY=`fishery.archive.${column}`,ARCHIVE_TICK=`${ARCHIVE_KEY}.tick`,ARCHIVE_QUEUE=ARCHIVE_KEY,sourceId=`fishery-column-${column}`,leaseKey=`fishery.column-archive.${column}`;
- const normalMode=column==='npfc'?'six_hourly':'hourly',normalInterval=column==='npfc'?21600:3600,maxArticles=column==='npfc'?1:5;
+ const normalMode=column==='npfc'?'six_hourly':'hourly',normalInterval=column==='npfc'?21600:3600,maxArticles=column==='npfc'||isBusinessSource(column)?1:5;
 const iso=(value:Date|string|null)=>value?new Date(value).toISOString():null;
 async function read(db:Tx|typeof sql=sql):Promise<ArchiveConfig|null>{const [r]=await db`SELECT value FROM settings WHERE key=${ARCHIVE_KEY}`;if(!r)return null;const state=stateSchema.parse(r.value);if(state.mode!=='validation'&&(state.mode!==normalMode||state.intervalSeconds!==normalInterval))throw new Error('Archive source cadence is invalid');return state;}
 async function save(tx:Tx,value:ArchiveConfig){await tx`INSERT INTO settings(key,value,updated_by) VALUES (${ARCHIVE_KEY},${tx.json(value)},'fishery-archive') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`;}
@@ -188,7 +189,7 @@ return {column,key:ARCHIVE_KEY,tick:ARCHIVE_TICK,queue:ARCHIVE_QUEUE,read,archiv
 const controllers=ARCHIVE_COLUMNS.map(createArchiveController);
 export const {archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker}=controllers[0];
 export const npfcArchive=controllers[1];
-export async function archiveSourceStatuses():Promise<ArchiveStatus[]>{return Promise.all(controllers.map(async c=>{try{return await c.archiveStatus();}catch{return {sourceId:`fishery-column-${c.column}`,sourceName:COLUMNS[c.column].name,enabled:false,coreSourceEnabled:null,mode:null,runId:null,heartbeatAt:null,lastSuccessAt:null,lastFailureAt:null,lastError:'Source archive configuration unavailable',currentRound:null,lastRound:null,pendingCandidates:null,cursorUrl:null,coverage:null,maxPages:1 as const,maxArticles:c.column==='npfc'?1 as const:5 as const,nextRunAt:null,consecutiveFailures:0,pausedReason:'Source configuration unavailable; inspect without resetting state',validationClaimed:null,validationLimit:null};}}));}
+export async function archiveSourceStatuses():Promise<ArchiveStatus[]>{return Promise.all(controllers.map(async c=>{try{return await c.archiveStatus();}catch{return {sourceId:`fishery-column-${c.column}`,sourceName:COLUMNS[c.column].name,enabled:false,coreSourceEnabled:null,mode:null,runId:null,heartbeatAt:null,lastSuccessAt:null,lastFailureAt:null,lastError:'Source archive configuration unavailable',currentRound:null,lastRound:null,pendingCandidates:null,cursorUrl:null,coverage:null,maxPages:1 as const,maxArticles:c.column==='npfc'||isBusinessSource(c.column)?1 as const:5 as const,nextRunAt:null,consecutiveFailures:0,pausedReason:'Source configuration unavailable; inspect without resetting state',validationClaimed:null,validationLimit:null};}}));}
 export async function startArchiveProfile():Promise<()=>Promise<void>>{
  if(process.env.MODEL_CALLS_ENABLED==='true'||process.env.COLLECT_ENABLED==='true')throw new Error('Archive profile requires core collection and model valves disabled');
  const settings={connectionString:config.databaseUrl,schema:'pgboss',max:4,supervise:false};

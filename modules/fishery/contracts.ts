@@ -88,9 +88,17 @@ export function noticeDeadlineState(n:NoticeContext,today:string){
 export function completeNoticeAttachments(n:Pick<NoticeContext,'attachmentCount'|'attachments'>){
   return n.attachmentCount===n.attachments.length&&n.attachments.every(a=>a.httpStatus===200&&a.format==='pdf'&&a.extension==='pdf'&&a.parseStatus==='parsed'&&a.sha256&&a.textSha256&&a.pages&&a.bodyStart!==null&&a.bodyEnd!==null&&a.bodyEnd>a.bodyStart);
 }
+const hash256=z.string().regex(/^[a-f0-9]{64}$/);
+export const businessContextSchema=z.strictObject({
+  version:z.literal('business-capture/v1'),versionHash:hash256.nullable(),evidenceHash:hash256.nullable(),pageTextSha256:hash256,
+  links:z.array(z.strictObject({url:linkSchema,label:z.string().max(500),role:z.enum(['required_attachment','reference'])})).max(50),
+  attachments:z.array(z.strictObject({url:linkSchema,sha256:hash256,httpStatus:z.int().min(100).max(599)})).max(3),
+  sections:z.array(z.strictObject({id:z.string().max(50),kind:z.enum(['webpage','pdf']),sourceUrl:linkSchema,rawSha256:hash256,textSha256:hash256,start:z.int().nonnegative(),end:z.int().nonnegative(),label:z.string().max(500).optional(),pages:z.array(z.strictObject({page:z.int().positive(),start:z.int().nonnegative(),end:z.int().positive()})).max(200).optional()})).max(4),
+});
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
-  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "fujian-notices", "jfa-press", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
+  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "fujian-notices", "jfa-press", "manual_official", "itf-fisheries", "fao-tuna", "mpa-port"]), sourceUrl: linkSchema, capturedAt: instant,
+  businessContext:businessContextSchema.optional(),
   noticeContext:noticeContextSchema.optional(),
   jfaContext:jfaContextSchema.optional(),
   regulatoryListing:z.strictObject({measureNumber:z.string().regex(/^\d{4}-\d{2}$/),statedEffectiveDate:z.string().max(100).nullable(),membership:z.literal('listed_current_only'),applicableSea:z.literal('unknown'),effectiveStatus:z.literal('unknown')}).optional(),
@@ -108,6 +116,8 @@ export const captureSchema = z.strictObject({
   publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
   conflicts: z.array(text.max(300)).max(20),
 }).superRefine((c, ctx) => {
+  if(['itf-fisheries','fao-tuna','mpa-port'].includes(c.adapter)!==!!c.businessContext)ctx.addIssue({code:'custom',message:'Business capture requires its own bound source context'});
+  if(c.businessContext&&c.parseStatus==='parsed'&&(!c.businessContext.versionHash||!c.businessContext.evidenceHash||!c.businessContext.sections.length))ctx.addIssue({code:'custom',message:'Business capture requires a complete content version and evidence sections'});
   if(c.pdfBlankReview&&(c.adapter!=='manual_official'||c.pdfBlankReview.rawSha256!==c.rawSha256||c.pdfBlankReview.physicalPages!==c.attachmentPages))ctx.addIssue({code:'custom',message:'Blank-page review requires its exact manual original PDF and physical page count'});
   if(c.parseStatus==='parsed'&&c.pdfTextlessPages?.length&&(!c.pdfBlankReview||JSON.stringify(c.pdfTextlessPages)!==JSON.stringify(c.pdfBlankReview.pageImages.map(p=>p.page))))ctx.addIssue({code:'custom',message:'Unverified textless PDF pages cannot be marked parsed'});
   if((c.adapter==='fujian-notices')!==!!c.noticeContext)ctx.addIssue({code:'custom',message:'Fujian notice captures require their bound page/attachment context only'});

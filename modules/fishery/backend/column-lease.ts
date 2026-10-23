@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import postgres from 'postgres';
 import { config } from '@aihot/backend/config';
 import { sql, type Tx } from '@aihot/backend/db';
-import type { ColumnId } from './official-columns.ts';
+import {columnIdSchema,type ColumnId } from './official-columns.ts';
 export interface ColumnLease {
   column:ColumnId; backendPid:number; signal:AbortSignal;
   assertHeld:()=>Promise<void>;
@@ -71,7 +71,8 @@ export async function columnTransaction<T>(column:ColumnId,run:(tx:Tx)=>Promise<
 }
 // Only archive import paths use this helper; other manual sources keep their original transaction.
 export async function capturedTransaction<T>(column:string,run:(tx:Tx)=>Promise<T>):Promise<T> {
-  if(column==='moa'||column==='fujian'||column==='iotc'||column==='npfc'||column==='fujian-notices')return columnTransaction(column,run);
+  const parsed=columnIdSchema.safeParse(column);
+  if(parsed.success)return columnTransaction(parsed.data,run);
   return await sql.begin(run) as T;
 }
 

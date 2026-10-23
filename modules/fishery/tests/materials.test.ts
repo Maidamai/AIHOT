@@ -392,6 +392,11 @@ test('automatic dispatch recovers committed import and task before enqueue witho
   const recovered=await dispatchAutomaticDocuments();assert.equal(recovered.rows[0].taskId,t.id);assert.equal(recovered.rows[0].state,'enqueued');
   await sql`UPDATE fishery_flow_tasks SET status='failed',error='{"reason":"Synthetic received/persist failure; explicit reconciliation required"}'::jsonb WHERE id=${t.id}`;
   assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.job WHERE name='fishery.flow' AND data->>'id'=${t.id}`)[0].n,1);
+  // A prompt/rule deployment is not permission to repeat an already attempted review.
+  await sql`UPDATE fishery_flow_tasks SET snapshot=jsonb_set(snapshot,'{executionConfig}','"retired-config"') WHERE id=${t.id}`;
+  await sql`DELETE FROM audit_log WHERE action='fishery.flow.auto_checked' AND subject=${`fishery:${d.id}`}`;
+  const guarded=await dispatchAutomaticDocuments();assert.equal(guarded.rows[0].state,'blocked');assert.match(guarded.rows[0].reason!,/no automatic repeat charge/);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM fishery_flow_tasks WHERE document_id=${d.id}`)[0].n,1);
   await boss.cancel(flowQueue.name,recovered.rows[0].jobId!);
  }finally{await sql.unsafe('DROP TRIGGER IF EXISTS auto_test_enqueue_fault ON pgboss.job');await sql.unsafe('DROP FUNCTION auto_test_enqueue_fault()');await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
 });
@@ -2240,4 +2245,18 @@ test('managed source status uses real cadence, effective filters and guarded cor
   await configureArchive({enabled:false,mode:'hourly',runId:'reader-runtime-moa'});
   assert.ok((await listSources({health:'paused'})).rows.some(s=>s.id===bridgeSource));
   assert.equal((await listSources({enabled:'true'})).rows.some(s=>s.id===bridgeSource),false);
+});
+
+import {businessMpaFixture} from './fixtures.ts';
+test('business capture imports preserve approved unchanged originals and invalidate replaced required PDFs',async()=>{
+ const f=businessMpaFixture(),capture=(id:string,mode='ok')=>collectColumns({id,dataDir:config.dataDir,columns:['mpa-port'],limit:1,wait:async()=>{},fetch:async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=>null},body:Buffer.from(url.endsWith('robots.txt')?'missing':url===COLUMNS['mpa-port'].url?f.listing:url===f.url?f.landing()+(mode==='chrome'?'<footer>New acquisition</footer>':''):mode==='changed'?'Unparseable changed PDF':f.pdf)})});
+ const first=await capture('business-db-original');assert.equal(first.items[0].state,'ready',first.items[0].error??'');
+ const imported=await importBatch(first.id,'tester'),id=imported.rows[0].id;assert.equal(imported.published,false);
+ const [source]=await sql`SELECT revision,profile FROM fishery_sources WHERE source_id='fishery-column-mpa-port'`;assert.equal(source.profile.allowedPublication,false);await approve(id,1,source.revision);
+ const initial=(await documentHistory(id)).observations[0],revisit=await capture('business-db-revisit','chrome');await importBatch(revisit.id,'tester');
+ assert.equal((await documentHistory(id)).observations.length,1);assert.deepEqual((await documentHistory(id)).observations[0].payload,initial.payload);
+ assert.equal((await materialDetail(id)).state,'approved');assert.equal((await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${id}`).length,0);
+ const [core]=await sql`SELECT publication_time,published_at_claim FROM articles WHERE raw->>'fisheryDocumentId'=${id}`;assert.equal(core.publication_time,'2026-10-22');assert.equal(core.published_at_claim.toISOString(),'2026-10-21T16:00:00.000Z');
+ const changed=await capture('business-db-changed','changed'),updated=await importBatch(changed.id,'tester');assert.equal(updated.evidenceUpdates.length,1);assert.equal(updated.rows.length,0);assert.equal((await documentHistory(id)).observations.length,2);assert.notEqual((await materialDetail(id)).state,'approved');
+ await importBatch(first.id,'tester');assert.equal((await documentHistory(id)).observations.length,2,'Old archive replay cannot restore old approval');
 });

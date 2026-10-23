@@ -1,3 +1,4 @@
+import {businessEvidenceSections} from './business-capture.ts';
 import { runStructure, PROMPT_VERSIONS } from "@aihot/backend/editorial/analyze";
 import { reviewedStructure, structureClaims } from "./news-structure.ts";
 import { enqueuePublication, publicationDecisionHash } from "./publication-queue.ts";
@@ -18,7 +19,7 @@ import { hash, lockDocument, NotFound } from "./store.ts";
 import { readSourceBody } from "./source-body.ts";
 import { assertReviewedPdfBlanks } from './pdf-text.ts';
 import type { PdfBlankProof } from './pdf-blank-proof.ts';
-import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput } from "./ai-draft.ts";
+import { prepareFisheryDraft, buildFisheryDraftRequest, parseFisheryManualRevision, fisheryDraftSchema, validateFisheryDraft, type DraftInput, type FisheryRulesVersion } from "./ai-draft.ts";
 import { reviewFisheryDraft, buildFisheryReviewRequest, fisheryWireBytes, assertFisheryPairFits, fisheryConfigurationVersion } from "./ai-review.ts";
 import { sha256 } from "./source-adapters.ts";
 import { withFisheryAuthorization, assertFisheryCapacity, authorizationKey } from "./authorization.ts";
@@ -38,7 +39,7 @@ const remainingStages=(row:Record<string,any>)=>{
   const all=row.selection?[...selectionStages,"generation",...(row.selection.structure?["structure"]:[]),"review"]:["generation","review"];
   return row.stage==='human'?[]:all.slice(Math.max(0,all.indexOf(row.stage)));
 };
-async function snapshot(documentId:string) {
+async function snapshot(documentId:string,rulesVersion?:FisheryRulesVersion) {
   const [row]=await sql`SELECT d.id,d.source_id,d.article_id,d.withdrawn_reason,s.revision AS source_revision,s.profile,core.participation_mode,
     o.revision,o.content_hash,o.payload FROM fishery_documents d JOIN fishery_sources s ON s.source_id=d.source_id
     JOIN sources core ON core.id=d.source_id
@@ -49,7 +50,7 @@ async function snapshot(documentId:string) {
   const c=row.payload.sourceCapture;
   if(!c||c.httpStatus!==200||c.parseStatus!=="parsed"||!c.bodySha256||c.conflicts.length) throw new Conflict("Verified archived source body required");
   if(row.article_id&&!await sourceArticleAvailable(row.article_id)) throw new Conflict("Linked source article unavailable");
-  const value={executionConfig:fisheryConfigurationVersion(),documentId,sourceId:row.source_id,sourceRevision:row.source_revision,sourceProfileHash:hash(row.profile),observationRevision:row.revision,observationHash:row.content_hash,bodySha256:c.bodySha256,rawSha256:c.rawSha256};
+  const value={executionConfig:fisheryConfigurationVersion(rulesVersion),documentId,sourceId:row.source_id,sourceRevision:row.source_revision,sourceProfileHash:hash(row.profile),observationRevision:row.revision,observationHash:row.content_hash,bodySha256:c.bodySha256,rawSha256:c.rawSha256};
   return {value,hash:hash(value),payload:row.payload,articleId:row.article_id};
 }
 export function pdfPages(body:string,expected:number,blankReview?:PdfBlankProof) {
@@ -61,8 +62,8 @@ export function pdfPages(body:string,expected:number,blankReview?:PdfBlankProof)
   if(blankReview)assertReviewedPdfBlanks(blankReview,blankReview.rawSha256,expected,textless);
   return pages;
 }
-async function inputFor(documentId:string,expectedHash:string):Promise<DraftInput> {
-  const current=await snapshot(documentId);
+async function inputFor(documentId:string,expectedHash:string,rulesVersion?:FisheryRulesVersion):Promise<DraftInput> {
+  const current=await snapshot(documentId,rulesVersion);
   if(current.hash!==expectedHash) throw new Conflict("Source, metadata or rights version changed; create a new task");
   const c=current.payload.sourceCapture;let body:string|null=null;
   if(c.archiveId||c.manualArchiveId) body=await readSourceBody(c);
@@ -71,9 +72,9 @@ async function inputFor(documentId:string,expectedHash:string):Promise<DraftInpu
     body=stored?.body_text??null;
   }
   if(!body||sha256(body)!==c.bodySha256||body.length>64000) throw new Conflict("Full bound body missing, changed or oversized; no silent truncation");
-  const sections=c.adapter==='fujian-notices'?noticeEvidenceSections(body,c):c.adapter==='jfa-press'?jfaEvidenceSections(body,c):undefined;
+  const sections=c.adapter==='fujian-notices'?noticeEvidenceSections(body,c):c.adapter==='jfa-press'?jfaEvidenceSections(body,c):businessEvidenceSections(body,c);
   const pages=!sections&&c.attachmentPages?pdfPages(body,c.attachmentPages,c.pdfBlankReview):undefined;
-  return {pages,sections,pdfBlankReview:c.pdfBlankReview,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
+  return {rulesVersion,pages,sections,pdfBlankReview:c.pdfBlankReview,documentId,observationRevision:current.value.observationRevision,body,bodySha256:c.bodySha256,language:current.payload.language};
 }
 async function assertDocumentSettled(documentId:string,db:Db=sql,exceptRunningId:string|null=null) {
   const [running]=await db`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} AND status='running' AND (${exceptRunningId}::text IS NULL OR id<>${exceptRunningId}) LIMIT 1`;
@@ -326,7 +327,19 @@ export async function reconcileFlow(id:string,raw:unknown,actor:string) {
 }
 export async function flowDetail(id:string,now=new Date()):Promise<Record<string,any>> {
   const [row]=await sql`SELECT *,updated_at::text AS execution_updated_at FROM fishery_flow_tasks WHERE id=${id}`;if(!row) throw new NotFound("Flow not found");
-  let staleReason:string|null=null;try{await inputFor(row.document_id,hash(row.snapshot));}catch(error){staleReason=(error as Error).message;}
+  let staleReason:string|null=null;
+  try {
+    // Production has four already-approved v5.5 articles. Verify their original policy and
+    // current source/rights/body independently; never relabel a saved review or allow old paid work.
+    const legacy=row.status==='qualified'&&row.snapshot.executionConfig===fisheryConfigurationVersion('fishery-rules-v5.5');
+    const input=await inputFor(row.document_id,hash(row.snapshot),legacy?'fishery-rules-v5.5':undefined);
+    if(legacy){
+      const manual=row.draft?.provenance?.origin==='human_revision',options=manual?{mode:'manual_revision' as const}:{};
+      assertSavedEvidenceArtifact(input,row.draft,{promptVersion:buildFisheryDraftRequest(input,'default').promptVersion,schemaVersion:manual?'fishery-manual-revision-wire-v1':'fishery-draft-wire-v5'});
+      const draft=validateFisheryDraft(input,row.draft.draft,options);
+      assertSavedEvidenceArtifact(input,row.quality_review,{promptVersion:buildFisheryReviewRequest(input,draft,'default',{...options,...(row.selection?.structure?.result?{structure:row.selection.structure.result}:{} )}).promptVersion,schemaVersion:manual?'fishery-manual-review-wire-v1':'fishery-review-wire-v3'});
+    }
+  }catch(error){staleReason=(error as Error).message;}
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
   const authoritative=latest?.id===id,timeline=await flowTimeline(row,now),materialDecision=await currentMaterialDecision(row.document_id),materialRejected=materialDecision==="rejected",materialApproved=materialDecision==="approved";
   const reconciliation=await reconciliationState(row);

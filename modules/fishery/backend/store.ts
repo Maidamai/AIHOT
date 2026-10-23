@@ -1,3 +1,4 @@
+import {businessDependencyChanged} from './business-capture.ts';
 import { capturedTransaction } from "./column-lease.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
@@ -118,10 +119,35 @@ export async function listDocuments() {
 export function evidenceIdentity(input: unknown) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const capture = payload.sourceCapture;
+  if(capture?.businessContext?.versionHash&&capture.parseStatus==='parsed'){
+    // Revisit page chrome is acquisition evidence, not a content revision. Keep the old
+    // immutable observation on equality; new originals remain in the capture audit/archive.
+    return hash({...payload,rawSha256:null,evidence:payload.evidence.map(({sha256:_,...e})=>e),sourceCapture:{adapter:capture.adapter,parser:capture.parser,sourceUrl:capture.sourceUrl,parseStatus:capture.parseStatus,versionHash:capture.businessContext.versionHash}});
+  }
   if (capture) { const { capturedAt: _time, attachmentCapturedAt: _attachmentTime, archiveId: _archive, manualArchiveId: _manualArchive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
   return hash(payload);
 }
 type CaptureColumn={id:string;name:string;issuer:string;tier?:"T1"};
+/** Explicit registration does not acquire, grant rights, enable core collection or approve material. */
+export async function registerCaptureSource(column:CaptureColumn,actor:string){
+  return capturedTransaction(column.id,tx=>ensureCaptureSource(column,actor,tx));
+}
+async function ensureCaptureSource(column:CaptureColumn,actor:string,tx:Db){
+  const sourceId=`fishery-column-${column.id}`,sourceAttribution=column.issuer;
+    // Verified official columns declare their tier; arbitrary/manual imports keep the core default.
+    // Never overwrite an operator's existing classification or imply redistribution permission.
+    await tx`INSERT INTO sources (id,name,kind,tier,first_party,enabled,participation_mode,site_fulltext,next_fetch_at)
+      VALUES (${sourceId},${column.name},'external',${column.tier??"T2"},${column.tier==='T1'},false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
+    // Lock the source to serialize imports of the same URL and preserve operator rights settings.
+    const [registered] = await tx`SELECT id,participation_mode FROM sources WHERE id=${sourceId} FOR UPDATE`;
+    if (registered?.participation_mode === "isolated") throw new Conflict("Source is isolated; captured imports are disabled");
+    if (!(await tx`SELECT 1 FROM fishery_sources WHERE source_id=${sourceId}`).length) {
+      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: sourceAttribution, healthNote: column.id.startsWith("manual-") ? "人工核验公开官方归档；非自动采集器，HTTP回执不是网站签名，尚需普通人工审核，转载权未知" : "手动官方栏目试采；自动采集关闭，转载权未知" });
+      await tx`INSERT INTO fishery_sources(source_id,revision,profile) VALUES (${sourceId},1,${tx.json(profile)})`;
+      await audit(actor,"fishery.source",`source:${sourceId}`,"Manual batch registration",null,{ revision:1, profile },{db:tx});
+    }
+  return {sourceId,enabled:false,rightsGranted:false};
+}
 type CapturedImport={id:string;revision:number;unchanged:boolean};
 export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedRequiredEvidenceOnly?:boolean}):Promise<CapturedImport|null>;
 export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string):Promise<CapturedImport>;
@@ -171,18 +197,7 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
         return prior.seen?prior.result:remember(tx,null);
       }
     }
-    // Verified official columns declare their tier; arbitrary/manual imports keep the core default.
-    // Never overwrite an operator's existing classification or imply redistribution permission.
-    await tx`INSERT INTO sources (id,name,kind,tier,first_party,enabled,participation_mode,site_fulltext,next_fetch_at)
-      VALUES (${sourceId},${column.name},'external',${column.tier??"T2"},${column.tier==='T1'},false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
-    // Lock the source to serialize imports of the same URL and preserve operator rights settings.
-    const [registered] = await tx`SELECT id,participation_mode FROM sources WHERE id=${sourceId} FOR UPDATE`;
-    if (registered?.participation_mode === "isolated") throw new Conflict("Source is isolated; captured imports are disabled");
-    if (!(await tx`SELECT 1 FROM fishery_sources WHERE source_id=${sourceId}`).length) {
-      const { expectedRevision: _revision, ...profile } = sourceSchema.parse({ expectedRevision: 0, attribution: sourceAttribution, healthNote: column.id.startsWith("manual-") ? "人工核验公开官方归档；非自动采集器，HTTP回执不是网站签名，尚需普通人工审核，转载权未知" : "手动官方栏目试采；自动采集关闭，转载权未知" });
-      await tx`INSERT INTO fishery_sources(source_id,revision,profile) VALUES (${sourceId},1,${tx.json(profile)})`;
-      await audit(actor,"fishery.source",`source:${sourceId}`,"Manual batch registration",null,{ revision:1, profile },{db:tx});
-    }
+    await ensureCaptureSource(column,actor,tx);
     let [doc] = await tx`SELECT * FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`;
     if (!doc) {
       [doc] = await tx`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES (${randomUUID()},${sourceId},${sourceAttribution},${canonicalUrl}) RETURNING *`;
@@ -197,7 +212,7 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
       const {jfaAttachmentChanged}=await import('./jfa-press.ts');
       const c=payload.sourceCapture,old=previous?.payload.sourceCapture;
       const verifiedNpfcPdf=c?.adapter==='npfc'&&c.attachmentHttpStatus===200&&!!c.attachmentSha256;
-      const changed=c?.httpStatus===200&&(c.adapter==='fujian-notices'&&!c.conflicts.length&&noticeAttachmentChanged(old?.noticeContext,c.noticeContext)||
+      const changed=c?.httpStatus===200&&(businessDependencyChanged(old,c)||c.adapter==='fujian-notices'&&!c.conflicts.length&&noticeAttachmentChanged(old?.noticeContext,c.noticeContext)||
         c.adapter==='jfa-press'&&!c.conflicts.length&&jfaAttachmentChanged(old?.jfaContext,c.jfaContext)||
         c.adapter==='npfc'&&old?.adapter==='npfc'&&!!c.attachmentUrl&&!!old.attachmentUrl&&((!c.conflicts.length||verifiedNpfcPdf)&&c.attachmentUrl!==old.attachmentUrl||verifiedNpfcPdf&&!!old.attachmentSha256&&c.attachmentSha256!==old.attachmentSha256));
       if(!changed)return remember(tx,null);
@@ -246,7 +261,7 @@ export async function storeCapturedNews(columnId:string,documentId:string,body:s
     if(bound)return {articleId:String(bound.article_id),existingPublication:true};
     const publicationTime=capture.publishedAt??(payload.dates.published.precision==='day'?payload.dates.published.value:null);
     const title=collapseWhitespace(payload.originalTitle??payload.title).slice(0,1000)||doc.canonical_url;
-    const publishedAt=publicationTime?publicationTime.length===10?(columnId==='jfa-press'?new Date(publicationTime+'T00:00:00+09:00'):beijingAt(publicationTime,'00:00')):new Date(publicationTime):null;
+    const publishedAt=publicationTime?publicationTime.length===10?(columnId==='itf-fisheries'||columnId==='fao-tuna'?new Date(publicationTime+'T00:00:00Z'):columnId==='jfa-press'?new Date(publicationTime+'T00:00:00+09:00'):beijingAt(publicationTime,'00:00')):new Date(publicationTime):null;
     const material=await upsertMaterial({sourceId:doc.source_id,url:doc.canonical_url,title,
       language:payload.language,bodyText:body,bodyStatus:'ok',publicationTime,
       publishedAt,
