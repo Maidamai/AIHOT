@@ -14,10 +14,10 @@ async function importBatchContents(id: string, actor: string) {
   const batch = await readBatch(config.dataDir,id);
   if (batch.status !== "complete") throw new Error("Batch is still running");
   // Reconstruct non-ready captures too: their valid new body can supersede an already registered URL.
-  // Verify all archives before mutations; an invalid ready archive still aborts the import.
+  // Verify all archives before mutations; completed acquisitions must keep their archived proof.
   const verified = await Promise.all(batch.items.map(async item=>{
     try {return {item,result:await verifyBatchItem(config.dataDir,batch,item),error:null};}
-    catch(error) {if(item.state==="ready") throw error;return {item,result:null,error:String((error as Error).message).slice(0,500)};}
+    catch(error) {if(item.state==="ready"||item.state==="needs_review") throw error;return {item,result:null,error:String((error as Error).message).slice(0,500)};}
   }));
   const rows = [],evidenceUpdates = [],acquisitions = [],materials = [];
   for (const {item,result:r,error} of verified) {

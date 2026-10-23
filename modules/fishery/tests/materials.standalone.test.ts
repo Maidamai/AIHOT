@@ -303,6 +303,58 @@ test("inspected pagination is bounded to official identities and unverified Fuji
   assert.throws(()=>discoverColumnPagination("iotc",'<ul class="pager"><li class="pager-last"><a href="/cmms/basic?page=10">last</a></li></ul>'),/omits or contradicts/);
 });
 
+test("Office notices retain complete raw proof as manual review without providing a parsed body",async()=>{
+  const f=noticeFixture(),dir=await mkdtemp(path.join(tmpdir(),"notice-office-proof-"));
+  try {
+    for(const extension of ["doc","docx"]){
+      const url=f.pdfUrl.replace(/pdf$/,extension),bytes=extension==="doc"?Buffer.from("d0cf11e0a1b11ae1aabbccdd","hex"):Buffer.from([80,75,3,4,1,2,3,4]);
+      const fetch:ColumnFetcher=async target=>({url:target,status:target.endsWith("robots.txt")?404:200,headers:{get:()=>null},body:target.endsWith("robots.txt")?Buffer.from("missing"):target===COLUMNS["fujian-notices"].url?Buffer.from(f.listing):target===f.url?Buffer.from(f.landing(url)):bytes});
+      const batch=await collectColumns({id:`office-${extension}`,dataDir:dir,columns:["fujian-notices"],limit:1,fetch,wait:async()=>{}}),item=batch.items[0];
+      assert.equal(item.state,"needs_review",item.error??"");assert.equal(batch.sources[0].outcome,"success");assert.match(item.error!,/unverified/);
+      const prepared=await verifyBatchItem(dir,batch,item);assert.equal(prepared.body,null);assert.equal(prepared.readyForReview,false);assert.equal(prepared.sourceCapture.parseStatus,"unverified");assert.equal(prepared.sourceCapture.bodySha256,null);
+      assert.equal(prepared.sourceCapture.noticeContext!.attachments[0].sha256,sha256(bytes));
+      assert.throws(()=>assertCaptureExportable({...observationFixture,sourceCapture:prepared.sourceCapture}),/unverified/);
+      const file=path.join(batchRoot(dir),batch.id,"raw",`${item.archiveId}-attachment-0.bin`);assert.deepEqual(await readFile(file),bytes);
+      await writeFile(file,"tampered");await assert.rejects(verifyBatchItem(dir,batch,item),/hash mismatch/);
+    }
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test("Office review never absorbs missing, conflicting, unrecognized or incomplete PDF acquisition",async()=>{
+  const f=noticeFixture(),dir=await mkdtemp(path.join(tmpdir(),"notice-office-failures-")),bytes=Buffer.from("d0cf11e0a1b11ae1aabbccdd","hex");
+  try {
+    for(const mode of ["mixed-ready","missing","network","conflicting-url","unrecognized","spoofed-extension","scanned-pdf","pdf-exception","too-many"]){
+      const officeUrl=f.pdfUrl.replace(/pdf$/,mode==="spoofed-extension"?"pdf":"doc"),mixed=mode==="mixed-ready"||mode==="scanned-pdf"||mode==="pdf-exception";
+      let landing=f.landing(officeUrl);
+      if(mixed)landing=landing.replace("</ul>",`<li><a href="${f.pdfUrl}">另一个必需附件.pdf</a></li></ul>`);
+      if(mode==="too-many")landing=landing.replace("</ul>",[2,3,4].map(n=>`<li><a href="${new URL(`P000000${n}.doc`,f.url).href}">必需附件${n}</a></li>`).join("")+"</ul>");
+      const fetch:ColumnFetcher=async target=>{
+        if(target===officeUrl&&mode==="network")throw new Error("Synthetic attachment network failure");
+        return {url:target===officeUrl&&mode==="conflicting-url"?target.replace(".doc","-redirect.doc"):target,status:target.endsWith("robots.txt")||target===officeUrl&&mode==="missing"?404:200,headers:{get:()=>null},body:target.endsWith("robots.txt")?Buffer.from("missing"):target===COLUMNS["fujian-notices"].url?Buffer.from(f.listing):target===f.url?Buffer.from(landing):target===f.pdfUrl&&mixed?f.pdf:mode==="unrecognized"?Buffer.from("unknown attachment bytes"):bytes};
+      };
+      const parsePdf=async(b:Buffer)=>{if(mode==="pdf-exception")throw new Error("Synthetic PDF parser failure");const p=await f.parsePdf(b);return mode==="scanned-pdf"?{...p,status:"unverified" as const,text:"",error:"Synthetic scanned PDF"}:p;};
+      const batch=await collectColumns({id:`office-${mode}`,dataDir:dir,columns:["fujian-notices"],limit:1,fetch,parsePdf,wait:async()=>{}}),item=batch.items[0];
+      assert.equal(item.state,mode==="mixed-ready"?"needs_review":"failed",`${mode}: ${item.error}`);
+      assert.equal(batch.sources[0].outcome,mode==="mixed-ready"?"success":"failure");assert.equal(item.prepared!.sourceCapture.bodySha256,null);
+      if(mode==="pdf-exception"){await assert.rejects(verifyBatchItem(dir,batch,item,{parsePdf}),/Synthetic PDF parser failure/);continue;}
+      const prepared=await verifyBatchItem(dir,batch,item,{parsePdf});assert.equal(prepared.body,null);assert.equal(prepared.readyForReview,false);
+      if(mode!=="mixed-ready")await assert.rejects(verifyBatchItem(dir,batch,{...item,state:"needs_review"},{parsePdf}),/Manual-review state requires/);
+    }
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test("Office notices complete bounded discovery progress while later new URLs remain discoverable",async()=>{
+  const f=noticeFixture(),dir=await mkdtemp(path.join(tmpdir(),"notice-office-progress-")),urls=[1,2,3].map(n=>f.url.replace("9999001",`999900${n}`)),called:string[]=[];
+  const listing=`<ul class="xw-list-1 gl_list">${urls.map(url=>`<li><a href="${url}">合成公告</a></li>`).join("")}</ul>`,bytes=Buffer.from("d0cf11e0a1b11ae1aabbccdd","hex");
+  const fetch:ColumnFetcher=async url=>{called.push(url);return {url,status:url.endsWith("robots.txt")?404:200,headers:{get:()=>null},body:url.endsWith("robots.txt")?Buffer.from("missing"):url===COLUMNS["fujian-notices"].url?Buffer.from(listing):url===urls[2]?Buffer.from(f.landing().replace(/<ul class="myzj_xl_list">.*<\/ul>/," ").replace(f.title+"</div>","完整远洋渔业公告正文，仅作合成测试，不证明任何真实政策事实。".repeat(3)+"</div>")):urls.includes(url)?Buffer.from(f.landing(new URL("P0000001.doc",url).href)):bytes};};
+  try {
+    const run=(id:string)=>collectColumnRound({id,dataDir:dir,columns:["fujian-notices"],limit:2,maxPages:1,fetch,wait:async()=>{}});
+    const first=await run("office-progress-first");assert.equal(first.outcome,"success");assert.deepEqual(first.sources[0].after!.completedUrls,urls.slice(0,2));assert.deepEqual(first.sources[0].after!.pendingUrls,[urls[2]]);
+    const batch=await readBatch(dir,first.sources[0].batches[0]);assert.ok(batch.items.every(i=>i.state==="needs_review"));
+    const n=called.length,second=await run("office-progress-next");assert.equal(second.outcome,"success");assert.deepEqual(called.slice(n).filter(url=>urls.includes(url)),[urls[2]]);assert.equal(second.sources[0].after!.pendingUrls.length,0);
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
 test("news rounds prioritize new messages, finish the current list and recheck bounded bodies without walking history",async()=>{
   const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-")),called:string[]=[];let added=false,changed=false;
   const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url;

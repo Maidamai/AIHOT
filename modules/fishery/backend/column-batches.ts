@@ -17,7 +17,7 @@ import {noticePage,attachmentFormat,prepareNotice,type NoticeAttachment} from '.
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
 export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc> | ReturnType<typeof prepareNpfc> | ReturnType<typeof prepareNotice>;
-export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
+export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "needs_review" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
 const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),currentUrls:z.array(linkSchema).max(4096).optional(),remaining:z.array(linkSchema).max(4096).optional()});
@@ -30,7 +30,7 @@ export interface ColumnBatch { version: "fishery-column-batch/0.1"; id: string; 
 export type BatchListEntry = ColumnBatch | { id: string; status: "unreadable"; error: string };
 const manifestSchema=z.object({version:z.literal("fishery-column-batch/0.1"),id:batchIdSchema,startedAt:z.iso.datetime({offset:true}),finishedAt:z.iso.datetime({offset:true}).nullable(),status:z.enum(["running","complete"]),reparse:replaySchema.optional(),networkRequests:z.literal(0).optional(),reparsedItems:z.int().nonnegative().optional(),
   sources:z.array(sourceSummarySchema).max(6),
-  items:z.array(z.object({column:columnIdSchema,url:linkSchema,discoveryTitle:z.string(),listDate:z.string().nullable(),state:z.enum(["ready","irrelevant","failed"]),archiveId:archiveIdSchema,listingUrl:linkSchema.optional(),prepared:z.object({dates:z.object({published:dateSchema}),sourceCapture:captureSchema}).nullable(),error:z.string().nullable()})).max(36)});
+  items:z.array(z.object({column:columnIdSchema,url:linkSchema,discoveryTitle:z.string(),listDate:z.string().nullable(),state:z.enum(["ready","irrelevant","needs_review","failed"]),archiveId:archiveIdSchema,listingUrl:linkSchema.optional(),prepared:z.object({dates:z.object({published:dateSchema}),sourceCapture:captureSchema}).nullable(),error:z.string().nullable()})).max(36)});
 export const batchRoot = (dataDir: string) => path.resolve(dataDir, "fishery-batches");
 const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 async function save(file: string, value: unknown) { await writeFile(file, json(value), { mode: 0o600 }); }
@@ -136,7 +136,16 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     if(!bound||result.sourceCapture.parser!==bound.newParser||result.sourceCapture.bodySha256!==bound.newBodySha256) throw new Error("Reparse parser/body provenance mismatch");
   }
   if (result.body && await readCapturedText(dataDir, item.archiveId, result.sourceCapture.bodySha256!) !== result.body) throw new Error("Prepared body differs from archived body");
+  if(item.state==="needs_review"&&!noticeNeedsReview(result))throw new Error("Manual-review state requires complete verified Office attachment acquisition");
   return result;
+}
+
+// Only a known parser capability gap completes acquisition without providing model input.
+function noticeNeedsReview(prepared:PreparedArticle) {
+  const c=prepared.sourceCapture,n=c.noticeContext;
+  if(c.adapter!=="fujian-notices"||c.httpStatus!==200||c.parseStatus!=="unverified"||c.conflicts.length||!prepared.title||prepared.body!==null||c.bodySha256!==null||!n||n.attachmentCount<1||n.attachmentCount>3||n.attachments.length!==n.attachmentCount||prepared.warnings.includes("Combined notice text exceeds archive limit"))return false;
+  const office=(a:typeof n.attachments[number])=>a.parseStatus==="unverified"&&(a.format==="ole"&&/^(doc|xls|ppt)$/.test(a.extension)||a.format==="office_zip"&&/^(docx|xlsx|pptx)$/.test(a.extension));
+  return n.attachments.some(office)&&n.attachments.every(a=>a.httpStatus===200&&!!a.sha256&&(office(a)||a.format==="pdf"&&a.extension==="pdf"&&a.parseStatus==="parsed"&&!!a.pages&&!!a.textSha256));
 }
 
 async function readArchive(root: string, name: string, maxBytes: number) {
@@ -375,9 +384,9 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           const { body, ...metadata } = prepared;
           item.prepared = metadata;
           if (body) {await check();await writeFile(path.join(root,"body",`${archiveId}.txt`),body,{mode:0o600,flag:"wx"});await check();}
-          item.state = prepared.readyForReview ? "ready" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
+          item.state = prepared.readyForReview ? "ready" : noticeNeedsReview(prepared) ? "needs_review" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
           if (item.state === "ready") ready++;
-          if (item.state === "failed") item.error = [item.error,...prepared.sourceCapture.conflicts, ...prepared.warnings].filter(Boolean).join("; ") || "Article parse failed";
+          if (item.state === "failed"||item.state === "needs_review") item.error = [item.error,...prepared.sourceCapture.conflicts, ...prepared.warnings].filter(Boolean).join("; ") || "Article parse failed";
         } catch (error) { item.error = String((error as Error).message).slice(0, 500); }
         await persist();
       }
