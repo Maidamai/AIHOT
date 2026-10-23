@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { cachedJmaGet } from "../backend/jma-cache.ts";
 import { currentJmaMetadata, jmaFeeds, jmaHash, parseJmaFeed } from "../backend/jma-marine.ts";
 import { jmaSeaWarningProducts, parseJmaSeaWarning, selectJmaSeaWarnings } from "../backend/jma-sea-warning.ts";
+import { discoverJmaSeaWarnings, inspectJmaSeaWarning, projectJmaSeaWarnings } from "../backend/jma-sea-warning-state.ts";
 
 // Generated structural fixtures only: numeric sentinels below are not official forecasts.
 const url = (code = "VPCU51", flag = "0") => `https://www.data.jma.go.jp/developer/xml/data/20261023000000_${flag}_${code}_471000.xml`;
@@ -16,9 +17,9 @@ function fixture(o: Record<string, string | undefined> = {}) {
   const name = o.name ?? (local ? "沖縄南方海上" : notice ? "全般海上予報区" : "低気圧");
   const area = `<Name>${name}</Name>${local ? `<Code>${o.zone ?? "6030"}</Code>` : notice ? "" : '<jmx_eb:Circle type="影響範囲"><jmx_eb:BasePoint type="実況位置（度）">+50.0+150.0/</jmx_eb:BasePoint><jmx_eb:Axes><jmx_eb:Axis><jmx_eb:Radius unit="海里">011.50</jmx_eb:Radius></jmx_eb:Axis></jmx_eb:Axes></jmx_eb:Circle>'}`;
   const warningName = notice ? local ? "海上警報解除" : "海上警報なし" : "海上強風警報";
-  const kinds = `<Kind><Name>${warningName}</Name>${notice && !local ? "" : "<Code>21</Code>"}</Kind>`;
+  const kinds = `<Kind><Name>${warningName}</Name>${notice && !local ? "" : `<Code>${notice ? "00" : "21"}</Code>`}</Kind>`;
   const subareas = '<Kind><Property><Type>風</Type><WindPart><SubArea><AreaName>合成小海域A</AreaName><Sentence>  合成試験値 A  </Sentence><Base><jmx_eb:WindSpeed type="最大風速" unit="m/s">012.50</jmx_eb:WindSpeed></Base></SubArea><SubArea><AreaName>合成小海域B</AreaName><Base><jmx_eb:WindSpeed type="最大風速" unit="ノット">000.75</jmx_eb:WindSpeed></Base></SubArea></WindPart></Property></Kind>';
-  const body = o.body === "missing" ? "" : local
+  const body = o.body === "missing" ? "" : notice && !local ? '<MeteorologicalInfos type="概況"><MeteorologicalInfo><Text>合成試験の気象概況</Text></MeteorologicalInfo></MeteorologicalInfos>' : local
     ? `<Warning type="地方海上警報"><Item>${kinds}${notice ? "" : subareas}<Area>${area}</Area></Item></Warning>`
     : `<MeteorologicalInfos type="全般海上警報"><MeteorologicalInfo><DateTime>2026-10-23T09:00:00+09:00</DateTime><Item>${kinds}${subareas}<Area>${area}</Area></Item></MeteorologicalInfo></MeteorologicalInfos>`;
   return Buffer.from(`<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/"><Control><Title>${o.title ?? p.title}</Title><DateTime>${o.sent ?? "2026-10-23T00:00:00Z"}</DateTime><Status>${o.status ?? "通常"}</Status><EditorialOffice>${o.office ?? "沖縄気象台"}</EditorialOffice><PublishingOffice>合成試験官署</PublishingOffice></Control><Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/"><Title>合成試験海上気象</Title><ReportDateTime>2026-10-23T09:00:00+09:00</ReportDateTime><TargetDateTime>2026-10-23T09:00:00+09:00</TargetDateTime>${o.expiry === "missing" ? "" : `<ValidDateTime>${o.expiry ?? "2026-10-24T09:00:00+09:00"}</ValidDateTime>`}<EventID/><InfoType>${o.info ?? "発表"}</InfoType><Serial/><InfoKind>${p.kind}</InfoKind><InfoKindVersion>${o.version ?? p.version}</InfoKindVersion><Headline><Text/><Information type="${p.kind}"><Item>${kinds}<Areas codeType="${o.codeType ?? p.codeType}"><Area>${area}</Area></Areas></Item></Information></Headline></Head><Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/meteorology1/">${body}</Body></Report>`);
@@ -94,7 +95,7 @@ test("unsupported version/title, missing body and changed body namespace fail cl
 test("a local headline cannot claim release or bind a different area from its warning body", () => {
   const bytes = fixture().toString(); const bodyStart = bytes.indexOf("<Body");
   const head = bytes.slice(0, bodyStart), body = bytes.slice(bodyStart);
-  assert.throws(() => parseJmaSeaWarning(Buffer.from(head.replace("海上強風警報", "海上警報解除") + body), url()), /warning-area mismatch/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head.replace("海上強風警報", "海上警報解除") + body), url()));
   assert.throws(() => parseJmaSeaWarning(Buffer.from(head + body.replace("沖縄南方海上", "沖縄東方海上").replace("6030", "6020")), url()), /warning-area mismatch/);
 });
 test("formal-warning XML is cached across restart and parsed again without a second request or changed official bytes", async () => {
@@ -106,4 +107,159 @@ test("formal-warning XML is cached across restart and parsed again without a sec
     assert.equal(calls, 1); assert.equal(resumed.acquisition, "cache");
     assert.deepEqual(parseJmaSeaWarning(resumed.bytes, url()).official.rawBytes, first.bytes);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+const observe = (o: Record<string, string | undefined> = {}) => inspectJmaSeaWarning(fixture(o),
+  url(o.product).replace("20261023000000", (o.sent ?? "2026-10-23T00:00:00Z").replace(/\D/g, "")));
+function snapshot(history: ReturnType<typeof observe>[], options: { now?: string; pending?: string; feed?: boolean } = {}) {
+  const now = options.now ?? "2026-10-23T01:00:00Z";
+  const entries = [...new Map(history.map(o => [o.url, { url: o.url, title: o.metadata?.title ?? "地方海上警報（Ｈ２８）" }])).values(),
+    ...(options.pending ? [{ url: options.pending, title: "地方海上警報（Ｈ２８）" }] : [])].sort((a, b) => a.url.localeCompare(b.url));
+  return projectJmaSeaWarnings(history, { now, discovered: [], maxFeedAgeMs: 2 * 3_600_000, maxReviewAgeMs: 24 * 3_600_000,
+    feed: options.feed === false ? null : { url: jmaFeeds[2], checkedAt: now,
+      rawBytes: Buffer.from(`<feed xmlns="http://www.w3.org/2005/Atom"><updated>${now}</updated>${entries.map(e => `<entry><id>${e.url}</id><title>${e.title}</title><updated>${now}</updated></entry>`).join("")}</feed>`) } });
+}
+
+test("known-history projection is order independent, traces correction bytes and never resurrects superseded regions", () => {
+  const first = observe();
+  const next = observe({ info: "訂正", sent: "2026-10-23T00:10:00Z", zone: "6020", name: "沖縄東方海上" });
+  const a = snapshot([first, next, first]), b = snapshot([next, first]);
+  assert.deepEqual(a, b);
+  const current = a.latestKnown[0];
+  assert.equal(current.lifecycle, "warning_reference"); assert.equal(current.transition, "correction");
+  assert.equal(current.eligibleForReview, true); assert.equal(current.publicationApproved, false);
+  assert.equal(current.evidence.sha256, next.sha256); assert.equal(current.supersedes[0].sha256, first.sha256);
+  assert.deepEqual(current.areaBindings.map(a => a.code), ["6020"]);
+  const expired = snapshot([first, next], { now: "2026-10-24T00:00:00Z" }).latestKnown[0];
+  assert.equal(expired.lifecycle, "expired"); assert.equal(expired.evidence.sha256, next.sha256);
+});
+
+test("a rejected newer bulletin and an unsupported cancellation remain barriers after expiry", () => {
+  for (const o of [{ version: "1.0_99" }, { info: "取消" }]) {
+    const first = observe(), rejected = observe({ ...o, sent: "2026-10-23T00:10:00Z" });
+    assert.ok(rejected.error);
+    for (const now of ["2026-10-23T01:00:00Z", "2026-11-01T00:00:00Z"]) {
+      const current = snapshot([rejected, first], { now }).latestKnown[0];
+      assert.equal(current.lifecycle, o.info ? "cancellation_unverified" : "quarantined");
+      assert.equal(current.eligibleForReview, false); assert.equal(current.evidence.sha256, rejected.sha256);
+      assert.equal(current.notice, null); assert.equal(current.safeToNavigate, null);
+    }
+  }
+});
+
+test("official release replaces warnings without becoming a safe-navigation or timeless-current claim", () => {
+  const first = observe(), release = observe({ notice: "release", expiry: "missing", sent: "2026-10-23T00:10:00Z" });
+  const current = snapshot([first, release]).latestKnown[0];
+  assert.equal(current.lifecycle, "release_notice"); assert.equal(current.officialValidUntil, null);
+  assert.equal(current.safeToNavigate, null); assert.equal(current.evidence.sha256, release.sha256);
+  const stale = snapshot([first, release], { now: "2026-11-01T00:00:00Z" }).latestKnown[0];
+  assert.equal(stale.lifecycle, "release_notice"); assert.equal(stale.eligibleForReview, false);
+  assert.ok(stale.reviewBlockers.includes("local_review_stale"));
+});
+
+test("feed disappearance, failed discovery and missing new bytes never mean release", () => {
+  const first = observe();
+  assert.equal(snapshot([first], { feed: false }).latestKnown[0].eligibleForReview, false);
+  const missing = snapshot([first], { pending: url().replace("000000", "001000") });
+  assert.ok(missing.sourceBlockers.includes("unresolved_feed_bulletins"));
+  assert.equal(missing.latestKnown[0].lifecycle, "warning_reference");
+  assert.equal(missing.latestKnown[0].eligibleForReview, false);
+  const invalid = inspectJmaSeaWarning(Buffer.from("<Report>"), url().replace("000000", "002000"));
+  const blocked = snapshot([first, invalid]);
+  assert.ok(blocked.sourceBlockers.includes("unscoped_rejected_bulletin"));
+  assert.equal(blocked.rejectedWithoutGroup[0].sha256, invalid.sha256);
+});
+
+test("changed marine titles and future product editions are discovered for quarantine, not silently filtered out", () => {
+  const entries = [
+    { url: url(), title: "地方海上警報（変更版）", updatedAt: "2026-10-23T00:00:00Z" },
+    { url: url("VPZU99"), title: "全般海上警報（将来版）", updatedAt: "2026-10-23T00:00:00Z" },
+    { url: url("VPCY51"), title: "地方海上予報（Ｈ２８）", updatedAt: "2026-10-23T00:00:00Z" },
+  ];
+  assert.deepEqual(discoverJmaSeaWarnings({ updatedAt: entries[0].updatedAt, entries }), entries.slice(0, 2));
+  const changed = observe({ title: entries[0].title, sent: "2026-10-23T00:10:00Z" });
+  assert.equal(changed.groupKey, null);
+  assert.equal(snapshot([observe(), changed]).latestKnown[0].eligibleForReview, false);
+});
+
+test("same-time conflicts and same-URL byte conflicts block review; caller-edited trees cannot bypass reparsing", () => {
+  const first = observe(), other = inspectJmaSeaWarning(fixture({ zone: "6020", name: "沖縄東方海上" }), url("VPCU51", "1"));
+  assert.equal(snapshot([first, other]).latestKnown[0].lifecycle, "conflict");
+  const replaced = inspectJmaSeaWarning(fixture({ sent: "2026-10-23T00:10:00Z" }), first.url);
+  assert.ok(snapshot([first, replaced]).sourceBlockers.includes("immutable_url_conflict"));
+  first.metadata!.infoType = "取消";
+  assert.equal(snapshot([first]).latestKnown[0].lifecycle, "warning_reference");
+  first.rawBytes.fill(0);
+  assert.throws(() => snapshot([first]), /integrity failure/);
+});
+
+test("clock input requires a timezone and stale/future feeds block review independently of official expiry", () => {
+  const first = observe();
+  const feed = { url: jmaFeeds[2], rawBytes: Buffer.from('<feed xmlns="http://www.w3.org/2005/Atom"><updated>2026-10-23T00:00:00Z</updated></feed>'), checkedAt: "2026-10-23T00:00:00Z" };
+  const options = { feed, discovered: [], maxFeedAgeMs: 3_600_000, maxReviewAgeMs: 24 * 3_600_000, now: "2026-10-23T01:00:00Z" };
+  const stale = projectJmaSeaWarnings([first], options);
+  assert.ok(stale.sourceBlockers.includes("feed_stale")); assert.equal(stale.latestKnown[0].lifecycle, "warning_reference");
+  assert.ok(projectJmaSeaWarnings([first], { ...options, now: "2026-10-22T23:00:00Z" }).sourceBlockers.includes("feed_future"));
+  assert.throws(() => projectJmaSeaWarnings([first], { ...options, now: "2026-10-23T01:00:00" }), /clock/);
+  assert.throws(() => parse({ expiry: "2026-10-23T24:00:00+09:00" }), /Invalid ValidDateTime/);
+});
+
+test("pending discovery survives feed roll-off and restart until original bulletin bytes resolve it", () => {
+  const first = observe(), next = observe({ sent: "2026-10-23T00:10:00Z", info: "訂正" });
+  const waiting = snapshot([first], { pending: next.url });
+  const feed = { url: jmaFeeds[2], checkedAt: "2026-10-23T02:00:00Z",
+    rawBytes: Buffer.from('<feed xmlns="http://www.w3.org/2005/Atom"><updated>2026-10-23T02:00:00Z</updated></feed>') };
+  const options = { feed, discovered: JSON.parse(JSON.stringify(waiting.discovered)), now: feed.checkedAt, maxFeedAgeMs: 3_600_000, maxReviewAgeMs: 24 * 3_600_000 };
+  const rolledOff = projectJmaSeaWarnings([first], options);
+  assert.equal(rolledOff.unresolved[0].url, next.url);
+  assert.equal(rolledOff.latestKnown[0].eligibleForReview, false);
+  const resolved = projectJmaSeaWarnings([first, next], { ...options, discovered: rolledOff.discovered });
+  assert.equal(resolved.unresolved.length, 0); assert.equal(resolved.discovered.length, 2);
+  assert.equal(resolved.latestKnown[0].evidence.sha256, next.sha256);
+  assert.equal(resolved.latestKnown[0].eligibleForReview, true);
+});
+
+test("empty, unknown or mixed warning kinds cannot become a release notice", () => {
+  const first = fixture().toString();
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(first.replaceAll(/<Kind>.*?<\/Kind>/g, "")), url()), /Missing marine warning kind/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(first.replaceAll("海上強風警報", "未対応警報")), url()), /code\/name/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(first.replaceAll("海上強風警報", "海上警報解除")), url()), /code\/name/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(first.replaceAll("海上強風警報", "海上警報解除").replaceAll("<Code>21</Code>", "<Code>00</Code>")), url()), /Release notice contains/);
+  const mixed = first.replaceAll("<Kind><Name>海上強風警報", "<Kind><Name>海上警報解除</Name><Code>00</Code></Kind><Kind><Name>海上強風警報");
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(mixed), url()), /Mixed release/);
+});
+
+test("general warning headline and primary body kind/area must agree; forecasts retain their own hierarchy", () => {
+  const bytes = fixture({ product: "VPZU54" }).toString(), start = bytes.indexOf("<Body");
+  const head = bytes.slice(0, start), body = bytes.slice(start);
+  const noWarningHead = fixture({ product: "VPZU54", notice: "release" }).toString().split("<Body")[0];
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(noWarningHead + body), url("VPZU54")), /contradicts/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head + body.replace(/<Item>.*<\/Item>/, "")), url("VPZU54")), /Missing general warning items/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head + body.replace("海上強風警報", "海上暴風警報").replace("<Code>21</Code>", "<Code>22</Code>")), url("VPZU54")), /warning-area mismatch/);
+  const headItem = head.match(/<Item>.*<\/Item>/)![0];
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head.replace(headItem, headItem + headItem.replace("+50.0+150.0/", "+51.0+151.0/")) + body), url("VPZU54")), /warning-area mismatch/);
+  const noWarning = fixture({ product: "VPZU54", notice: "release" }).toString();
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(noWarning.replace("<Name>全般海上予報区</Name>", "<Name>オホーツク海</Name><Code>9050</Code>")), url("VPZU54")), /Invalid general no-warning area/);
+});
+
+test("official position-only tropical depression form preserves coordinates without inventing an extent", () => {
+  const bytes = fixture({ product: "VPZU54" }).toString()
+    .replaceAll("海上強風警報", "海上風警報").replaceAll("<Code>21</Code>", "<Code>20</Code>")
+    .replaceAll("<Name>低気圧</Name>", "<Name>熱帯低気圧</Name>")
+    .replaceAll(/<jmx_eb:Circle.*?<\/jmx_eb:Circle>/g, '<jmx_eb:Coordinate type="中心位置（度）">+12.5+116.6/</jmx_eb:Coordinate>');
+  const r = parseJmaSeaWarning(Buffer.from(bytes), url("VPZU54"));
+  assert.equal(r.areaBindings[0].scope, "original_position_only_warning_extent_not_supplied");
+  assert.equal(r.official.headline.Information.Item.Areas.Area["jmx_eb:Coordinate"]["#text"], "+12.5+116.6/");
+  assert.equal(r.navigationWarningComplete, false);
+});
+
+test("a local parent-zone headline matches only the complete official subdivision set, keeping original bindings", () => {
+  const bytes = fixture({ zone: "5130", name: "女島南西海上" }).toString(), start = bytes.indexOf("<Body");
+  const head = bytes.slice(0, start).replaceAll("5130", "5100").replaceAll("女島南西海上", "九州西方海上");
+  const item = bytes.slice(start).match(/<Item>.*<\/Item>/)![0];
+  const body = `<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/meteorology1/"><Warning type="地方海上警報">${item}${item.replaceAll("5130", "5110").replaceAll("女島南西海上", "済州島西海上")}${item.replaceAll("5130", "5120").replaceAll("女島南西海上", "長崎西海上")}</Warning></Body></Report>`;
+  const r = parseJmaSeaWarning(Buffer.from(head + body), url());
+  assert.deepEqual(r.areaBindings.map(a => a.code), ["5100", "5130", "5110", "5120"]);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head + body.replace(item, "")), url()), /warning-area mismatch/);
+  assert.throws(() => parseJmaSeaWarning(Buffer.from(head + body.replaceAll("5130", "6030").replaceAll("女島南西海上", "沖縄南方海上")), url()), /warning-area mismatch/);
 });

@@ -33,10 +33,14 @@ function parse(xml: string, maxBytes: number): Node {
 function time(v: any, field: string, optional = false): string | null {
   const s = text(v);
   if (!s && optional) return null;
-  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(s) || !Number.isFinite(Date.parse(s))
+  const match = /^(\d{4}-\d\d-\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d+)?(?:Z|[+-](\d\d):(\d\d))$/.exec(s);
+  if (!match || +match[2] > 23 || +match[3] > 59 || +match[4] > 59
+    || +match[5] > 14 || +match[6] > 59 || (+match[5] === 14 && +match[6] !== 0) || !Number.isFinite(Date.parse(s))
     || new Date(`${s.slice(0, 10)}T00:00:00Z`).toISOString().slice(0, 10) !== s.slice(0, 10)) throw new Error(`Invalid ${field}`);
   return s;
 }
+
+export const jmaInstant = (value: string, field: string) => time(value, field)!;
 
 export function parseJmaFeed(xml: string) {
   const f = parse(xml, 8_000_000).feed;
@@ -94,8 +98,8 @@ export function parseJmaBulletin(input: string | Uint8Array, url: string) {
 
 // Cancellation tombstones remain in the history; expiration never revives an older bulletin.
 export function currentJmaMetadata(reports: JmaBulletin[], now: string, maxAgeMs: number) {
-  const at = Date.parse(now);
-  if (!Number.isFinite(at) || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0) throw new Error("Invalid review clock/TTL");
+  const at = Date.parse(jmaInstant(now, "review clock"));
+  if (!Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) throw new Error("Invalid review clock/TTL");
   const groups = new Map<string, JmaBulletin[]>();
   for (const r of reports) groups.set(r.groupKey, [...(groups.get(r.groupKey) ?? []), r]);
   return [...groups.values()].map(rs => {

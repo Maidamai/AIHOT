@@ -138,3 +138,18 @@ export const jmaMarineZoneCatalog = {
     }
   }
 } as const;
+
+// Official parent/subdivision table, not a numeric-prefix inference or geometry model.
+// Names are joined to the versioned AreaMarineJ codes above; 対馬海峡 has no subdivisions.
+export const jmaLocalMarineSubdivisions = {
+  sourceUrl: "https://www.jma.go.jp/jma/kishou/know/kurashi/umiyoho.html",
+  children: {
+    "1000": ["1010", "1020", "1030", "1040", "1050"],
+    "1100": ["1110", "1120", "1130", "1140", "1150"],
+    "2000": ["2010", "2020"], "3000": ["3010", "3020"],
+    "3100": ["3110", "3120", "3130", "3140"], "3200": ["3210", "3220", "3230"],
+    "4000": ["4010", "4020", "4030"], "4100": ["4110", "4120", "4130"],
+    "5100": ["5110", "5120", "5130"], "5200": ["5210", "5220", "5230"],
+    "6000": ["6010", "6020", "6030"],
+  } as Record<string, readonly string[]>,
+};
