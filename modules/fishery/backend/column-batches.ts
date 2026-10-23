@@ -13,6 +13,7 @@ import {assertNpfcRobots,discoverNpfc,npfcAttachment,prepareNpfc} from './npfc-c
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { captureNpfcPdf, verifyNpfcPdf, type ConditionalHeaders } from "./npfc-pdf-cache.ts";
 import {noticePage,attachmentFormat,prepareNotice,type NoticeAttachment} from './fujian-notices.ts';
+import {assertJfaRobots,discoverJfaPress,jfaPage,prepareJfaPress,type JfaAttachment} from './jfa-press.ts';
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
@@ -116,6 +117,19 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
       }
     }
     result.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
+  } else if(item.column==='jfa-press'){
+    const robots=await readArchive(root,'jfa-press-robots',256*1024);assertJfaRobots(robots.receipt,robots.body);
+    const listing=await readArchive(root,'jfa-press-list',6*1024*1024),listingUrl=item.listingUrl??COLUMNS['jfa-press'].url;
+    columnPageIndex(item.column,listingUrl);
+    if(listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl||listing.receipt.status!==200||!discoverJfaPress(listing.body.toString('utf8')).candidates.some(c=>c.url===item.url))throw new Error('JFA release absent from archived official listing');
+    const files:JfaAttachment[]=[];
+    if(receipt.status===200)for(const [i] of jfaPage(raw,receipt.finalUrl).attachments.slice(0,6).entries()){
+      const name=`${item.archiveId}-attachment-${i}`;
+      const exists=await stat(path.join(root,`${name}.receipt.json`)).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
+      if(!exists)break;
+      const a=await readArchive(root,name,10*1024*1024);files.push({receipt:a.receipt,bytes:a.body,...(a.receipt.status===200&&attachmentFormat(a.body)==='pdf'?{parsed:await(options.parsePdf??extractPdf)(a.body)}:{})});
+    }
+    result=prepareJfaPress(receipt,raw,files);
   } else if(item.column==='fujian-notices'){
     const robots=await readArchive(root,'fujian-notices-robots',256*1024),listing=await readArchive(root,'fujian-notices-list',6*1024*1024),listingUrl=item.listingUrl??COLUMNS['fujian-notices'].url;
     if(robots.receipt.status!==404||robots.receipt.requestedUrl!=='https://hyyyj.fujian.gov.cn/robots.txt'||robots.receipt.finalUrl!==robots.receipt.requestedUrl)throw new Error('Notice robots policy unverified');
@@ -305,11 +319,12 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       // Inspected sources currently return 404. Any new policy or denial needs operator inspection.
       if (column === "iotc") assertIotcRobots(robots.receipt, robots.body);
       else if(column==='npfc')assertNpfcRobots(robots.receipt,robots.body);
+      else if(column==='jfa-press')assertJfaRobots(robots.receipt,robots.body);
       else if (robots.receipt.status !== 404) throw new Error(`Robots status ${robots.receipt.status}; stop for policy inspection`);
-      const delay = column === "iotc"||column==='npfc' ? 10_000 : column==='fujian-notices'?3000:1200;
+      const delay = column === "iotc"||column==='npfc' ? 10_000 : column==='fujian-notices'||column==='jfa-press'?3000:1200;
       await wait(delay);
       const listingUrl=options.page?.url??config.url,listing = await get(listingUrl, `${column}-list`);
-      if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || ((column === "iotc"||column==='npfc') && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
+      if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || ((column === "iotc"||column==='npfc'||column==='jfa-press') && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
       if(options.page&&listing.receipt.finalUrl!==listingUrl) throw new Error("Incremental listing redirected to a different page");
       const html=new TextDecoder("utf8", { fatal: true }).decode(listing.body),discovered = discoverColumn(column, html);
       if(options.page) {
@@ -352,7 +367,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       }
       for (const candidate of candidates) {
         if (ready >= limit) break;
-        if((options.page||column==='fujian-notices')&&source.attempted>=limit) break;
+        if((options.page||column==='fujian-notices'||column==='jfa-press')&&source.attempted>=limit) break;
         const archiveId = `${id}_${sha256(column + candidate.url).slice(0, 16)}`;
         const item: BatchItem = { column, url: candidate.url, discoveryTitle: candidate.title, listDate: candidate.listDate, state: "failed", archiveId, prepared: null, error: null };
         if(options.page) item.listingUrl=listingUrl;
@@ -382,6 +397,16 @@ export async function collectColumns(options: { id: string; dataDir: string; col
             prepared=prepareNpfc(discoverNpfc(html).candidates.find(c=>c.url===candidate.url)!,article.receipt,article.body,pdf);
             prepared.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
             if(prepared.readyForReview&&attachment)pendingCache.push(attachment.publish);
+          } else if(column==='jfa-press'){
+            const files:JfaAttachment[]=[];
+            if(article.receipt.status===200)for(const [i,a] of jfaPage(article.body,article.receipt.finalUrl).attachments.slice(0,6).entries()){
+              try{
+                await wait(delay);const file=await get(a.url,`${archiveId}-attachment-${i}`);
+                files.push({receipt:file.receipt,bytes:file.body,...(file.receipt.status===200&&attachmentFormat(file.body)==='pdf'?{parsed:await(options.parsePdf??extractPdf)(file.body)}:{})});await check();
+                if(files.reduce((n,f)=>n+f.bytes.length,0)>24*1024*1024)break;
+              }catch(error){await check();item.error=String((error as Error).message).slice(0,500);break;}
+            }
+            prepared=prepareJfaPress(article.receipt,article.body,files);
           } else if(column==='fujian-notices'){
             const files:NoticeAttachment[]=[];
             if(article.receipt.status===200)for(const [i,a] of noticePage(article.body,article.receipt.finalUrl).attachments.slice(0,3).entries()){

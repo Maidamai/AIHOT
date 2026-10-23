@@ -46,6 +46,18 @@ test('JFA complete acquisition binds six PDFs and rejects missing, textless, ove
 });
 import {noticeDeadlineState} from '../contracts.ts';
 
+test("JFA collection stops on a changed robots response before listing or article acquisition",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-jfa-policy-"));
+  try {
+    for(const status of [200,403,404]) {
+      let calls=0;
+      const batch=await collectColumns({id:`jfa-policy-${status}`,dataDir,columns:["jfa-press"],limit:1,wait:async()=>{throw new Error("No request is allowed after unverified robots");},fetch:async url=>{calls++;return {url,status,body:Buffer.from("Synthetic changed/unverified robots response"),headers:{get:()=>"text/html"}};}});
+      assert.equal(calls,1);assert.equal(batch.items.length,0);assert.equal(batch.sources[0].attempted,0);assert.match(batch.sources[0].error!,/JFA robots policy/);
+      assert.equal((await readBatch(dataDir,batch.id)).sources[0].outcome,"failure");
+    }
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
 test('Fujian notices retain actual container text without an editor class and across sibling blocks',()=>{
  const url='https://hyyyj.fujian.gov.cn/xxgk/tzgg/202610/t20261021_9999008.htm';
  const facts=['这是隔离样本，船员业务通知正文直接写在文章容器中，不能只依赖编辑器类名。','完整申请条件和办理截止日期位于后续段落，采集不得遗漏。'];
