@@ -11,8 +11,8 @@ import { linkSchema } from "../contracts.ts";
 import { sha256 } from "./source-adapters.ts";
 
 const hash=z.string().regex(/^[a-f0-9]{64}$/),stamp=z.iso.datetime({offset:true}),outcome=z.enum(["success","partial","failure"]);
-const healthSchema=z.strictObject({outcome,lastAttemptAt:stamp,lastSuccessAt:stamp.nullable(),lastCaptureAt:stamp.nullable(),reason:z.string().nullable(),pending:z.int().nonnegative(),nextPageUrl:linkSchema,coverage:z.enum(["more_pages","cycle_complete","pagination_unverified","current_page_only","blocked"])});
-const stateSchema=z.strictObject({version:z.literal("fishery-column-progress/1"),column:columnIdSchema,profileHash:hash,revision:z.int().nonnegative(),cycle:z.int().nonnegative(),cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096),health:healthSchema.nullable()});
+const healthSchema=z.strictObject({outcome,lastAttemptAt:stamp,lastSuccessAt:stamp.nullable(),lastCaptureAt:stamp.nullable(),reason:z.string().nullable(),pending:z.int().nonnegative(),nextPageUrl:linkSchema,coverage:z.enum(["more_pages","cycle_complete","pagination_unverified","current_page_only","blocked"]),latestPending:z.int().nonnegative().optional(),historyDeferred:z.int().nonnegative().optional(),revisionChecks:z.int().nonnegative().optional()});
+const stateSchema=z.strictObject({version:z.literal("fishery-column-progress/1"),column:columnIdSchema,profileHash:hash,revision:z.int().nonnegative(),cycle:z.int().nonnegative(),cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096),health:healthSchema.nullable(),history:z.strictObject({pausedAt:stamp,cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096)}).optional(),revisionCursorUrl:linkSchema.nullable().optional(),retryUrls:z.array(linkSchema).max(4096).optional()});
 export type ColumnProgress=z.infer<typeof stateSchema>;
 export function parseColumnProgress(column:ColumnId,input:unknown):ColumnProgress {
   const value=stateSchema.parse(input);columnPageIndex(column,value.cursorUrl);
@@ -65,19 +65,26 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   if(batch.status!=="complete"||!batch.finishedAt||batch.sources.length!==1||source?.id!==current.column) throw new Error("A complete single-column page batch is required");
   const next=structuredClone(current),succeeded=batch.items.filter(i=>i.state!=="failed"),failed=batch.items.filter(i=>i.state==="failed");
   const currentUrls=isNewsColumn(current.column)?source.currentUrls:undefined;
-  const restart=!!currentUrls?.length&&currentUrls.every(url=>current.completedUrls.includes(url));
-  const completed=restart?[]:current.completedUrls;
-  next.completedUrls=[...new Set([...(currentUrls?completed.filter(url=>currentUrls.includes(url)):completed),...succeeded.map(i=>i.url)])];
+  const completed=current.completedUrls;
+  next.completedUrls=[...new Set([...(currentUrls?completed.filter(url=>currentUrls.includes(url)):completed),...succeeded.map(i=>i.url)])].filter(url=>!failed.some(i=>i.url===url));
+  if(currentUrls) {
+    next.history??={pausedAt:batch.startedAt,cursorUrl:current.cursorUrl,completedUrls:[...current.completedUrls],pendingUrls:[...current.pendingUrls]};
+    next.history.pendingUrls=[...new Set([...next.history.pendingUrls,...source.historyDeferredUrls??[],...current.pendingUrls.filter(url=>!currentUrls.includes(url))])];
+    if(next.history.pendingUrls.length>4096)throw new Error("History identity bound reached; preserve state for operator inspection");
+    next.revisionCursorUrl=source.revisionCheckUrls?.at(-1)??current.revisionCursorUrl??null;
+    next.retryUrls=[...new Set([...current.retryUrls??[],...failed.map(i=>i.url)])].filter(url=>!succeeded.some(i=>i.url===url));
+    if(next.retryUrls.length>4096)throw new Error("Retry identity bound reached; preserve state for operator inspection");
+  }
   if(next.completedUrls.length>4096) throw new Error("Cycle identity bound reached; preserve state for operator inspection");
   // An old pending identity disappearing from the new list is unavailable, never a confirmed withdrawal.
-  const unresolvedOld=current.pendingUrls.filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
+  const unresolvedOld=(currentUrls?[]:current.pendingUrls).filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
   next.pendingUrls=[...new Set([...(source.remaining??current.pendingUrls),...unresolvedOld])];
   const error=source.error??(unresolvedOld.length&&!isNewsColumn(current.column)?"Pending identities disappeared from the observed list; inspect without declaring withdrawal":null);
   let coverage:z.infer<typeof healthSchema>["coverage"]="blocked";
   if(!error&&!failed.length&&source.pagination) {
     if(isNewsColumn(current.column)) {
       next.cursorUrl=COLUMNS[current.column].url;
-      if(currentUrls?.length&&currentUrls.every(url=>next.completedUrls.includes(url)))next.cycle++;
+      if(currentUrls?.length&&currentUrls.every(url=>next.completedUrls.includes(url))&&(!currentUrls.every(url=>current.completedUrls.includes(url))||source.revisionCheckUrls?.includes(currentUrls.at(-1)!)))next.cycle++;
       coverage="current_page_only";
     }
     else if(next.pendingUrls.length) coverage=source.pagination.scope==='verified_pagination'?"more_pages":source.pagination.scope;
@@ -90,7 +97,7 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   const failedRound=!!error||failed.length>0;
   const status=failedRound?(succeeded.length?"partial":"failure"):"success";
   const captures=succeeded.flatMap(i=>i.prepared?.sourceCapture.capturedAt?[i.prepared.sourceCapture.capturedAt]:[]).sort();
-  next.health={outcome:status,lastAttemptAt:batch.finishedAt,lastSuccessAt:status==="success"?batch.finishedAt:current.health?.lastSuccessAt??null,lastCaptureAt:captures.at(-1)??current.health?.lastCaptureAt??null,
+  next.health={...(currentUrls?{latestPending:next.pendingUrls.length,historyDeferred:next.history!.pendingUrls.filter(url=>!currentUrls.includes(url)).length,revisionChecks:source.revisionChecks??0}:{}),outcome:status,lastAttemptAt:batch.finishedAt,lastSuccessAt:status==="success"?batch.finishedAt:current.health?.lastSuccessAt??null,lastCaptureAt:captures.at(-1)??current.health?.lastCaptureAt??null,
     reason:error??(failed.length?`${failed.length} article acquisition/parse failure(s); cursor not advanced`:null),pending:next.pendingUrls.length,nextPageUrl:next.cursorUrl,coverage};
   return next;
 }
@@ -226,13 +233,13 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
                 reason:`Interrupted child ${batchId} retained unchanged; no HTTP during reconciliation; start a new bounded round for unfinished work`,pending:working.pendingUrls.length,nextPageUrl:working.cursorUrl,coverage:"blocked"};
               anyFailure=true;break;
             }
-          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:working.cursorUrl,completedUrls:working.completedUrls,pendingUrls:working.pendingUrls},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
-          if(batch.items.some(i=>i.column!==column)||(batch.sources[0]?.pagination&&batch.sources[0].pagination.pageUrl!==working.cursorUrl)) throw new Error("Saved page batch/cursor binding differs");
+          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:isNewsColumn(column)?COLUMNS[column].url:working.cursorUrl,completedUrls:working.completedUrls,pendingUrls:working.pendingUrls,revisionCursorUrl:working.revisionCursorUrl,retryUrls:working.retryUrls,historyDeferredUrls:working.history?.pendingUrls,revision:working.revision},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
+          if(batch.items.some(i=>i.column!==column)||(batch.sources[0]?.pagination&&batch.sources[0].pagination.pageUrl!==(isNewsColumn(column)?COLUMNS[column].url:working.cursorUrl))) throw new Error("Saved page batch/cursor binding differs");
           await options.checkpoint?.("child-persisted");
           const beforeCursor=working.cursorUrl,beforeCycle=working.cycle;working=advance(working,batch);attempted+=batch.items.length;
           anyFailure ||= working.health!.outcome!=="success";lastCapture=working.health!.lastCaptureAt??lastCapture;
           if(!anyFailure) lastSuccessful=working.health!.lastSuccessAt;
-          if(working.health!.outcome!=="success"||working.pendingUrls.length||working.cycle!==beforeCycle||working.cursorUrl===beforeCursor) break;
+          if(isNewsColumn(column)||working.health!.outcome!=="success"||working.pendingUrls.length||working.cycle!==beforeCycle||working.cursorUrl===beforeCursor) break;
         }
         if(!working.health) throw new Error("No page result was persisted");
         if(anyFailure) working.health={...working.health,outcome:attempted>0&&entry.batches.some(b=>b!==entry!.batches.at(-1))?"partial":working.health.outcome,lastSuccessAt:entry.before.health?.lastSuccessAt??null};

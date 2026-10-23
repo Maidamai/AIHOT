@@ -20,7 +20,7 @@ export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnTy
 export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "needs_review" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
-const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),currentUrls:z.array(linkSchema).max(4096).optional(),remaining:z.array(linkSchema).max(4096).optional()});
+const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),currentUrls:z.array(linkSchema).max(4096).optional(),remaining:z.array(linkSchema).max(4096).optional(),historyDeferredUrls:z.array(linkSchema).max(4096).optional(),revisionCheckUrls:z.array(linkSchema).max(5).optional(),latestPending:z.int().nonnegative().optional(),historyDeferred:z.int().nonnegative().optional(),revisionChecks:z.int().nonnegative().optional()});
 const replaySchema=z.strictObject({version:z.literal("fishery-pdf-reparse/1"),operation:z.literal("static-archived-pdf-reparse"),sourceBatchId:batchIdSchema,sourceManifestSha256:hashSchema,reparsedAt:z.iso.datetime({offset:true}),networkRequests:z.literal(0),reparsedItems:z.int().min(1).max(36),sourceSummary:z.array(sourceSummarySchema).max(6),
   artifacts:z.array(z.strictObject({sourceName:z.string(),targetName:z.string(),sha256:hashSchema})).max(148),
   items:z.array(z.strictObject({sourceArchiveId:archiveIdSchema,archiveId:archiveIdSchema,oldBodySha256:hashSchema,oldParser:z.string().min(1).max(200),newBodySha256:hashSchema,newParser:z.string().min(1).max(200)})).max(36)});
@@ -259,7 +259,7 @@ type Response = { url: string; status: number; body: Buffer; headers: { get(name
 export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal;headers?:ConditionalHeaders}) => Promise<Response>;
 type Fetcher=ColumnFetcher;
 const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8", ...(options?.headers?.["if-none-match"]?{"if-none-match":options.headers["if-none-match"]}:{}), ...(options?.headers?.["if-modified-since"]?{"if-modified-since":options.headers["if-modified-since"]}:{}) } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[];pendingUrls?:string[]};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[];pendingUrls?:string[];revisionCursorUrl?:string|null;retryUrls?:string[];historyDeferredUrls?:string[];revision?:number};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
@@ -324,12 +324,24 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       let candidates = [...discovered.candidates];
       if(column==='fujian-notices'&&options.noticeSelect?.length){if(options.noticeSelect.some(url=>!candidates.some(c=>c.url===url)))throw new Error('Requested notice absent from current listing; no direct URL bypass');candidates=candidates.filter(c=>options.noticeSelect!.includes(c.url));}
       if(options.page&&isNewsColumn(column)) {
-        source.currentUrls=candidates.map(c=>c.url);
-        const unfinished=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));
-        // Start another bounded body check only after the current list has been visited.
-        candidates=unfinished.length?unfinished:candidates;
-        const pending=new Set(options.page.pendingUrls);
-        candidates=[...candidates.filter(c=>!pending.has(c.url)),...candidates.filter(c=>pending.has(c.url))];
+        // The list date only bounds acquisition; it never becomes a publication or validity date.
+        const cutoff=new Date(Date.parse(batch.startedAt)-30*86_400_000).toISOString().slice(0,10);
+        let unknown=0;
+        const active=candidates.filter(c=>c.listDate?c.listDate>=cutoff:unknown++<30);
+        source.currentUrls=active.map(c=>c.url);
+        source.historyDeferredUrls=[...new Set([...options.page.historyDeferredUrls??[],...options.page.pendingUrls??[],...candidates.filter(c=>!source.currentUrls!.includes(c.url)).map(c=>c.url)])].filter(url=>!source.currentUrls!.includes(url));
+        const seen=new Set(options.page.completedUrls),pending=new Set([...options.page.pendingUrls??[],...options.page.retryUrls??[]]);
+        const unseen=active.filter(c=>!seen.has(c.url));
+        const fresh=[...unseen.filter(c=>!pending.has(c.url)),...unseen.filter(c=>pending.has(c.url))],known=active.filter(c=>seen.has(c.url));
+        const cursor=known.findIndex(c=>c.url===options.page!.revisionCursorUrl);
+        const rotated=[...known.slice(cursor+1),...known.slice(0,cursor+1)];
+        // Reserve a body recheck even while a long new/history list remains unfinished.
+        // A one-item manual budget alternates discovery and rechecks when both are waiting.
+        const reserve=known.length&&(!fresh.length||limit>1||(options.page.revision??0)%2===0)?1:0;
+        candidates=[...fresh.slice(0,limit-reserve),...rotated.slice(0,reserve)];
+        candidates.push(...fresh.slice(limit-reserve,limit-reserve+limit-candidates.length));
+        candidates.push(...rotated.slice(reserve,reserve+limit-candidates.length));
+        source.revisionCheckUrls=candidates.filter(c=>seen.has(c.url)).map(c=>c.url);
       } else if(options.page) candidates=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));else candidates=candidates.slice(0,12);
       const iotcCandidates = column === "iotc" ? discoverIotc(new TextDecoder("utf8", { fatal: true }).decode(listing.body)).candidates : [];
       if (column === "iotc") {
@@ -390,7 +402,14 @@ export async function collectColumns(options: { id: string; dataDir: string; col
         } catch (error) { item.error = String((error as Error).message).slice(0, 500); }
         await persist();
       }
-      if(options.page) source.remaining=candidates.filter(c=>!batch.items.some(i=>i.column===column&&i.url===c.url&&i.state!=="failed")).map(c=>c.url);
+      if(options.page) {
+        const succeeded=new Set(batch.items.filter(i=>i.column===column&&i.state!=="failed").map(i=>i.url));
+        source.remaining=(source.currentUrls??candidates.map(c=>c.url)).filter(url=>!succeeded.has(url)&&(!options.page!.completedUrls.includes(url)||batch.items.some(i=>i.url===url&&i.state==="failed")));
+        if(isNewsColumn(column)) {
+          source.latestPending=source.remaining.length;source.historyDeferred=source.historyDeferredUrls!.length;
+          source.revisionChecks=batch.items.filter(i=>source.revisionCheckUrls!.includes(i.url)).length;
+        }
+      }
     } catch (error) { source.error = String((error as Error).message).slice(0, 500); }
     const items=batch.items.filter(i=>i.column===column),failed=items.filter(i=>i.state==="failed").length;
     source.outcome=source.error||failed===items.length&&failed>0?"failure":failed>0?"partial":"success";

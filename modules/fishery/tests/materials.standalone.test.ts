@@ -351,7 +351,7 @@ test("Office notices complete bounded discovery progress while later new URLs re
     const run=(id:string)=>collectColumnRound({id,dataDir:dir,columns:["fujian-notices"],limit:2,maxPages:1,fetch,wait:async()=>{}});
     const first=await run("office-progress-first");assert.equal(first.outcome,"success");assert.deepEqual(first.sources[0].after!.completedUrls,urls.slice(0,2));assert.deepEqual(first.sources[0].after!.pendingUrls,[urls[2]]);
     const batch=await readBatch(dir,first.sources[0].batches[0]);assert.ok(batch.items.every(i=>i.state==="needs_review"));
-    const n=called.length,second=await run("office-progress-next");assert.equal(second.outcome,"success");assert.deepEqual(called.slice(n).filter(url=>urls.includes(url)),[urls[2]]);assert.equal(second.sources[0].after!.pendingUrls.length,0);
+    const n=called.length,second=await run("office-progress-next");assert.equal(second.outcome,"success");assert.deepEqual(called.slice(n).filter(url=>urls.includes(url)),[urls[2],urls[0]]);assert.equal(second.sources[0].after!.pendingUrls.length,0);assert.equal(second.sources[0].health!.revisionChecks,1);
   } finally {await rm(dir,{recursive:true,force:true});}
 });
 
@@ -363,15 +363,15 @@ test("news rounds prioritize new messages, finish the current list and recheck b
   try {
     const first=await run("news-first");assert.equal(first.sources[0]!.after!.pendingUrls.length,1);
     added=true;const before=called.length,second=await run("news-second"),fresh=called.slice(before);
-    assert.deepEqual(fresh.filter(u=>/t2026/.test(u)),[roundUrl(7),roundUrl(6)]);
+    assert.deepEqual(fresh.filter(u=>/t2026/.test(u)),[7,6,1,2,3].map(roundUrl));assert.equal(second.sources[0]!.health!.revisionChecks,3);
     assert.equal(second.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.equal(second.sources[0]!.health!.coverage,"current_page_only");
     assert.ok(!called.some(u=>u.endsWith('index_1.htm')));
     changed=true;const n=called.length,third=await run("news-recheck");
-    assert.deepEqual(called.slice(n).filter(u=>/t2026/.test(u)),[1,2,3,4,5].map(roundUrl));
-    assert.equal(third.sources[0]!.after!.cycle,1);assert.deepEqual(third.sources[0]!.after!.pendingUrls,[roundUrl(6),roundUrl(7)]);
+    assert.deepEqual(called.slice(n).filter(u=>/t2026/.test(u)),[4,5,6,7,1].map(roundUrl));
+    assert.equal(third.sources[0]!.after!.cycle,2);assert.deepEqual(third.sources[0]!.after!.pendingUrls,[]);
     const recaptured=await readBatch(dataDir,third.sources[0]!.batches[0]),item=recaptured.items.find(i=>i.url===roundUrl(1))!;
     assert.match(await readCapturedText(dataDir,item.archiveId,item.prepared!.sourceCapture.bodySha256!),/正文已作合成修订/);
-    const m=called.length;await run("news-recheck-rest");assert.deepEqual(called.slice(m).filter(u=>/t2026/.test(u)),[roundUrl(6),roundUrl(7)]);
+    const m=called.length;await run("news-recheck-rest");assert.deepEqual(called.slice(m).filter(u=>/t2026/.test(u)),[2,3,4,5,6].map(roundUrl));
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
@@ -391,20 +391,20 @@ test("news recheck failures retain retry identities across list disappearance wh
   const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-retry-")),called:string[]=[];let listed=[1,2],failed:number|null=null;
   const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url,n=robots||listing?0:Number(/_(\d+)\.htm$/.exec(url)![1])-99000;
     return {url,status:robots||n===failed?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing(listed)):roundArticle(n),headers:{get:()=>"text/html"}};};
-  const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
+  const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:3,maxPages:1,fetch,wait:async()=>{}});
   try {
     await run("retry-initial");failed=1;const retry=await run("retry-failed");
     assert.equal(retry.outcome,"partial");assert.deepEqual(retry.sources[0]!.after!.pendingUrls,[roundUrl(1)]);
     listed=[2,3];const absent=await run("retry-disappeared");
-    assert.ok(absent.sources[0]!.after!.pendingUrls.includes(roundUrl(1)));assert.ok(!absent.sources[0]!.after!.completedUrls.includes(roundUrl(1)));
+    assert.ok(!absent.sources[0]!.after!.pendingUrls.includes(roundUrl(1)));assert.ok(absent.sources[0]!.after!.history!.pendingUrls.includes(roundUrl(1)));assert.ok(absent.sources[0]!.after!.retryUrls!.includes(roundUrl(1)));assert.ok(!absent.sources[0]!.after!.completedUrls.includes(roundUrl(1)));
     failed=null;listed=[1,2,3,4];const n=called.length,recovered=await run("retry-returned");
-    assert.deepEqual(called.slice(n).filter(u=>/t2026/.test(u)),[roundUrl(4),roundUrl(1)]);
+    assert.deepEqual(called.slice(n).filter(u=>/t2026/.test(u)),[roundUrl(4),roundUrl(1),roundUrl(3)]);
     assert.equal(recovered.outcome,"success");assert.equal(recovered.sources[0]!.after!.pendingUrls.length,0);
     const failedBatch=await readBatch(dataDir,retry.sources[0]!.batches[0]);assert.equal(failedBatch.items.find(i=>i.url===roundUrl(1))!.state,"failed");
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
-test("failed articles keep the cursor and pending identity while successful captures are not repeated",async()=>{
+test("failed articles keep retry evidence while successful captures receive bounded revision checks",async()=>{
   const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-failure-"));let fail=true;const articles:string[]=[];
   const fetch=async(url:string)=>{const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url;if(!robots&&!listing)articles.push(url);
     return {url,status:robots||url===roundUrl(1)&&fail?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing([1,2],0,2)):roundArticle(1),headers:{get:()=>"text/html"}};};
@@ -412,8 +412,48 @@ test("failed articles keep the cursor and pending identity while successful capt
     const a=await collectColumnRound({id:"failure-a",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
     assert.equal(a.outcome,"partial");assert.equal(a.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.deepEqual(a.sources[0]!.after!.pendingUrls,[roundUrl(1)]);assert.equal(a.sources[0]!.health!.lastSuccessAt,null);
     fail=false;articles.length=0;const b=await collectColumnRound({id:"failure-b",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
-    assert.deepEqual(articles,[roundUrl(1)]);assert.equal(b.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);
+    assert.deepEqual(articles,[roundUrl(1),roundUrl(2)]);assert.equal(b.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);
     assert.equal((await readBatch(dataDir,"failure-a-moa-p0")).items[0]!.state,"failed","Failed evidence remains unchanged");
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("news latest discovery and same-URL revisions bypass paused deep history with separate counts",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-latest-budget-")),directory=path.join(dataDir,"fishery-column-progress"),called:string[]=[];
+  const old=Array.from({length:68},(_,i)=>roundUrl(i+100));
+  const before={...initialColumnProgress("moa"),cursorUrl:COLUMNS.moa.url+"index_1.htm",completedUrls:[roundUrl(1)],pendingUrls:old};
+  let fresh=[2,3,4,5,6],changed=true;
+  const today=new Date().toISOString().slice(0,10),oldDate=new Date(Date.now()-31*86_400_000).toISOString().slice(0,10);
+  const fetch:ColumnFetcher=async url=>{
+    called.push(url);const ids=[...fresh,1,...old.map((_,i)=>i+100)];
+    const listing=`<ul class="sj_e_tonzhi_list">${ids.map(n=>`<li><a href="${roundUrl(n)}">合成业务材料${n}</a> <span>${n>=100?oldDate:today}</span></li>`).join("")}</ul>`;
+    return {url,status:url.endsWith("robots.txt")?404:200,headers:{get:()=>"text/html"},body:url.endsWith("robots.txt")?Buffer.from("missing"):url===COLUMNS.moa.url?Buffer.from(listing):roundArticle(1,changed)};
+  };
+  const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:5,maxPages:3,fetch,wait:async()=>{}});
+  try {
+    await mkdir(directory);await writeFile(path.join(directory,"moa.json"),JSON.stringify(before));
+    const first=await run("latest-history-first"),after=first.sources[0].after!;
+    assert.deepEqual(called.filter(u=>u.includes("t2026")),[2,3,4,5,1].map(roundUrl));
+    assert.deepEqual(after.history,{pausedAt:(await readBatch(dataDir,first.sources[0].batches[0])).startedAt,cursorUrl:before.cursorUrl,completedUrls:before.completedUrls,pendingUrls:old});
+    assert.deepEqual(after.pendingUrls,[roundUrl(6)]);assert.equal(after.health!.latestPending,1);assert.equal(after.health!.historyDeferred,68);assert.equal(after.health!.revisionChecks,1);
+    assert.equal(after.cursorUrl,COLUMNS.moa.url);assert.ok(!called.includes(before.cursorUrl));
+    const b=await readBatch(dataDir,first.sources[0].batches[0]),revised=b.items.find(i=>i.url===roundUrl(1))!;
+    assert.equal(b.sources[0].latestPending,1);assert.equal(b.sources[0].historyDeferred,68);assert.equal(b.sources[0].revisionChecks,1);
+    assert.match(await readCapturedText(dataDir,revised.archiveId,revised.prepared!.sourceCapture.bodySha256!),/正文已作合成修订/);
+    fresh=[7,8,9,10,6,...fresh];changed=false;const n=called.length,next=await run("latest-history-second");
+    assert.deepEqual(called.slice(n).filter(u=>u.includes("t2026")),[7,8,9,10,2].map(roundUrl));
+    assert.deepEqual(next.sources[0].after!.history,after.history);assert.equal(new Set(called.slice(n)).size,called.slice(n).length);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("news unknown dates remain candidates without inventing dates and old-only lists use no article budget",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-latest-dates-"));
+  try {
+    const listing=roundListing(Array.from({length:32},(_,i)=>i+1));
+    const unknown=await collectColumns({id:"unknown-latest",dataDir,columns:["moa"],limit:5,page:{url:COLUMNS.moa.url,completedUrls:[]},wait:async()=>{},fetch:async url=>({url,status:url.endsWith("robots.txt")?404:200,headers:{get:()=>null},body:Buffer.from(url.endsWith("robots.txt")?"missing":url===COLUMNS.moa.url?listing:roundArticle(1))})});
+    assert.equal(unknown.sources[0].currentUrls!.length,30);assert.equal(unknown.sources[0].historyDeferred,2);assert.ok(unknown.items.every(i=>i.listDate===null));
+    let calls=0;
+    const old=await collectColumnRound({id:"old-only-latest",dataDir,columns:["moa"],limit:5,maxPages:3,wait:async()=>{},fetch:async url=>{calls++;return {url,status:url.endsWith("robots.txt")?404:200,headers:{get:()=>null},body:Buffer.from(url.endsWith("robots.txt")?"missing":`<ul class="sj_e_tonzhi_list"><li><a href="${roundUrl(1)}">合成旧资料</a> 2020-01-01</li></ul>`)};}});
+    assert.equal(calls,2);assert.equal(old.sources[0].health!.latestPending,0);assert.equal(old.sources[0].health!.historyDeferred,1);assert.equal(old.sources[0].health!.revisionChecks,0);assert.equal((await readBatch(dataDir,old.sources[0].batches[0])).items.length,0);
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
