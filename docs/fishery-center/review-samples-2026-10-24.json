@@ -1,0 +1,274 @@
+{
+  "schemaVersion": "fishery-review-samples/1",
+  "codeBaseline": "605ac218a44a724bbcbd2c616706b331191c4ca5",
+  "reviewWindowUtc": "2026-10-23T16:00:00Z/2026-10-23T16:30:00Z",
+  "labelAuthority": "assistant evidence-based editorial suggestions; not user gold",
+  "selectionMeaning": "Retain for the specific proposed use and further review; never authorizes publication or grants eligibility",
+  "thresholdsChanged": false,
+  "modelCallsAdded": 0,
+  "productionWrites": 0,
+  "sampleSelection": "purposeful diverse cases; not random and not a metric denominator",
+  "cases": [
+    {
+      "caseId": "Q01",
+      "title": "十五五渔业发展支持政策答问",
+      "sourceUrl": "https://yyj.moa.gov.cn/gzdt/202609/t20260930_6488348.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-09-30",
+      "proposedUse": "历史政策解读",
+      "suggestion": "select",
+      "reason": "具体支持方向及补贴限制，有船队经营价值；继续原终审，不能当作近期新闻或申报承诺。",
+      "shortSourceQuote": "远洋渔业履约",
+      "unresolved": [
+        "最终发布指令未授予",
+        "当前来源发布许可未核实",
+        "具体实施方案及企业资格未知"
+      ],
+      "evidenceRead": "完整归档正文、当前官网、正式回执和生产只读快照",
+      "existingModelEvidence": {
+        "prefilter": "PASS",
+        "scores": [
+          72,
+          72
+        ],
+        "tier": "T1",
+        "quality": "supported",
+        "humanDecision": null,
+        "publicationBindingCount": 0
+      },
+      "userLabel": null
+    },
+    {
+      "caseId": "Q02",
+      "title": "1—9月水产品产量5389.68万吨",
+      "sourceUrl": "https://yyj.moa.gov.cn/gzdt/202610/t20261022_6488844.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-10-22",
+      "proposedUse": "船队经营精选",
+      "suggestion": "reject",
+      "reason": "国内总量资料相关但没有目标船队作业或经营条件变化；可留行业背景，不为新近日期放行。",
+      "shortSourceQuote": "国内水产品总产量",
+      "unresolved": [
+        "未证明具体鱼种/远洋船队经营影响"
+      ],
+      "evidenceRead": "完整归档正文与本次官网核对",
+      "existingModelEvidence": {
+        "prefilter": "PASS",
+        "productionScores": [
+          42,
+          38
+        ],
+        "separateEvaluationScores": [
+          42,
+          42
+        ],
+        "productionDecision": "rejected",
+        "notRerun": true
+      },
+      "userLabel": null,
+      "archivedBodySha256": "ae787ca1afdb80f4da2aff2048ab17b5d4ee46fe7adb4584d8a0cb8682efe059"
+    },
+    {
+      "caseId": "Q03",
+      "title": "国际友城与海洋经济合作研讨会",
+      "sourceUrl": "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202610/t20261018_7237949.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-10-19",
+      "proposedUse": "船队经营精选",
+      "suggestion": "reject",
+      "reason": "会议举办是可证事实，合作意向未成为具体许可、交易或服务变化；校验器谓词误拒不改变低增量判断。",
+      "shortSourceQuote": "在福州举办",
+      "unresolved": [
+        "没有已落地经营变化",
+        "旧生产事件谓词失败不能称作双评分拒绝"
+      ],
+      "evidenceRead": "完整归档原文、旧任务错误、当前校验器离线复现与官网",
+      "existingModelEvidence": {
+        "separateEvaluationScores": [
+          22,
+          22
+        ],
+        "oldFlow": "failed at generation",
+        "newFormalScores": null
+      },
+      "userLabel": null,
+      "archivedBodySha256": "fc012da59235b83ca3572a7e46100e246681cb49ea14176e4069b8c217bf1330"
+    },
+    {
+      "caseId": "Q04",
+      "title": "宁德涉渔船舶安全监管检查",
+      "sourceUrl": "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/202609/t20260929_7219976.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-09-29",
+      "proposedUse": "经营安全参考/相关性正对照",
+      "suggestion": "select",
+      "reason": "原文有企业出海管理、船员教育和应急工作的实际内容，不能按只有公司名含远洋判无关；精选增量仍须单独评判。",
+      "shortSourceQuote": "船员安全教育、海上应急处置",
+      "unresolved": [
+        "实际作业海域和船旗未知",
+        "不是新颁安全法规",
+        "无新版双评分"
+      ],
+      "evidenceRead": "同观察同引文旧误拒及人工纠正记录、当前官网",
+      "existingModelEvidence": {
+        "oldDraftRelevance": "irrelevant",
+        "manualRevisionRelevance": "relevant",
+        "oldReferenceDecision": "qualified",
+        "newFormalScores": null
+      },
+      "userLabel": null,
+      "archivedBodySha256": "c8e8e2efbdf7fe67bee1f290852628ef4275c810537568956209369cd71192c2"
+    },
+    {
+      "caseId": "Q05",
+      "title": "舟山智慧化一站式口岸监管服务平台指南",
+      "sourceUrl": "https://zj.singlewindow.cn/pen-portal/guide/basic.jspa?id=196",
+      "sourceClass": "official_primary",
+      "publishedDate": null,
+      "proposedUse": "备航监管流程参考",
+      "suggestion": "select",
+      "reason": "明确提供船舶进出境、物料及保税燃油业务申报/查询说明，具有可用性，不应因无远洋字样而误拒。",
+      "shortSourceQuote": "供油核销单授权",
+      "unresolved": [
+        "原始发布日期未知",
+        "实际可登录办理未验证",
+        "不是供应商报价/订购入口",
+        "目标企业具体适用条件待核"
+      ],
+      "evidenceRead": "已有完整HTML/body/HTTP回执与本次官网核对",
+      "existingModelEvidence": null,
+      "userLabel": null
+    },
+    {
+      "caseId": "Q06",
+      "title": "外国人停留证件签发服务指南",
+      "sourceUrl": "https://gat.fujian.gov.cn/ztzl/cryjfwwj/bsxz_28282/202111/t20211115_5774073.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-03-02",
+      "proposedUse": "船员离港停留手续参考",
+      "suggestion": "select",
+      "reason": "明确外国船员离开港口城市的办理情形；相关性不要求出现远洋，不能推导已获用工资格。",
+      "shortSourceQuote": "外国船员及其随行家属",
+      "unresolved": [
+        "不是工作许可或居留许可",
+        "个体办理条件及现行完整规则待核"
+      ],
+      "evidenceRead": "已有完整HTML/body/HTTP回执与本次官网；日期来自页面，不来自URL的2021年",
+      "existingModelEvidence": null,
+      "userLabel": null
+    },
+    {
+      "caseId": "Q07",
+      "title": "泉州远洋渔业扶持措施试行",
+      "sourceUrl": "https://hyj.quanzhou.gov.cn/zfxxgk/zfxxgkml/zcfg/gfxwj/202507/t20250724_3193147.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2025-07-11",
+      "proposedUse": "历史资金标准参考",
+      "suggestion": "select",
+      "reason": "回运类别、运输方式与不同补助标准对经营有用；必须保留本地企业、项目与后续管理办法条件。",
+      "shortSourceQuote": "空运冰鲜金枪鱼",
+      "unresolved": [
+        "不能把12500元/吨用于全部回运产品",
+        "企业申报窗口与完整当前效力待核",
+        "指定存档PDF与网页当前附件URL不同，字节对应待核"
+      ],
+      "evidenceRead": "已有HTML/指定PDF归档与本次官网；日期来自可见页面，非URL",
+      "existingModelEvidence": null,
+      "userLabel": null
+    },
+    {
+      "caseId": "Q08",
+      "title": "马尾2026省级海洋与渔业项目集中申报",
+      "sourceUrl": "https://www.mawei.gov.cn/xjwz/zwgk/gggs/tzgg/202603/t20260309_5292976.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-02-28",
+      "proposedUse": "2026年10月当前申报机会",
+      "suggestion": "reject",
+      "reason": "原文明示3月10日截止；保留历史申报材料价值，不能写立即申报或推广为全省统一窗口。",
+      "shortSourceQuote": "项目申报截止日期",
+      "unresolved": [
+        "后续批次是否开放未核实"
+      ],
+      "evidenceRead": "既有完整160页原附件研究与本次公告正文核对",
+      "existingModelEvidence": null,
+      "userLabel": null
+    },
+    {
+      "caseId": "Q09",
+      "title": "福建海洋标准化技术委员会委员征集",
+      "sourceUrl": "https://hyyyj.fujian.gov.cn/xxgk/tzgg/202610/t20261021_7238851.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-10-21",
+      "proposedUse": "船队经营精选",
+      "suggestion": "reject",
+      "reason": "虽有11月1日截止，但对象为专业人员加入技术委员会；没有明确的船队许可、费用、作业或交付变化。",
+      "shortSourceQuote": "专业人员",
+      "unresolved": [
+        "对特定读者的标准化任职需求未获用户确认"
+      ],
+      "evidenceRead": "本次官方完整HTML正文；附件未复核，未作正式发布判断",
+      "existingModelEvidence": null,
+      "userLabel": null
+    },
+    {
+      "caseId": "Q10",
+      "title": "NPFC秋刀鱼2026累计捕捞量",
+      "sourceUrl": "https://www.npfc.int/pacific-saury-cumulative-catch-public",
+      "sourceClass": "official_primary",
+      "publishedDate": null,
+      "proposedUse": "按统计截点/版本监测经营变化",
+      "suggestion": "needs_evidence",
+      "reason": "本次原页面为截至10月17日34158吨、29.6%，显示总TAC115425吨；有经营监测价值，不以发布时间未知直接判无关。",
+      "shortSourceQuote": "Reported catch as of 17 October 2026",
+      "unresolved": [
+        "实际发布/修改时间未知",
+        "未取得10月10日原页面字节，不能计算增量",
+        "成员或单船剩余可捕量不能由全域比例推导",
+        "尚未建立版本流与完整适用口径审核"
+      ],
+      "evidenceRead": "本次原始HTTP200及HTML归档；已核对关联CMM第9、11—15段",
+      "existingModelEvidence": null,
+      "userLabel": null,
+      "statisticsAsOf": "2026-10-17",
+      "liveRawSha256": "01482d043c624b7c64a7d9f3ec4e88de1bead3312ae291f3fd638cf3d7864d28"
+    },
+    {
+      "caseId": "Q11",
+      "title": "拟立项支持的2025年度福建海洋渔业专项资金项目公示",
+      "sourceUrl": "https://hyyyj.fujian.gov.cn/xxgk/tzgg/202508/t20250828_6997038.htm",
+      "sourceClass": "official_primary",
+      "publishedDate": "2025-08-28",
+      "proposedUse": "历史项目/技术经营线索",
+      "suggestion": "needs_evidence",
+      "reason": "旧采集状态irrelevant并非AI评审；标题及公示正文不能代表45项附件项目的全部内容。",
+      "shortSourceQuote": "共45个，见附件",
+      "unresolved": [
+        "须读完整项目附件后判断具体船舶/装备内容",
+        "公示期不是企业申报窗口",
+        "当前不重新开放过期公示"
+      ],
+      "evidenceRead": "本次HTML与旧完整正文归档元数据；本轮没有核对PDF45项目",
+      "existingModelEvidence": null,
+      "userLabel": null
+    },
+    {
+      "caseId": "Q12",
+      "title": "日本狼烟渔港岸壁和船扬场部分恢复使用",
+      "sourceUrl": "https://www.jfa.maff.go.jp/j/press/seibi/261006.html",
+      "sourceClass": "official_primary",
+      "publishedDate": "2026-10-09",
+      "proposedUse": "目标船队港口运营条件",
+      "suggestion": "needs_evidence",
+      "reason": "原文明示当地渔船卸鱼及上排恢复，是实质运营变化；目标船队的使用资格、船型及服务链关联仍不足。",
+      "shortSourceQuote": "地元漁船の陸揚げと船揚げ",
+      "unresolved": [
+        "不能推定中国远洋船可进港补给",
+        "附件设施位置与适用限制未完整核对",
+        "不是10月6日发布"
+      ],
+      "evidenceRead": "本次官方正文可见令和8年10月9日，既有定时采集元数据",
+      "existingModelEvidence": null,
+      "userLabel": null
+    }
+  ]
+}
