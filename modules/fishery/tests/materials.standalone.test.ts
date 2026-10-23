@@ -260,7 +260,7 @@ import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from
 import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 import {discoverColumnPagination} from "../backend/official-columns.ts";
-import {collectColumnRound,listColumnProgress,listColumnRounds} from "../backend/column-progress.ts";
+import {collectColumnRound,listColumnProgress,listColumnRounds,initialColumnProgress,parseColumnProgress} from "../backend/column-progress.ts";
 
 test("operator CLI refuses retired IOTC before making an archive or network request",async()=>{
   const root=await mkdtemp(path.join(tmpdir(),"fishery-retired-cli-")),destination=path.join(root,"must-not-exist");
@@ -343,11 +343,16 @@ test("crash checkpoints resume persisted captures and commits idempotently with 
 });
 
 test("a damaged or changed-profile source checkpoint is preserved and does not hide healthy sources",async()=>{
+  const before=initialColumnProgress("moa"),column=COLUMNS.moa as {tier:string;url:string},original={tier:column.tier,url:column.url};
+  try {
+    column.tier="T2";assert.deepEqual(parseColumnProgress("moa",before),before,"Editorial tier changes preserve acquisition identity");
+    column.url="https://yyj.moa.gov.cn/other/";assert.throws(()=>parseColumnProgress("moa",before),/binding|URL|pagination/);
+  } finally {Object.assign(column,original);}
   const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-progress-damaged-"));
   try {
     const dir=path.join(dataDir,"fishery-column-progress");await mkdir(dir);await writeFile(path.join(dir,"moa.json"),'{"truncated":');
     const r=await collectColumnRound({id:"isolated-health",dataDir,columns:["moa","fujian"],limit:1,maxPages:1,wait:async()=>{},fetch:async url=>({url,status:url.endsWith("robots.txt")?404:200,body:url.endsWith("robots.txt")?Buffer.from("missing"):url===COLUMNS.fujian.url?Buffer.from(`<ul class="xw-list-1 gl_list"><li><a href="${columnUrl}">远洋渔业</a></li></ul>`):columnHtml(),headers:{get:()=>"text/html"}})});
-    assert.equal(r.outcome,"partial");assert.equal(r.sources[0]!.health!.outcome,"failure");assert.equal(r.sources[1]!.health!.outcome,"success");assert.equal(r.sources[1]!.health!.coverage,"pagination_unverified");
+    assert.equal(r.outcome,"partial");assert.equal(r.sources[0]!.health!.outcome,"failure");assert.equal(r.sources[1]!.health!.outcome,"success");assert.equal(r.sources[1]!.health!.coverage,"current_page_only");
     assert.equal(await readFile(path.join(dir,"moa.json"),"utf8"),'{"truncated":');assert.equal((await listColumnProgress(dataDir))[0]!.status,"unreadable");assert.equal((await listColumnRounds(dataDir)).length,1);
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });

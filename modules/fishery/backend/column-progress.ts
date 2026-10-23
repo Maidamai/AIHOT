@@ -30,7 +30,11 @@ const root=(dataDir:string)=>path.resolve(dataDir,"fishery-column-progress");
 const stateFile=(dataDir:string,column:ColumnId)=>path.join(root(dataDir),`${column}.json`);
 const equal=isDeepStrictEqual;
 const serial=(value:unknown)=>JSON.stringify(value,null,2)+"\n";
-const profile=(column:ColumnId)=>sha256(JSON.stringify({column:COLUMNS[column],selection:isNewsColumn(column)?"official-current-list-body/v2":"official-dwf-title-and-body/v1",pagination:isNewsColumn(column)?"latest-list-incremental/v2":"inspected-pagination/v1"}));
+const profile=(column:ColumnId)=>{
+  // Editorial source grades do not change the acquired resource or invalidate its cursor.
+  const acquisition=Object.fromEntries(Object.entries(COLUMNS[column]).filter(([key])=>key!=="tier"));
+  return sha256(JSON.stringify({column:acquisition,selection:isNewsColumn(column)?"official-current-list-body/v2":"official-dwf-title-and-body/v1",pagination:isNewsColumn(column)?"latest-list-incremental/v2":"inspected-pagination/v1"}));
+};
 export const initialColumnProgress=(column:ColumnId):ColumnProgress=>({version:"fishery-column-progress/1",column,profileHash:profile(column),revision:0,cycle:0,cursorUrl:COLUMNS[column].url,completedUrls:[],pendingUrls:[],health:null});
 async function exists(file:string) {try {await stat(file);return true;} catch(error) {if((error as NodeJS.ErrnoException).code==="ENOENT") return false;throw error;}}
 async function atomic(file:string,value:unknown,guard?:()=>Promise<void>,beforeRename?:()=>Promise<void>) {
