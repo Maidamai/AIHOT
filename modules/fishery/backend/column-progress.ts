@@ -64,16 +64,20 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   const source=batch.sources[0];
   if(batch.status!=="complete"||!batch.finishedAt||batch.sources.length!==1||source?.id!==current.column) throw new Error("A complete single-column page batch is required");
   const next=structuredClone(current),succeeded=batch.items.filter(i=>i.state!=="failed"),failed=batch.items.filter(i=>i.state==="failed");
-  next.completedUrls=[...new Set([...next.completedUrls,...succeeded.map(i=>i.url)])];
+  const currentUrls=isNewsColumn(current.column)?source.currentUrls:undefined;
+  const restart=!!currentUrls?.length&&currentUrls.every(url=>current.completedUrls.includes(url));
+  const completed=restart?[]:current.completedUrls;
+  next.completedUrls=[...new Set([...(currentUrls?completed.filter(url=>currentUrls.includes(url)):completed),...succeeded.map(i=>i.url)])];
   if(next.completedUrls.length>4096) throw new Error("Cycle identity bound reached; preserve state for operator inspection");
   // An old pending identity disappearing from the new list is unavailable, never a confirmed withdrawal.
-  const unresolvedOld=isNewsColumn(current.column)?[]:current.pendingUrls.filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
+  const unresolvedOld=current.pendingUrls.filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
   next.pendingUrls=[...new Set([...(source.remaining??current.pendingUrls),...unresolvedOld])];
-  const error=source.error??(unresolvedOld.length?"Pending identities disappeared from the observed list; inspect without declaring withdrawal":null);
+  const error=source.error??(unresolvedOld.length&&!isNewsColumn(current.column)?"Pending identities disappeared from the observed list; inspect without declaring withdrawal":null);
   let coverage:z.infer<typeof healthSchema>["coverage"]="blocked";
   if(!error&&!failed.length&&source.pagination) {
     if(isNewsColumn(current.column)) {
       next.cursorUrl=COLUMNS[current.column].url;
+      if(currentUrls?.length&&currentUrls.every(url=>next.completedUrls.includes(url)))next.cycle++;
       coverage="current_page_only";
     }
     else if(next.pendingUrls.length) coverage=source.pagination.scope==='verified_pagination'?"more_pages":source.pagination.scope;
@@ -222,7 +226,7 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
                 reason:`Interrupted child ${batchId} retained unchanged; no HTTP during reconciliation; start a new bounded round for unfinished work`,pending:working.pendingUrls.length,nextPageUrl:working.cursorUrl,coverage:"blocked"};
               anyFailure=true;break;
             }
-          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:working.cursorUrl,completedUrls:working.completedUrls},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
+          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:working.cursorUrl,completedUrls:working.completedUrls,pendingUrls:working.pendingUrls},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
           if(batch.items.some(i=>i.column!==column)||(batch.sources[0]?.pagination&&batch.sources[0].pagination.pageUrl!==working.cursorUrl)) throw new Error("Saved page batch/cursor binding differs");
           await options.checkpoint?.("child-persisted");
           const beforeCursor=working.cursorUrl,beforeCycle=working.cycle;working=advance(working,batch);attempted+=batch.items.length;

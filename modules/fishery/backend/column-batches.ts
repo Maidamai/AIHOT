@@ -20,7 +20,7 @@ export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnTy
 export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
-const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),remaining:z.array(linkSchema).max(4096).optional()});
+const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),currentUrls:z.array(linkSchema).max(4096).optional(),remaining:z.array(linkSchema).max(4096).optional()});
 const replaySchema=z.strictObject({version:z.literal("fishery-pdf-reparse/1"),operation:z.literal("static-archived-pdf-reparse"),sourceBatchId:batchIdSchema,sourceManifestSha256:hashSchema,reparsedAt:z.iso.datetime({offset:true}),networkRequests:z.literal(0),reparsedItems:z.int().min(1).max(36),sourceSummary:z.array(sourceSummarySchema).max(6),
   artifacts:z.array(z.strictObject({sourceName:z.string(),targetName:z.string(),sha256:hashSchema})).max(148),
   items:z.array(z.strictObject({sourceArchiveId:archiveIdSchema,archiveId:archiveIdSchema,oldBodySha256:hashSchema,oldParser:z.string().min(1).max(200),newBodySha256:hashSchema,newParser:z.string().min(1).max(200)})).max(36)});
@@ -250,7 +250,7 @@ type Response = { url: string; status: number; body: Buffer; headers: { get(name
 export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal;headers?:ConditionalHeaders}) => Promise<Response>;
 type Fetcher=ColumnFetcher;
 const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8", ...(options?.headers?.["if-none-match"]?{"if-none-match":options.headers["if-none-match"]}:{}), ...(options?.headers?.["if-modified-since"]?{"if-modified-since":options.headers["if-modified-since"]}:{}) } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[];pendingUrls?:string[]};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
@@ -314,7 +314,14 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       let ready = 0;
       let candidates = [...discovered.candidates];
       if(column==='fujian-notices'&&options.noticeSelect?.length){if(options.noticeSelect.some(url=>!candidates.some(c=>c.url===url)))throw new Error('Requested notice absent from current listing; no direct URL bypass');candidates=candidates.filter(c=>options.noticeSelect!.includes(c.url));}
-      if(options.page) candidates=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));else candidates=candidates.slice(0,12);
+      if(options.page&&isNewsColumn(column)) {
+        source.currentUrls=candidates.map(c=>c.url);
+        const unfinished=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));
+        // Start another bounded body check only after the current list has been visited.
+        candidates=unfinished.length?unfinished:candidates;
+        const pending=new Set(options.page.pendingUrls);
+        candidates=[...candidates.filter(c=>!pending.has(c.url)),...candidates.filter(c=>pending.has(c.url))];
+      } else if(options.page) candidates=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));else candidates=candidates.slice(0,12);
       const iotcCandidates = column === "iotc" ? discoverIotc(new TextDecoder("utf8", { fatal: true }).decode(listing.body)).candidates : [];
       if (column === "iotc") {
         const selection = options.iotcSelect ?? [];

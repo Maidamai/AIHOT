@@ -292,10 +292,10 @@ test("inspected pagination is bounded to official identities and unverified Fuji
   assert.throws(()=>discoverColumnPagination("iotc",'<ul class="pager"><li class="pager-last"><a href="/cmms/basic?page=10">last</a></li></ul>'),/omits or contradicts/);
 });
 
-test("news rounds revisit the latest list, reach pending sixth and prioritize new messages without walking history",async()=>{
-  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-")),called:string[]=[];let added=false;
+test("news rounds prioritize new messages, finish the current list and recheck bounded bodies without walking history",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-")),called:string[]=[];let added=false,changed=false;
   const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url;
-    return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing(added?[7,1,2,3,4,5,6]:[1,2,3,4,5,6],0,2)):roundArticle(Number(/_(\d+)\.htm$/.exec(url)![1])-99000),headers:{get:()=>"text/html"}};};
+    return {url,status:robots?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing(added?[1,2,3,4,5,6,7]:[1,2,3,4,5,6],0,2)):roundArticle(Number(/_(\d+)\.htm$/.exec(url)![1])-99000,changed),headers:{get:()=>"text/html"}};};
   const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:5,maxPages:2,fetch,wait:async()=>{}});
   try {
     const first=await run("news-first");assert.equal(first.sources[0]!.after!.pendingUrls.length,1);
@@ -303,7 +303,41 @@ test("news rounds revisit the latest list, reach pending sixth and prioritize ne
     assert.deepEqual(fresh.filter(u=>/t2026/.test(u)),[roundUrl(7),roundUrl(6)]);
     assert.equal(second.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.equal(second.sources[0]!.health!.coverage,"current_page_only");
     assert.ok(!called.some(u=>u.endsWith('index_1.htm')));
-    const n=called.length;await run("news-unchanged");assert.equal(called.length-n,2,'Unchanged lists read robots and list only');
+    changed=true;const n=called.length,third=await run("news-recheck");
+    assert.deepEqual(called.slice(n).filter(u=>/t2026/.test(u)),[1,2,3,4,5].map(roundUrl));
+    assert.equal(third.sources[0]!.after!.cycle,1);assert.deepEqual(third.sources[0]!.after!.pendingUrls,[roundUrl(6),roundUrl(7)]);
+    const recaptured=await readBatch(dataDir,third.sources[0]!.batches[0]),item=recaptured.items.find(i=>i.url===roundUrl(1))!;
+    assert.match(await readCapturedText(dataDir,item.archiveId,item.prepared!.sourceCapture.bodySha256!),/正文已作合成修订/);
+    const m=called.length;await run("news-recheck-rest");assert.deepEqual(called.slice(m).filter(u=>/t2026/.test(u)),[roundUrl(6),roundUrl(7)]);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("news completion cache keeps only the current list instead of exhausting its lifetime identity bound",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-cache-")),directory=path.join(dataDir,"fishery-column-progress");
+  const before={...initialColumnProgress("moa"),completedUrls:Array.from({length:4096},(_,i)=>roundUrl(i+1))};
+  const fetch=async(url:string)=>({url,status:url.endsWith("robots.txt")?404:200,body:url.endsWith("robots.txt")?Buffer.from("missing"):url===COLUMNS.moa.url?Buffer.from(roundListing([5000,1])):roundArticle(5000),headers:{get:()=>"text/html"}});
+  try {
+    await mkdir(directory);await writeFile(path.join(directory,"moa.json"),JSON.stringify(before));
+    const r=await collectColumnRound({id:"news-trim",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
+    assert.equal(r.outcome,"success");assert.deepEqual(r.sources[0]!.after!.completedUrls,[roundUrl(1),roundUrl(5000)]);
+    assert.equal(r.sources[0]!.after!.pendingUrls.length,0);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("news recheck failures retain retry identities across list disappearance while new URLs stay first",async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-retry-")),called:string[]=[];let listed=[1,2],failed:number|null=null;
+  const fetch=async(url:string)=>{called.push(url);const robots=url.endsWith("robots.txt"),listing=url===COLUMNS.moa.url,n=robots||listing?0:Number(/_(\d+)\.htm$/.exec(url)![1])-99000;
+    return {url,status:robots||n===failed?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing(listed)):roundArticle(n),headers:{get:()=>"text/html"}};};
+  const run=(id:string)=>collectColumnRound({id,dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
+  try {
+    await run("retry-initial");failed=1;const retry=await run("retry-failed");
+    assert.equal(retry.outcome,"partial");assert.deepEqual(retry.sources[0]!.after!.pendingUrls,[roundUrl(1)]);
+    listed=[2,3];const absent=await run("retry-disappeared");
+    assert.ok(absent.sources[0]!.after!.pendingUrls.includes(roundUrl(1)));assert.ok(!absent.sources[0]!.after!.completedUrls.includes(roundUrl(1)));
+    failed=null;listed=[1,2,3,4];const n=called.length,recovered=await run("retry-returned");
+    assert.deepEqual(called.slice(n).filter(u=>/t2026/.test(u)),[roundUrl(4),roundUrl(1)]);
+    assert.equal(recovered.outcome,"success");assert.equal(recovered.sources[0]!.after!.pendingUrls.length,0);
+    const failedBatch=await readBatch(dataDir,retry.sources[0]!.batches[0]);assert.equal(failedBatch.items.find(i=>i.url===roundUrl(1))!.state,"failed");
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
