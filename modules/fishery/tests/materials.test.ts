@@ -180,9 +180,11 @@ import { config } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
 import { installModules } from "@aihot/backend/modules";
 import { setVisibility } from "@aihot/backend/admin/content";
+import { updateSource } from "@aihot/backend/admin/sources";
+import { republishKey } from "@aihot/backend/jobs/publication";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { publishArticle } from "@aihot/backend/publication/publish";
-import { getBoss, stopBoss, enqueueOn } from "@aihot/backend/jobs/queue";
+import { getBoss, stopBoss, enqueueOn, QUEUES } from "@aihot/backend/jobs/queue";
 import { buildApp } from "../../../apps/api/src/app.ts";
 import fishery from "../server.ts";
 import { exportMaterial, materialMarkdown } from "../backend/export.ts";
@@ -362,8 +364,14 @@ test("archived batch imports through the guarded route and displays only its ver
     assert.equal(acquisition.after.outcome,"ready");assert.equal(acquisition.after.reason,"Verified source body; awaiting material review");
     assert.equal(detail.state,"pending");assert.equal(detail.reviews.length,0);assert.equal(detail.text?.body,body);assert.equal(detail.text?.hashMatches,true);
     assert.equal(detail.source.profile.rightsStatus,"unknown");assert.equal(detail.source.enabled,false);
+    const [source]=await sql`SELECT tier,first_party FROM sources WHERE id='fishery-column-moa'`;
+    assert.equal(source!.tier,'T1');assert.equal(source!.first_party,true);
+    await sql`UPDATE sources SET tier='T1_5',first_party=false WHERE id='fishery-column-moa'`;
     const again=await app.inject({method:"POST",url:"/api/admin/fishery/batches/synthetic-route-batch/import",headers:{"x-csrf-token":"dev"},payload:{}});
     assert.equal(again.statusCode,200,again.body);assert.equal(again.json().rows[0].unchanged,true);
+    const [preserved]=await sql`SELECT tier,first_party FROM sources WHERE id='fishery-column-moa'`;
+    assert.equal(preserved!.tier,'T1_5');assert.equal(preserved!.first_party,false,'Replay preserves operator classification');
+    await sql`UPDATE sources SET tier='T1',first_party=true WHERE id='fishery-column-moa'`;
     assert.equal((await documentHistory(id)).observations.length,1);
   } finally {config.devAdmin=null;}
 });
@@ -988,7 +996,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     await boss.updateQueue(flowQueue.name,{retryLimit:0,expireInSeconds:600});
     release=await registerManualFlowConsumer(boss,jobs=>runQueuedFlows(jobs,invoke));
     await assert.rejects(registerManualFlowConsumer(boss),/already running/);
-    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name].sort());
+    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name,QUEUES.republishSource].sort());
     assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.schedule`)[0]!.n,0);
     assert.equal(calls,0,"idle startup performs no model calls");
     config.modelCallsEnabled=false;
@@ -1104,6 +1112,18 @@ test("private reader projects only the current real qualified set and never expo
       await new Promise(resolve=>setTimeout(resolve,50));
     }
     assert.ok(articleId,"Normal article final qualification automatically reaches original publication through its durable job");
+    const [source]=await sql`SELECT updated_at FROM sources WHERE id=${f.sourceId}`;
+    await updateSource(f.sourceId,{patch:{tier:'T1'},version:new Date(source!.updated_at).toISOString(),reason:'Synthetic verified official source correction'},'fixture-admin');
+    let completed=false;
+    const sourceDeadline=Date.now()+15000;
+    while(Date.now()<sourceDeadline){
+      const [progress]=await sql`SELECT value FROM settings WHERE key=${republishKey(f.sourceId)}`;
+      if(progress?.value.status==='done'){completed=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    assert.ok(completed,'Normal source edits reach the original projection consumer');
+    const [projection]=await sql`SELECT first_party FROM publications WHERE article_id=${articleId}`;
+    assert.equal(projection!.first_party,true);assert.equal(calls,2,'Reprojection uses stored decisions without buying new model calls');
   } finally {await automatic();}
   const bridged={articleId:articleId!};
   assert.equal((await loadItemDetail(bridged.articleId)).kind,"found");

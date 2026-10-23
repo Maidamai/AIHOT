@@ -120,7 +120,7 @@ export function evidenceIdentity(input: unknown) {
   if (capture) { const { capturedAt: _time, attachmentCapturedAt: _attachmentTime, archiveId: _archive, manualArchiveId: _manualArchive, ...stable } = capture; return hash({ ...payload, sourceCapture: stable }); }
   return hash(payload);
 }
-type CaptureColumn={id:string;name:string;issuer:string};
+type CaptureColumn={id:string;name:string;issuer:string;tier?:"T1"};
 type CapturedImport={id:string;revision:number;unchanged:boolean};
 export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedRequiredEvidenceOnly?:boolean}):Promise<CapturedImport|null>;
 export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string):Promise<CapturedImport>;
@@ -170,8 +170,10 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
         return prior.seen?prior.result:remember(tx,null);
       }
     }
-    await tx`INSERT INTO sources (id,name,kind,enabled,participation_mode,site_fulltext,next_fetch_at)
-      VALUES (${sourceId},${column.name},'external',false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
+    // Verified official columns declare their tier; arbitrary/manual imports keep the core default.
+    // Never overwrite an operator's existing classification or imply redistribution permission.
+    await tx`INSERT INTO sources (id,name,kind,tier,first_party,enabled,participation_mode,site_fulltext,next_fetch_at)
+      VALUES (${sourceId},${column.name},'external',${column.tier??"T2"},${column.tier==='T1'},false,'editorial',false,'2100-01-01') ON CONFLICT (id) DO NOTHING`;
     // Lock the source to serialize imports of the same URL and preserve operator rights settings.
     const [registered] = await tx`SELECT id,participation_mode FROM sources WHERE id=${sourceId} FOR UPDATE`;
     if (registered?.participation_mode === "isolated") throw new Conflict("Source is isolated; captured imports are disabled");

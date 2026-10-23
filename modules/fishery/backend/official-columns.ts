@@ -10,21 +10,21 @@ import {discoverNpfc,NPFC_LIST} from './npfc-columns.ts';
 
 export const COLUMNS = {
   moa: {
-    name: "农业农村部渔业渔政管理局 · 工作动态", url: "https://yyj.moa.gov.cn/gzdt/",
+    name: "农业农村部渔业渔政管理局 · 工作动态", tier: "T1", url: "https://yyj.moa.gov.cn/gzdt/",
     list: ".sj_e_tonzhi_list li a", body: ".sj_arc_body .TRS_Editor", issuer: "农业农村部渔业渔政管理局",
   },
   fujian: {
-    name: "福建省海洋与渔业局 · 省局动态", url: "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/",
+    name: "福建省海洋与渔业局 · 省局动态", tier: "T1", url: "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/",
     list: ".xw-list-1.gl_list li a", body: "#detailCont", issuer: "福建省海洋与渔业局",
   },
   'fujian-notices':{
-    name:'福建省海洋与渔业局 · 通知公告',url:'https://hyyyj.fujian.gov.cn/xxgk/tzgg/',list:'.xw-list-1.gl_list li a[href]',body:'#detailCont .TRS_Editor',issuer:'福建省海洋与渔业局',
+    name:'福建省海洋与渔业局 · 通知公告',tier:'T1',url:'https://hyyyj.fujian.gov.cn/xxgk/tzgg/',list:'.xw-list-1.gl_list li a[href]',body:'#detailCont .TRS_Editor',issuer:'福建省海洋与渔业局',
   },
   iotc: {
     name: "IOTC · Current Conservation and Management Measures", url: "https://iotc.org/cmms/basic",
     list: "table.views-table tbody tr", body: "#content .node-cmm", issuer: "Indian Ocean Tuna Commission (IOTC)",
   },
-  npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',url:NPFC_LIST,list:'.region-content .view-document-list td.views-field-title > a[href]',body:'.region-content',issuer:'North Pacific Fisheries Commission (NPFC)'},
+  npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',tier:'T1',url:NPFC_LIST,list:'.region-content .view-document-list td.views-field-title > a[href]',body:'.region-content',issuer:'North Pacific Fisheries Commission (NPFC)'},
 } as const;
 export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;

@@ -22,7 +22,7 @@ try {
   release=await registerManualFlowConsumer(boss,undefined,{onLeaseLost:()=>{process.exitCode=1;requestStop();}});
   ready=true;
   if(stopRequested) await shutdown();
-  else console.log(JSON.stringify({level:"info",msg:"fishery manual processor started",queue:"fishery.flow",publicationQueue:"fishery.publication",concurrency:1,schedules:false,automaticPaidRetry:false}));
+  else console.log(JSON.stringify({level:"info",msg:"fishery manual processor started",queue:"fishery.flow",publicationQueue:"fishery.publication",sourcePublicationQueue:"publication.republish-source",concurrency:1,schedules:false,automaticPaidRetry:false}));
 } catch(error) {
   console.error(JSON.stringify({status:"stopped",message:(error as Error).message,noAutomaticRetry:true}));
   process.exitCode=1;

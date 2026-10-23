@@ -2,7 +2,8 @@ import { publicationQueue, type PublicationJob } from "./publication-queue.ts";
 // Existing flow/publication consumer plus bounded, opt-in import continuation; no business schedules.
 import type { PgBoss } from "pg-boss";
 import { sql } from "@aihot/backend/db";
-import { ensureQueue } from "@aihot/backend/jobs/queue";
+import { ensureQueue, QUEUES, work } from "@aihot/backend/jobs/queue";
+import { runSourceRepublish } from "@aihot/backend/jobs/publication";
 import { flowQueue } from "./flow.ts";
 import { authorizationKey } from "./authorization.ts";
 import { acquireProcessingLease, type ProcessingLease } from "./processing-lease.ts";
@@ -35,7 +36,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     // Stop fetching first and let any already-sent response settle before releasing ownership.
     // stopBoss/shutdownSignal is called by the entry point only after this drain completes.
     await publicationMaintenance;
-    try {await Promise.all([boss.offWork(flowQueue.name,{wait:true}),boss.offWork(publicationQueue.name,{wait:true})]);} finally {await lease.release();}
+    try {await Promise.all([boss.offWork(flowQueue.name,{wait:true}),boss.offWork(publicationQueue.name,{wait:true}),boss.offWork(QUEUES.republishSource,{wait:true})]);} finally {await lease.release();}
   };
   try {
     await ensureQueue(flowQueue.name,flowQueue.options);
@@ -57,10 +58,15 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
       if(stopping) throw new Error("Fishery processor stopped; no publication task may be claimed");
       return lease.run(async()=>{await lease.assertHeld();return runPublication(jobs.map(job=>job.data));});
     });
+    // Admin source edits use the core projection job; reuse it without enabling general paid workers.
+    await work(boss,QUEUES.republishSource,{batchSize:1,localConcurrency:1,pollingIntervalSeconds:2},async data=>{
+      if(stopping) throw new Error("Fishery processor stopped; no source projection may be claimed");
+      return lease.run(async()=>{await lease.assertHeld();return runSourceRepublish(data);});
+    });
     let maintaining=false;
     const maintain=async()=>{
       if(stopping) return;if(maintaining) return publicationMaintenance;maintaining=true;
-      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});}
+      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await boss.supervise(QUEUES.republishSource);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});}
       catch {if(!stopping) console.error(JSON.stringify({level:"error",msg:"fishery publication queue maintenance failed",queue:publicationQueue.name}));}
       finally {maintaining=false;}
     };
@@ -70,7 +76,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     stopWatch=lease.watch(error=>{
       stopping=true;stopHeartbeat();stopPublicationMaintenance();
       console.error(JSON.stringify({level:"error",msg:"fishery processing lease lost",instanceId:lease.instanceId,pid:process.pid,leaseBackendPid:lease.backendPid,taskId:currentTask,noAutomaticRetry:true}));
-      void Promise.all([boss.offWork(flowQueue.name,{wait:false}),boss.offWork(publicationQueue.name,{wait:false})]).catch(()=>{});
+      void Promise.all([boss.offWork(flowQueue.name,{wait:false}),boss.offWork(publicationQueue.name,{wait:false}),boss.offWork(QUEUES.republishSource,{wait:false})]).catch(()=>{});
       options.onLeaseLost?.(error);
     },options.watchIntervalMs);
     return release;
