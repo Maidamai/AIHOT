@@ -46,7 +46,7 @@ export interface ReferenceMetadata {
   expiryDate: string | null;
   /** Current read projection; never written back into the approved summary or publication date. */
   lifecycle?: {
-    timeZone: "Asia/Shanghai";
+    timeZone: string;
     dates: Record<"published" | "effectiveFrom" | "deadline" | "expiresAt", {
       value: { precision: "unknown"; value: null } | { precision: "year" | "month" | "day"; value: string };
       evidence: string[];

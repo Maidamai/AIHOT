@@ -1,7 +1,8 @@
 import { publicationQueue } from "../backend/publication-queue.ts";
 import {noticeFixture} from './fixtures.ts';
 
-test('Fujian required attachment updates invalidate approval, but unavailable unchanged dependencies do not',async()=>{
+// Several independently verified PDF captures/replays launch the real local parser; keep a bounded per-case allowance.
+test('Fujian required attachment updates invalidate approval, but unavailable unchanged dependencies do not',{timeout:180000},async()=>{
  const f=noticeFixture(),pdf=pdfFixture(false,false,'NPFC synthetic complete regulatory reference; not a current application.');
  const capture=(id:string,mode:'original'|'duplicate'|'404'|'scan'|'page-change')=>collectColumns({id,dataDir:config.dataDir,columns:['fujian-notices'],limit:1,wait:async()=>{},fetch:async url=>{
   const robots=url.endsWith('robots.txt'),list=url===COLUMNS['fujian-notices'].url,attachment=url===f.pdfUrl;
