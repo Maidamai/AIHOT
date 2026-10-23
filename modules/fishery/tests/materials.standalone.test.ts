@@ -946,6 +946,29 @@ test("full-source generation and bounded review envelopes are checked before any
   assert.throws(()=>assertFisheryPairFits({...input,body:oversized,bodySha256:sha256(oversized),pages:[]}),/zero-call manual/);
 });
 
+test('oversized source wire is lossless with adjacent evidence IDs, while short requests and bounded review gates remain unchanged',async()=>{
+  const {compactCatalogSource,catalogSource}=await import('../backend/evidence.ts');
+  const {fisheryWireBytes}=await import('../backend/ai-review.ts');
+  const {pdfPages}=await import('../backend/flow.ts');
+  const headline='2025年版合成远洋资料，仅供历史参考。',body=`--- Page 1 ---\n${headline}\r\n\n--- Page 2 ---\n\n\n--- Page 3 ---\n`+Array.from({length:400},(_,i)=>`合成逐字原文${i}。😺 保留限定与空格。`).join('\r\n');
+  const pdfBlankReview={version:'pdf-blank-review/1' as const,reviewId:'9d59308b-a508-4f80-86ab-8f5d46b8f251',rawSha256:sha256('synthetic raw PDF'),physicalPages:3,pageImages:[{page:2,sha256:sha256('synthetic blank PNG')}],proofHash:sha256('synthetic audit')};
+  const input={...idTestInput(body),pages:pdfPages(body,3,pdfBlankReview),pdfBlankReview},catalog=buildEvidenceCatalog(input),before=JSON.stringify(catalog),request=buildFisheryDraftRequest(input,'mock'),wire=JSON.parse(String(request.user));
+  assert.equal(wire.sourceWireVersion,'fishery-source-parts/1');assert.equal('body' in wire,false,'Do not duplicate the complete body beside its exact text parts');
+  assert.equal(wire.bodyParts.map((p:any)=>typeof p==='string'?p:p[4]).join(''),body);
+  const tuples=wire.bodyParts.filter(Array.isArray);assert.equal(tuples.length,catalog.spans.length);assert.equal(tuples.some((p:any)=>p[2]===2),false);
+  for(const part of tuples){const span=catalog.spans.find(s=>s.id===part[0])!;assert.deepEqual(part,[span.id,span.paragraph,span.page,span.start,span.quote]);assert.equal(body.slice(span.start,span.end),part[4]);}
+  assert.deepEqual(wire.reviewedBlankPages,pdfBlankReview);assert.deepEqual(wire.pages,catalog.pages);assert.equal(JSON.stringify(catalog),before);
+  assert.throws(()=>compactCatalogSource(input,{...catalog,spans:[{...catalog.spans[0]!,paragraph:999},...catalog.spans.slice(1)]}),/unchanged complete catalog/);
+  const legacy={...request,user:JSON.stringify({language:input.language,...catalogSource(input,catalog)})};assert.ok(fisheryWireBytes(legacy)>96000);
+  const sizes=assertFisheryPairFits(input,request);assert.ok(sizes.generationBytes<=96000);assert.ok(sizes.reviewEnvelopeBytes<=96000);
+  const id=catalog.spans[0]!.id,raw={...idTestDraft(),summaryZh:[{sentence:headline,evidence:[id]}]},candidate=validateFisheryDraft(input,request.schema.parse(raw));
+  assert.equal(candidate.summaryZh[0]!.evidence[0]!.quote,headline);assert.equal(request.schema.safeParse({...raw,summaryZh:[{sentence:headline,evidence:['p999999s1']}]}).success,false);
+  const review=buildFisheryReviewRequest(input,candidate,'mock'),reviewSource=JSON.parse(String(review.user)).source;assert.deepEqual(reviewSource,wire);
+  const emptyReview=buildFisheryReviewRequest(input,{...idTestDraft(),relevance:{...idTestDraft().relevance,reason:'Preflight only'}},'mock');assert.equal(sizes.reviewEnvelopeBytes,fisheryWireBytes(emptyReview)+8192*2+4096,'Keep the original full bounded candidate/claims reserve');
+  const short=idTestInput('短原文保持旧协议。'),shortRequest=buildFisheryDraftRequest(short,'mock'),shortSource=JSON.parse(String(shortRequest.user));
+  assert.match(shortRequest.promptVersion!,/^fishery-draft-v5:/);assert.equal(shortSource.body,short.body);assert.equal(shortSource.sourceWireVersion,undefined);assert.deepEqual(shortSource,{language:short.language,...catalogSource(short,buildEvidenceCatalog(short))});
+});
+
 function idTestDraft() {
   const date={date:unknownDate,evidence:[]};
   return {relevance:{decision:"unknown",reason:"Synthetic protocol test only",evidence:[]},summaryZh:[],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",locations:[],organizations:[],uncertainties:[]};

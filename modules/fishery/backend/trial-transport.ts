@@ -1,6 +1,10 @@
 // Fixed cumulative authorization; historical reservations retain their original amounts.
 export const TRIAL = Object.freeze({ id:"deepseek-fishery-20261020", maxRequests:null, reserveMicroCny:400_000, maxReservedMicroCny:10_000_000,
   maxWireBytes:96_000, inputTokenCeiling:100_000, maxOutputTokens:2048, endpoint:"https://api.deepseek.com/chat/completions", model:"deepseek-flash", verifiedVersion:"DeepSeek-V4.1-Flash-1017", verifiedAt:"2026-10-20" });
+export function trialWireBytes(options:{system:string;user:unknown;temperature?:number;maxTokens?:number}) {
+  if(typeof options.user!=="string") throw new Error("Only plain-text fishery input is permitted");
+  return Buffer.byteLength(JSON.stringify({model:TRIAL.model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],temperature:options.temperature??0.2,max_tokens:options.maxTokens??2048,response_format:{type:"json_object"},thinking:{type:"disabled"}}));
+}
 export function validateTrialWire(url:unknown,options:RequestInit|undefined) {
   if(url!==TRIAL.endpoint||options?.method!=="POST"||typeof options.body!=="string"||Buffer.byteLength(options.body)>TRIAL.maxWireBytes) throw new Error("Trial request destination/method/size refused");
   const b=JSON.parse(options.body), allowed=["model","messages","temperature","max_tokens","response_format","thinking"];

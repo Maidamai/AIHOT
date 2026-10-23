@@ -78,6 +78,25 @@ export function catalogSource(input:EvidenceInput,catalog:EvidenceCatalog) {
   ]}: {})};
 }
 
+export const LOSSLESS_SOURCE_WIRE='fishery-source-parts/1';
+export type EvidenceBodyPart=string|[id:string,paragraph:number,page:number|null,start:number,quote:string,sourceId?:string];
+// Send each original character exactly once, with IDs adjacent to their literal source text. Gaps are context, never evidence IDs.
+export function compactCatalogSource(input:EvidenceInput,catalog:EvidenceCatalog){
+  const {hash:catalogHash,...bound}=catalog;
+  if(buildEvidenceCatalog(input).hash!==catalogHash||sha256(JSON.stringify(bound))!==catalogHash)throw new Error('Compact source requires the unchanged complete catalog');
+  const bodyParts:EvidenceBodyPart[]=[],ids=new Set<string>(),sources=new Set(catalog.sections?.map(s=>s.id)??[]);let offset=0;
+  for(const span of catalog.spans){
+    if(ids.has(span.id)||span.start<offset||span.end!==span.start+span.quote.length||input.body.slice(span.start,span.end)!==span.quote||span.source&&!sources.has(span.source.id))throw new Error('Compact source span identity, order or exact text changed');
+    ids.add(span.id);if(span.start>offset)bodyParts.push(input.body.slice(offset,span.start));
+    bodyParts.push([span.id,span.paragraph,span.page,span.start,span.quote,...(span.source?[span.source.id]:[])] as EvidenceBodyPart);offset=span.end;
+  }
+  if(offset<input.body.length)bodyParts.push(input.body.slice(offset));
+  const reconstructed=bodyParts.map(part=>typeof part==='string'?part:part[4]).join('');
+  if(reconstructed!==input.body||sha256(reconstructed)!==input.bodySha256)throw new Error('Compact source is not a lossless reconstruction');
+  const {body,paragraphs,evidenceCatalog,...provenance}=catalogSource(input,catalog);
+  return {...provenance,sourceWireVersion:LOSSLESS_SOURCE_WIRE,evidenceCatalog:{...evidenceBinding(catalog),partColumns:['id','paragraph','page','start','quote','sourceId?']},bodyParts};
+}
+
 export function assertSavedEvidenceArtifact(input:EvidenceInput,artifact:{evidenceCatalog?:ReturnType<typeof evidenceBinding>;promptVersion?:string;schemaVersion?:string},expected:{promptVersion:string;schemaVersion:string}) {
   if(artifact.promptVersion!==expected.promptVersion||artifact.schemaVersion!==expected.schemaVersion) throw new Error("Saved artifact prompt/schema version changed; preserve the old attempt and do not automatically resend");
   return assertEvidenceBinding(input,artifact.evidenceCatalog!);
