@@ -240,10 +240,10 @@ test('NPFC full-PDF batches reverify archived identities, preserve complete text
  }finally{await rm(dataDir,{recursive:true,force:true});}
 });
 
-test('selection transport admits only the three bounded output sizes; missing usage retains full unknown reserve',async()=>{
+test('selection and core event transport keep the output ceiling; missing usage retains full unknown reserve',async()=>{
  const request=(tokens:number)=>({method:'POST',body:JSON.stringify({model:TRIAL.model,messages:[{role:'system',content:'Synthetic prompt'},{role:'user',content:'Synthetic public test source'}],max_tokens:tokens,temperature:0,response_format:{type:'json_object'},thinking:{type:'disabled'}})});
- for(const tokens of [512,1024,2048])assert.doesNotThrow(()=>validateTrialWire(TRIAL.endpoint,request(tokens)));
- for(const tokens of [0,513,1025,2049,64000])assert.throws(()=>validateTrialWire(TRIAL.endpoint,request(tokens)),/parameters refused/);
+ for(const tokens of [400,512,520,1024,1200,1600,2048])assert.doesNotThrow(()=>validateTrialWire(TRIAL.endpoint,request(tokens)));
+ for(const tokens of [0,400.5,2049,64000])assert.throws(()=>validateTrialWire(TRIAL.endpoint,request(tokens)),/parameters refused/);
  assert.throws(()=>validateTrialWire('https://example.org/chat/completions',request(512)),/destination/);
  const entries:any[]=[];let sent=0;
  const restore=installTrialTransport({reserve:async()=>{trialCapacity(entries);entries.push({state:'pending',reservedMicroCny:TRIAL.reserveMicroCny});return 1;},settle:async(id,state,usage)=>{entries[id-1].state=state;entries[id-1].usage=usage;}},async()=>{sent++;return new Response(JSON.stringify({model:TRIAL.model,choices:[]}),{status:200});});

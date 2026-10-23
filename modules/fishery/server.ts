@@ -1,3 +1,4 @@
+import { newsQueue, retryNewsEditorial } from "./backend/news-editorial.ts";
 import { publicationQueue } from "./backend/publication-queue.ts";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata } from "./backend/publication-bridge.ts";
 import {archiveSourceStatuses,startArchiveProfile} from "./backend/archive-worker.ts";
@@ -31,7 +32,7 @@ const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin
 const param = (req: { params: unknown }) => idSchema.parse((req.params as Record<string, string>).id);
 
 export default defineServerModule({
-  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, queues:[flowQueue,publicationQueue],
+  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, queues:[flowQueue,publicationQueue,newsQueue],
   publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
   http(app) {
     installManualSourceRoutes(app);
@@ -45,6 +46,7 @@ export default defineServerModule({
     app.post("/api/admin/fishery/flows/:id/revision", guarded(async(req,reply,admin)=>reply.code(201).send(await createHumanRevision(param(req),req.body,admin.name))));
     app.post("/api/admin/fishery/flows/:id/run", guarded(async req=>enqueueFlow(param(req))));
     app.post("/api/admin/fishery/flows/:id/reconcile", guarded(async(req,_reply,admin)=>reconcileFlow(param(req),req.body,admin.name)));
+    app.post("/api/admin/fishery/flows/:id/editorial/retry", guarded(async(req,_reply,admin)=>retryNewsEditorial(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/retry", guarded(async(req,_reply,admin)=>retryFlow(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/decision", guarded(async(req,_reply,admin)=>decideFlow(param(req),req.body,admin.name)));
     app.get("/api/admin/fishery/workbench", guarded(async req => workbench(z.object({ page:z.coerce.number().int().positive().max(100000).optional(),q:z.string().max(200).optional(),scope:z.enum(["real","test","all"]).optional(),state:z.enum(["pending","failed","unverified","stale","rejected","approved","withdrawn"]).optional().or(z.literal("")) }).parse(req.query))));

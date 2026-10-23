@@ -293,3 +293,10 @@ cd apps/web && NODE_ENV=production node --env-file=../../.env server.ts   # 网�
 三个进程要一直运行，生产环境用 systemd 或 pm2 守护（守护配置里同样设 `NODE_ENV=production`）。停止 worker 时给它 515 秒（systemd 的 `TimeoutStopSec=515`、pm2 的 `kill_timeout: 515000` 和 `treekill: false`），覆盖队列的 470 秒排空和数据库清理；systemd 还需设 `KillMode=mixed`，只先通知主进程停止接任务，让正在备份的 `pg_dump`、`tar` 自然完成。被提前杀掉的调用结果不明，要等至少半小时自动放行后才会重试。
 
 开发时用带热更新的方式：`npm run dev:api`、`npm run dev:worker`、`npm run dev:web`。开发时想免登录进后台，在 `.env` 里设 `DEV_AUTH_ROLE=admin`（生产环境会拒绝启动）。
+
+
+### 远洋资讯结构化事实升级（2026-10-23）
+
+模块迁移 `0105`–`0107` 仅为既有 `fishery_flow_tasks.stage` 增加 `structure`，按单语句分文件释放旧约束、添加并验证新约束。按正常备份、停止消费者、迁移、启动顺序执行；不删除文章、旧任务、证据或回执，也不回填旧任务。新处理器增加 `fishery.news`（自动重试0），保持现有单处理租约和累计10元账本，勿开启原完整worker作为替代。
+
+成刊检查附在既有消费者维护循环，只有到期的合格真实输入才执行；三类刊物均复用已审文案，不调用综述模型。无候选时维持空状态。回滚旧镜像可保留宽化后的约束和全部历史；若已经有新 `structure` 阶段或 `fishery.news` 活动任务，先正常停止并核对回执，旧消费者不能继续新阶段，不能回滚费用账本或删除任务。

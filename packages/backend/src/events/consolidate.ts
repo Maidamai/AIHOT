@@ -33,15 +33,15 @@ async function storyRoot(storyId: number): Promise<StoryRoot | null> {
     SELECT f.subject, f.action, f.object, f.occurred_at, p.title, p.summary, s.name AS source, (s.tier = 'T1') AS first_party,
            p.published_at AS at, a.publication_time AS "publicationTime",
            (SELECT min(coalesce(q.published_at, q.discovered_at)) FROM fact_articles z JOIN publications q ON q.article_id = z.article_id
-            WHERE z.fact_id = f.id AND z.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`z.article_id`)}) AS started_at,
+            WHERE z.fact_id = f.id AND z.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`z.article_id`)).condition}) AS started_at,
            EXISTS (SELECT 1 FROM grouping_decisions d WHERE d.article_id = fa.article_id AND d.verdict = 'roundup') AS roundup
     FROM facts f
     JOIN stories st ON st.id = f.story_id AND st.origin <> 'manual'
-    JOIN fact_articles fa ON fa.fact_id = f.id AND fa.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`fa.article_id`)}
+    JOIN fact_articles fa ON fa.fact_id = f.id AND fa.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`fa.article_id`)).condition}
     JOIN publications p ON p.article_id = fa.article_id
     JOIN articles a ON a.id = p.article_id
     JOIN sources s ON s.id = p.source_id
-    WHERE f.id = ${rootFactOf(storyId)}
+    WHERE f.id = ${(await rootFactOf(storyId)).expression}
     ORDER BY (fa.role = 'primary') DESC, p.timeline_at ASC
     LIMIT 1`;
   if (!row) return null;
@@ -126,9 +126,9 @@ export async function consolidate(storyIds: number[]): Promise<Consolidation[]> 
  * marks older stories; one that mentions the root does not count): the story is neither merged nor
  * linked.
  */
-const startedByRoundup = (story: ReturnType<typeof sql>) => sql`EXISTS (
+const startedByRoundup = async (story: ReturnType<typeof sql>) => ({ expression: sql`EXISTS (
   SELECT 1 FROM fact_articles r JOIN grouping_decisions d ON d.article_id = r.article_id AND d.verdict = 'roundup'
-  WHERE r.fact_id = ${rootFactOf(story)} AND r.role <> 'mention' AND ${groupingEvidenceCondition(sql`r.article_id`)})`;
+  WHERE r.fact_id = ${(await rootFactOf(story)).expression} AND r.role <> 'mention' AND ${(await groupingEvidenceCondition(sql`r.article_id`)).condition})` });
 
 /**
  * Stories that stay apart although reports tie them (a reaction, a development of a later fact, a
@@ -144,7 +144,7 @@ export async function linkRelatedStories(): Promise<{ added: number }> {
     ties AS (
       SELECT DISTINCT l.article_id, own.story_id AS a, other.story_id AS b
       FROM latest l
-      JOIN fact_articles fa ON fa.article_id = l.article_id AND fa.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`fa.article_id`)}
+      JOIN fact_articles fa ON fa.article_id = l.article_id AND fa.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`fa.article_id`)).condition}
       JOIN facts own ON own.id = fa.fact_id
       CROSS JOIN LATERAL jsonb_array_elements(l.candidates) c
       JOIN facts other ON other.id = (c->>'id')::bigint
@@ -155,7 +155,7 @@ export async function linkRelatedStories(): Promise<{ added: number }> {
       SELECT p.x, p.y FROM pairs p
       JOIN stories sx ON sx.id = p.x AND sx.merged_into IS NULL
       JOIN stories sy ON sy.id = p.y AND sy.merged_into IS NULL
-      WHERE NOT ${startedByRoundup(sql`p.x`)} AND NOT ${startedByRoundup(sql`p.y`)}),
+      WHERE NOT ${(await startedByRoundup(sql`p.x`)).expression} AND NOT ${(await startedByRoundup(sql`p.y`)).expression}),
     added AS (
       INSERT INTO story_links (story_id, other_id, relation)
       SELECT x, y, 'related' FROM linked UNION ALL SELECT y, x, 'related' FROM linked

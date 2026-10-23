@@ -1,0 +1,1 @@
+ALTER TABLE fishery_flow_tasks VALIDATE CONSTRAINT fishery_flow_tasks_stage_check;

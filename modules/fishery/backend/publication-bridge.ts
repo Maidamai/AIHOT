@@ -1,3 +1,5 @@
+import { approvedNewsRun, projectNewsAnalysis, enqueueNews } from "./news-editorial.ts";
+import type { AnalysisRun } from "@aihot/backend/editorial/analyze";
 import type { ReferenceMetadata } from "@aihot/contracts/site";
 import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { publicationDecisionCurrent, type PublicationJob } from "./publication-queue.ts";
@@ -15,26 +17,29 @@ import { eligibleReaderItems } from "./reader.ts";
 import { eligibleBusinessGuideItems, businessGuideReaderItem } from "./business-guides.ts";
 import { lockDocument, hash } from "./store.ts";
 
-type Projection = { reference?: ReferenceMetadata; kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; tags: string[]; score: number | null; url: string; publicationTime: string | null; binding: string };
+type Projection = { analysis?:AnalysisRun; reference?: ReferenceMetadata; kind: "article" | "business_guide"; id: string; documentId: string; title: string; summary: string; category: string; tags: string[]; score: number | null; url: string; publicationTime: string | null; binding: string };
 
 async function currentProjections(now: Date, db: Db = sql, target?: { kind: "article" | "business_guide"; id: string }): Promise<Projection[]> {
   const articles = target?.kind === "business_guide" ? [] : (await eligibleReaderItems(now)).filter(item => !target || item.id === target.id);
   const tasks = await db`SELECT DISTINCT ON (t.document_id) t.document_id,t.id,t.snapshot,t.human_decision,t.draft,t.quality_review,t.selection,
-    EXISTS (SELECT 1 FROM articles a JOIN fishery_documents d ON d.id=t.document_id
-      WHERE a.source_id=d.source_id AND a.url=d.canonical_url AND a.raw->>'fisheryDocumentId'=d.id AND a.raw->>'mode'='verified-news-candidate') AS news
-    FROM fishery_flow_tasks t WHERE t.document_id=ANY(${articles.map(item => item.id)}::text[]) ORDER BY t.document_id,t.created_at DESC,t.id DESC`;
+    n.id IS NOT NULL AS news,n.tier AS core_tier,encode(sha256(convert_to(n.body_text,'UTF8')),'hex') AS core_body_hash
+    FROM fishery_flow_tasks t LEFT JOIN LATERAL (
+      SELECT a.id,a.body_text,s.tier FROM articles a JOIN fishery_documents d ON d.id=t.document_id JOIN sources s ON s.id=a.source_id
+      WHERE a.source_id=d.source_id AND a.url=d.canonical_url AND a.raw->>'fisheryDocumentId'=d.id AND a.raw->>'mode'='verified-news-candidate' LIMIT 1
+    ) n ON true WHERE t.document_id=ANY(${articles.map(item => item.id)}::text[]) ORDER BY t.document_id,t.created_at DESC,t.id DESC`;
   const taskBindings = new Map(tasks.map(task => [task.document_id, task]));
   const guides = target?.kind === "article" ? [] : db === sql
     ? await sql.begin(tx => eligibleBusinessGuideItems(tx, now, target?.id ?? null))
     : await eligibleBusinessGuideItems(db, now, target?.id ?? null);
   return [
     ...articles.flatMap(item => {
-      const { selection, news, ...task } = taskBindings.get(item.id)!;
+      const { selection, news, core_tier, core_body_hash, ...task } = taskBindings.get(item.id)!;
       const outcome = selection?.outcome;
       const score = news && outcome?.label === "SCORED" && outcome.attentionCandidate && Number.isInteger(outcome.average) ? outcome.average : null;
       // Preserve the approved news score, without inventing the missing core fact/grouping decision.
-      if (news && score === null) return [];
-      return [{ kind: "article" as const, id: item.id, documentId: item.id, title: item.title,
+      if (news && (score === null || selection.sourceTier !== core_tier || core_body_hash !== task.snapshot.bodySha256)) return [];
+      const summary=item.summary.map(s => s.sentence).join("\n"),analysis=news?approvedNewsRun({...task,selection},item.title,summary):null;
+      return [{ ...(analysis?{analysis}:{}),kind: "article" as const, id: item.id, documentId: item.id, title: item.title,
         summary: item.summary.map(s => s.sentence).join("\n"), category: item.category.id, tags: [CATEGORIES.find(c=>c.key===item.category.id)!.label], score, url: item.source.url,
         publicationTime: item.dates.published.precision === "day" ? item.dates.published.value : null,
         binding: hash({ task, title: item.title, source: item.source, category: item.category, summary: item.summary, dates: item.dates, verification: item.verification, ...(news ? { selection } : {}) }) }];
@@ -92,12 +97,12 @@ export async function fisheryPublicationCondition(now: Date, db: Db = sql) {
   const bindings = await db`SELECT b.*,${qualificationState(sql`b.document_id`, sql`b.kind`, sql`b.item_id`)} AS qualification_state FROM fishery_publication_bindings b`;
   const projections = await currentProjections(now, db);
   const current = new Map(projections.map(p => [`${p.kind}:${p.id}`, p]));
-  const allowed = bindings.filter(b => current.get(`${b.kind}:${b.item_id}`)?.binding === b.projection_hash).map(b => ({ article_id: String(b.article_id), state: b.qualification_state, projection_hash: b.projection_hash, score: current.get(`${b.kind}:${b.item_id}`)!.score, tags: current.get(`${b.kind}:${b.item_id}`)!.tags }));
+  const allowed = bindings.filter(b => current.get(`${b.kind}:${b.item_id}`)?.binding === b.projection_hash).map(b => ({ article_id: String(b.article_id), state: b.qualification_state, projection_hash: b.projection_hash, structured: !!current.get(`${b.kind}:${b.item_id}`)!.analysis, score: current.get(`${b.kind}:${b.item_id}`)!.score, tags: current.get(`${b.kind}:${b.item_id}`)!.tags }));
   return { condition: sql`(
     NOT EXISTS (SELECT 1 FROM fishery_sources managed WHERE managed.source_id = p.source_id)
     AND NOT EXISTS (SELECT 1 FROM fishery_publication_bindings managed WHERE managed.article_id = p.article_id)
     OR EXISTS (
-      SELECT 1 FROM jsonb_to_recordset(${sql.json(allowed)}) approved(article_id text,state text,projection_hash text,score numeric,tags text[])
+      SELECT 1 FROM jsonb_to_recordset(${sql.json(allowed)}) approved(article_id text,state text,projection_hash text,structured boolean,score numeric,tags text[])
       JOIN fishery_publication_bindings binding ON binding.article_id=approved.article_id
       JOIN articles material ON material.id = binding.article_id
       JOIN fishery_documents document ON document.id = binding.document_id
@@ -106,7 +111,9 @@ export async function fisheryPublicationCondition(now: Date, db: Db = sql) {
         AND ${qualificationState(sql`binding.document_id`, sql`binding.kind`, sql`binding.item_id`)}=approved.state
         AND p.title = binding.title AND p.summary = binding.summary AND p.category = binding.category AND p.url = binding.url
         AND p.source_id = document.source_id AND material.source_id = document.source_id AND p.tags = approved.tags
-        AND p.body_mode = 'summary' AND NOT p.syndicate AND p.score IS NOT DISTINCT FROM approved.score AND NOT p.selected))` };
+        AND p.body_mode = 'summary' AND NOT p.syndicate AND p.score IS NOT DISTINCT FROM approved.score
+        AND (NOT approved.structured OR EXISTS (SELECT 1 FROM analyses an WHERE an.id=p.analysis_id AND an.article_id=material.id AND an.input_revision=material.revision AND an.output->>'fisheryApproval'=approved.projection_hash))
+        AND (NOT p.selected OR approved.structured AND material.grouping_status='complete' AND material.selection_adds_value IS TRUE)))` };
 }
 
 export async function allowFisheryUndatedArchive(articleId: string, db: Db): Promise<boolean> {
@@ -140,7 +147,7 @@ export async function syncFisheryPublications(actor: string, now = new Date(), o
         raw: { fisheryPublicationKind: projection.kind, fisheryPublicationId: projection.id, fisheryPublicationDocumentId: projection.documentId },
       }, tx);
       const [article] = await tx`SELECT revision FROM articles WHERE id=${material.articleId}`;
-      const fields = { title: projection.title, summary: projection.summary, category: projection.category, relevance: "pass", score: projection.score, selected: false, tags: projection.tags };
+      const fields = { title: projection.title, summary: projection.summary, category: projection.category, relevance: "pass", score: projection.score, ...(projection.analysis?{}:{selected:false}), tags: projection.tags };
       const [oldOverride] = await tx`SELECT fields,version FROM editorial_overrides WHERE article_id=${material.articleId}`;
       if (hash(oldOverride?.fields ?? null) !== hash(fields)) {
         await tx`INSERT INTO editorial_overrides(article_id,fields,reason,version,updated_by)
@@ -153,11 +160,13 @@ export async function syncFisheryPublications(actor: string, now = new Date(), o
         VALUES (${projection.kind},${projection.id},${material.articleId},${projection.documentId},${projection.binding},${article!.revision},${projection.title},${projection.summary},${projection.category},${projection.url},${actor})
         ON CONFLICT(kind,item_id) DO UPDATE SET projection_hash=EXCLUDED.projection_hash,material_revision=EXCLUDED.material_revision,
           title=EXCLUDED.title,summary=EXCLUDED.summary,category=EXCLUDED.category,url=EXCLUDED.url,actor=EXCLUDED.actor,updated_at=now()`;
+      if(projection.analysis)await projectNewsAnalysis(tx,material.articleId,article!.revision,projection.binding,projection.analysis);
       // The source's full-body licence is separate from this reviewed summary projection.
       const publication = await publishArticleTx(tx, material.articleId, { now });
       if (!before || before.projection_hash !== projection.binding || before.material_revision !== article!.revision)
         await audit(actor, "fishery.publication.bridge", `content:${material.articleId}`, "Associate existing qualified material with core publication", before ?? null,
           { kind: projection.kind, itemId: projection.id, documentId: projection.documentId, projectionHash: projection.binding, materialRevision: article!.revision, selected: false, score: projection.score }, { db: tx });
+      if(projection.analysis)await enqueueNews({articleId:material.articleId,revision:article!.revision,projectionHash:projection.binding,actor},tx);
       await options.assertHeld?.();
       return { kind: projection.kind, itemId: projection.id, articleId: material.articleId, eligible: publication !== null };
     });

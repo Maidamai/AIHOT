@@ -191,7 +191,7 @@ export function fitted(text: string, max: number): string | null {
  * Without a usable overview the issue is saved with none (see periodOverview).
  * An automatic run skips a complete period of quiet dailies without publishing an empty issue.
  */
-async function composePeriod(kind: "weekly" | "monthly", key: string, startDate: string, endDateInclusive: string, reason: string | undefined) {
+async function composePeriod(kind: "weekly" | "monthly", key: string, startDate: string, endDateInclusive: string, reason: string | undefined, options: { writeOverview?: boolean } = {}) {
   const previous = await savedReport(kind, key);
   if (previous && reason === undefined) return { key, entries: previous.entries };
   // The dailies' windows run from the edition time the day before the first to that time on the last.
@@ -214,10 +214,10 @@ async function composePeriod(kind: "weekly" | "monthly", key: string, startDate:
     .map((label) => ({ label, items: top.filter((e) => sectionOf(e.category) === label) }))
     .filter((g) => g.items.length > 0);
   const corpus = [`${startDate} ${endDateInclusive}`, ...top.map((e) => `${e.title} ${e.summary}`)].join("\n");
-  const model = await modelFor("report");
+  const model = options.writeOverview === false ? null : await modelFor("report");
   let written: z.infer<typeof PeriodSchema> = { overview: "", sections: {} };
   let receiptId: number | null = null;
-  try {
+  if (model !== null) try {
     const res = await chatJson({
       model, purpose: `report_${kind}`, subject: `report:${kind}:${key}`, promptVersion: REPORT_VERSION,
       ...periodPrompt(kind, startDate, endDateInclusive, groups), schema: PeriodSchema, temperature: 0.3, maxTokens: 2500,
@@ -255,16 +255,16 @@ async function composePeriod(kind: "weekly" | "monthly", key: string, startDate:
   return { key, entries: top.length };
 }
 
-export async function composeWeekly(label: string, reason?: string) {
+export async function composeWeekly(label: string, reason?: string, options: { writeOverview?: boolean } = {}) {
   const range = isoWeekRange(label);
   if (!range) throw new Error(`bad week label ${label}`);
-  return composePeriod("weekly", label, range.start, range.end, reason);
+  return composePeriod("weekly", label, range.start, range.end, reason, options);
 }
 
-export async function composeMonthly(label: string, reason?: string) {
+export async function composeMonthly(label: string, reason?: string, options: { writeOverview?: boolean } = {}) {
   const range = monthRange(label);
   if (!range) throw new Error(`bad month label ${label}`);
-  return composePeriod("monthly", label, range.start, range.end, reason);
+  return composePeriod("monthly", label, range.start, range.end, reason, options);
 }
 
 /** The newest daily due by `now`: today's from its edition time (Beijing), yesterday's before. */

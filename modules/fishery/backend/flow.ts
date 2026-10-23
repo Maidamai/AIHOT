@@ -1,3 +1,5 @@
+import { runStructure, PROMPT_VERSIONS } from "@aihot/backend/editorial/analyze";
+import { reviewedStructure, structureClaims } from "./news-structure.ts";
 import { enqueuePublication, publicationDecisionHash } from "./publication-queue.ts";
 import { randomUUID } from "node:crypto";
 import type { FlowTimeline, FlowReconciliation } from "../ui-contracts.ts";
@@ -30,9 +32,9 @@ const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const qualification=z.strictObject({decision:z.enum(["qualified","rejected"]),snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),note:z.string().trim().min(1).max(2000)});
 export type FisheryInvoke=<S extends z.ZodType>(options:ChatJsonOptions<S>)=>Promise<ChatJsonResult<z.infer<S>>>;
 const isSelectionStage=(stage:string):stage is SelectionStage=>selectionStages.includes(stage as SelectionStage);
-const stageAttempt=(row:Record<string,any>,stage:string)=>isSelectionStage(stage)?row.selection.attempts[stage]:stage==="generation"?row.generation_attempt:row.review_attempt;
+const stageAttempt=(row:Record<string,any>,stage:string)=>isSelectionStage(stage)?row.selection.attempts[stage]:stage==="structure"?row.selection.structure.attempt:stage==="generation"?row.generation_attempt:row.review_attempt;
 const remainingStages=(row:Record<string,any>)=>{
-  const all=row.selection?[...selectionStages,"generation","review"]:["generation","review"];
+  const all=row.selection?[...selectionStages,"generation",...(row.selection.structure?["structure"]:[]),"review"]:["generation","review"];
   return row.stage==='human'?[]:all.slice(Math.max(0,all.indexOf(row.stage)));
 };
 async function snapshot(documentId:string) {
@@ -99,7 +101,7 @@ export async function createFlow(documentId:string,raw:unknown,actor:string) {
     if(sameEvidence) {if(!!sameEvidence.selection!==data.selection)throw new Conflict('Existing evidence task has a different selection mode; preserve it without backfill');return sameEvidence;}
     await assertNoQueuedReplacement(documentId,tx);
     const [source]=await tx`SELECT tier FROM sources WHERE id=${current.value.sourceId}`;
-    const [row]=await tx`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor,selection) VALUES (${randomUUID()},${documentId},${data.identity},${tx.json(current.value)},'queued',${data.selection?'prefilter':'generation'},${actor},${data.selection?tx.json(newSelection(source!.tier)):null}) RETURNING *`;
+    const [row]=await tx`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor,selection) VALUES (${randomUUID()},${documentId},${data.identity},${tx.json(current.value)},'queued',${data.selection?'prefilter':'generation'},${actor},${data.selection?tx.json(newSelection(source!.tier,!!news)):null}) RETURNING *`;
     await audit(actor,"fishery.flow.create",`fishery:${documentId}`,null,null,{id:row!.id,snapshotHash:current.hash},{db:tx});return row!;
   });
 }
@@ -172,7 +174,7 @@ export async function createHumanRevision(id:string,raw:unknown,actor:string) {
   });
 }
 function candidateReviewBound(row:Record<string,any>) {
-  try {const candidateHash=sha256(JSON.stringify(fisheryDraftSchema.parse(row.draft?.draft)));return row.quality_review?.draftSha256===candidateHash&&(!row.draft.provenance||row.draft.provenance.candidateHash===candidateHash);}catch{return false;}
+  try {const candidateHash=sha256(JSON.stringify(fisheryDraftSchema.parse(row.draft?.draft)));return (!row.selection?.structure||!!reviewedStructure(row.selection,row.quality_review))&&row.quality_review?.draftSha256===candidateHash&&(!row.draft.provenance||row.draft.provenance.candidateHash===candidateHash);}catch{return false;}
 }
 async function flowTimeline(row:Record<string,any>,now:Date):Promise<FlowTimeline> {
   // Read the task's bound revision, never a newer observation or the model's publication guess.
@@ -232,7 +234,7 @@ async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=fals
   if(tasks.some(t=>t.id!==row.id&&["running","queued"].includes(t.status))) reasons.push("Another document task is running/queued; reconcile it explicitly first");
   const requests=Object.entries(row.stage_requests??{}) as [string,{subject:string;purpose:string}][];
   const currentKey=`${row.stage}:${stageAttempt(row,row.stage)}`;
-  if(![...selectionStages,"generation","review"].includes(row.stage)||requests.some(([key])=>key===currentKey||key.startsWith(`${row.stage}:`))) reasons.push("Current stage has a durable request; use its original receipt/recovery, never zero-request reconciliation");
+  if(![...selectionStages,"generation","structure","review"].includes(row.stage)||requests.some(([key])=>key===currentKey||key.startsWith(`${row.stage}:`))) reasons.push("Current stage has a durable request; use its original receipt/recovery, never zero-request reconciliation");
   const selectionRequests=requests.filter(([key])=>selectionStages.some(stage=>key.startsWith(stage+':')));
   if(row.selection){
     if(hash(row.selection.config)!==hash(selectionConfiguration()))reasons.push('Selection configuration changed');
@@ -247,7 +249,7 @@ async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=fals
   }
   let reusableGenerationReceiptId:number|null=null;
   if(row.stage==="generation"&&(requests.length!==selectionRequests.length||row.draft||row.quality_review)) reasons.push("Generation recovery requires no prior generation request or output");
-  if(row.stage==="review") {
+  if(row.stage==="review"||row.stage==="structure") {
     if(!row.draft||row.quality_review) reasons.push("Review-before-request recovery requires a saved candidate and no review output");
     else try {
       const candidate=fisheryDraftSchema.parse(row.draft.draft),manual=row.draft.provenance?.origin==="human_revision";
@@ -263,7 +265,9 @@ async function reconciliationState(row:Record<string,any>,db:Db=sql,locking=fals
       if(manual) {if(requests.length||row.draft.provenance.candidateHash!==sha256(JSON.stringify(candidate))) throw new Error("Manual candidate/request binding changed");}
       else {
         const generation=requests.filter(([key])=>key.startsWith("generation:"));
-        if(!generation.length||generation.length+selectionRequests.length!==requests.length) throw new Error("Only durable selection/generation requests may precede a new review");
+        const structured=requests.filter(([key])=>key.startsWith('structure:'));
+        if(row.stage==='review'&&row.selection?.structure){const found=receipts.find(r=>r.id===row.selection.structure.result?.receiptId);if(!found||!['received','completed'].includes(found.status)||!found.response)throw new Error('Saved structure receipt required before review recovery');}
+        if(!generation.length||generation.length+selectionRequests.length+structured.length!==requests.length) throw new Error("Only durable selection/generation requests may precede a new review");
         for(const [,request] of generation) {
           const found=receipts.filter(r=>r.subject===request.subject&&r.purpose===request.purpose);
           if(request.purpose!=="fishery_draft"||!found.length||found.some(r=>!["received","completed"].includes(r.status)||!r.response)) throw new Error("Generation receipt missing, unsettled or unusable");
@@ -325,7 +329,10 @@ export async function flowDetail(id:string,now=new Date()):Promise<Record<string
   const [latest]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
   const authoritative=latest?.id===id,timeline=await flowTimeline(row,now),materialDecision=await currentMaterialDecision(row.document_id),materialRejected=materialDecision==="rejected",materialApproved=materialDecision==="approved";
   const reconciliation=await reconciliationState(row);
-  return {...row,authoritative,timeline,materialRejected,materialApproved,reconciliation,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
+  const [editorial]=row.selection?.structure?await sql`SELECT b.article_id AS "articleId",b.material_revision AS revision,b.projection_hash AS "projectionHash",a.grouping_status AS status,a.grouping_error AS error
+    FROM fishery_publication_bindings b JOIN articles a ON a.id=b.article_id WHERE b.kind='article' AND b.item_id=${row.document_id}`:[];
+  if(editorial){const [job]=await sql`SELECT id,state,coalesce((data->>'attempt')::int,1) AS attempt FROM pgboss.job WHERE name='fishery.news' AND data->>'articleId'=${editorial.articleId} AND data->>'projectionHash'=${editorial.projectionHash} ORDER BY created_on DESC LIMIT 1`;editorial.job=job??null;}
+  return {...row,editorial:editorial??null,reviewBound:candidateReviewBound(row),authoritative,timeline,materialRejected,materialApproved,reconciliation,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
     internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&materialApproved&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
@@ -451,17 +458,40 @@ export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>
           const answer=await stageInvoke(id,hash(claimed.snapshot),"generation",claimed.generation_attempt,options,invoke,executionToken,assertLease);receiptId=answer.receiptId;phase="validate";return answer;
         });
         phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
-        await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET draft=${tx.json(draft)},stage='review',updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);await assertLease();await completeReceipt(tx,draft.receiptId);await audit(claimed.actor,"fishery.flow.generated",`fishery:${claimed.document_id}`,null,null,{id,receiptId:draft.receiptId},{db:tx});});stage="review";receiptId=null;
+        await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET draft=${tx.json(draft)},stage=${claimed.selection?.structure?"structure":"review"},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);await assertLease();await completeReceipt(tx,draft.receiptId);await audit(claimed.actor,"fishery.flow.generated",`fishery:${claimed.document_id}`,null,null,{id,receiptId:draft.receiptId},{db:tx});});stage=claimed.selection?.structure?"structure":"review";receiptId=null;
       }
       if(draft.draft.relevance.decision!=="relevant"||!draft.draft.summaryZh.some((item:{sentence:string})=>item.sentence.trim())) {
         const reason="行业相关性须为relevant，且至少有一条非空事实摘要；请补证、明确重新生成或人工拒绝";
         await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET status='needs_evidence',stage=${draft.provenance?.origin==="human_revision"?"review":"generation"},quality_review=NULL,error=${tx.json({code:"FISHERY_ARTICLE_INELIGIBLE",stage:"generation",phase:"eligibility",reason,receiptId:draft.receiptId,noAutomaticRetry:true})},updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);});
         return;
       }
+      if (claimed.selection?.structure) {
+        if (claimed.selection.structure.promptVersion !== PROMPT_VERSIONS.structure) throw new Conflict('Structure prompt changed; preserve old evidence and create an explicitly reviewed task');
+        if (stage === 'structure') {
+          phase='call';
+          const current=await snapshot(claimed.document_id),[source]=await sql`SELECT name,kind,tier FROM sources WHERE id=${current.value.sourceId}`;
+          const p=current.payload,day=p.dates.published;
+          const article:AnalyzeInputArticle={id:claimed.document_id,revision:current.value.observationRevision,title:p.originalTitle||p.title,url:p.sourceCapture.sourceUrl,author:null,
+            publishedAt:day.precision==='day'?new Date(day.value+'T00:00:00+08:00'):null,publicationTime:day.precision==='day'?day.value:null,
+            bodyText:input.body,bodyStatus:'ok',excerpt:null,xPost:null,media:[],source:{name:source!.name,kind:source!.kind,tier:source!.tier,firstParty:source!.tier==='T1'}};
+          const structure=await runStructure(article,{invoke:async request=>{
+            const answer=await stageInvoke(id,hash(claimed.snapshot),'structure',claimed.selection.structure.attempt,request,invoke,executionToken,assertLease);receiptId=answer.receiptId;return answer;
+          }});
+          phase='validate';structureClaims(input,structure,draft.draft.summaryZh);
+          phase='persist';await inputFor(claimed.document_id,hash(claimed.snapshot));
+          claimed.selection.structure.result=structure;
+          await persist(async tx=>{
+            assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(claimed.selection)},stage='review',updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);
+            await completeReceipt(tx,structure.receiptId);
+            await audit(claimed.actor,'fishery.flow.structured',`fishery:${claimed.document_id}`,null,null,{id,receiptId:structure.receiptId,factApproved:false},{db:tx});
+          });stage='review';receiptId=null;
+        }
+        if (!claimed.selection.structure.result) throw new Conflict('Current news structure required before evidence review');
+      }
       phase="call";
       const quality=await reviewFisheryDraft(input,draft.draft,"default",async options=>{
         const answer=await stageInvoke(id,hash(claimed.snapshot),"review",claimed.review_attempt,options,invoke,executionToken,assertLease);receiptId=answer.receiptId;phase="validate";return answer;
-      },draft.provenance?.origin==="human_revision"?{mode:"manual_revision"}:{});
+      },{...(draft.provenance?.origin==="human_revision"?{mode:"manual_revision" as const}:{}),...(claimed.selection?.structure?{structure:claimed.selection.structure.result}:{})});
       phase="persist";await inputFor(claimed.document_id,hash(claimed.snapshot));
       await persist(async tx=>{assertExecutionUpdated(await tx`UPDATE fishery_flow_tasks SET quality_review=${tx.json(quality)},status=${quality.status},stage='human',error=NULL,updated_at=now() WHERE id=${id} AND status='running' AND execution_token=${executionToken} RETURNING id`);await assertLease();await completeReceipt(tx,quality.receiptId);await audit(claimed.actor,"fishery.flow.checked",`fishery:${claimed.document_id}`,null,null,{id,receiptId:quality.receiptId,status:quality.status},{db:tx});});
     });
@@ -484,7 +514,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
     const currentDetail=await flowDetail(id);if(currentDetail.stale||!currentDetail.authoritative) throw new Conflict(currentDetail.staleReason??"Task superseded");
     if(!row||!["failed","needs_evidence","running"].includes(row.status)) throw new Conflict("Only failed, needs-evidence or reconciled interrupted flows can resume");
     if(row.error?.code==="FISHERY_INTERRUPTED_BEFORE_REQUEST"&&(!acknowledgeNewCharge||mode!=="resume")) throw new Conflict("Reconciled stage had no request; explicitly acknowledge new stage charges and resume without regenerating saved output");
-    const stage=isSelectionStage(row.stage)?row.stage:row.draft?.provenance?.origin==="human_revision"?"review":row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stageAttempt(row,stage);
+    const stage=row.stage==="structure"?"structure":isSelectionStage(row.stage)?row.stage:row.draft?.provenance?.origin==="human_revision"?"review":row.draft&&row.error?.code!=="FISHERY_ARTICLE_INELIGIBLE"?"review":"generation",oldAttempt=stageAttempt(row,stage);
     const bound=row.stage_requests[`${stage}:${oldAttempt}`];
     const [receipt]=bound?await tx`SELECT id,status FROM receipts WHERE subject=${bound.subject} AND purpose=${bound.purpose} ORDER BY id DESC LIMIT 1`:[];
     if(receipt&&["pending","unknown"].includes(receipt.status)) throw new Conflict("Receipt pending/unknown; reconcile outcome before any resume or regeneration");
@@ -501,6 +531,7 @@ export async function retryFlow(id:string,raw:unknown,actor:string) {
       if(mode==='regenerate')for(const key of selectionStages.slice(selectionStages.indexOf(stage)))delete row.selection.results[key];
       delete row.selection.outcome;
     }
+    if(stage==='structure') {row.selection.structure.attempt=attempt;if(mode==='regenerate')delete row.selection.structure.result;}
     await tx`UPDATE fishery_flow_tasks SET status='queued',execution_token=NULL,stage=${stage},generation_attempt=${stage==="generation"?attempt:row.generation_attempt},review_attempt=${stage==="review"?attempt:row.review_attempt},quality_review=NULL,error=NULL,updated_at=now() WHERE id=${id}`;
     if(row.selection)await tx`UPDATE fishery_flow_tasks SET selection=${tx.json(row.selection)},updated_at=now() WHERE id=${id}`;
     await audit(actor,"fishery.flow.retry",`fishery:${row.document_id}`,note,null,{id,stage,attempt,mode,receiptId:receipt?.id??null,acknowledgeNewCharge,newStageAfterReconciliation:row.error?.code==="FISHERY_INTERRUPTED_BEFORE_REQUEST",preservedGenerationReceiptId:row.draft?.receiptId??null},{db:tx});
@@ -516,6 +547,7 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
     if(data.snapshotHash!==hash(row.snapshot)) throw new Conflict("Review snapshot changed");
     if(row.status==="running") throw new Conflict("Running task must finish or be reconciled before a human decision");
     if(data.decision==="qualified") {
+      if(row.selection?.structure&&!reviewedStructure(row.selection,row.quality_review))throw new Conflict("Structured news identity requires the current evidence review");
       if(row.selection&&(row.selection.outcome?.label!=='SCORED'||!row.selection.outcome.attentionCandidate))throw new Conflict('Selection is incomplete or below value threshold; scores never replace evidence review');
       const [latest]=await tx`SELECT id FROM fishery_flow_tasks WHERE document_id=${row.document_id} ORDER BY created_at DESC,id DESC LIMIT 1`;
       if(latest?.id!==id) throw new Conflict("A newer authoritative task supersedes this internal article");

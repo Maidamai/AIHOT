@@ -1,4 +1,5 @@
 // Original AIHOT selection steps, with the existing fishery receipt/budget boundary supplied by flow.ts.
+import type {AnalysisRun} from '@aihot/backend/editorial/analyze';
 import {runSelectionPrefilter,runSelectionScores,tierThreshold,PROMPT_VERSIONS,type AnalyzeInputArticle} from '@aihot/backend/editorial/analyze';
 import {MAX_BODY_CHARS} from '@aihot/backend/editorial/writing';
 import {SELECTION} from '@aihot/industry/selection';
@@ -12,12 +13,13 @@ export type SelectionStage=typeof selectionStages[number];
 export const selectionConfiguration=()=>({version:'fishery-selection/v1',prompts:{prefilter:PROMPT_VERSIONS.prefilter,score:PROMPT_VERSIONS.score},model:'default',thresholds:SELECTION.thresholds,calibrated:false});
 export type SelectionState = {
   config:ReturnType<typeof selectionConfiguration>;
+  structure?:{attempt:number;promptVersion:string;result?:NonNullable<AnalysisRun["structure"]>};
   sourceTier:string;
   attempts:Record<SelectionStage,number>;
   results:Partial<Record<SelectionStage,{data:any;receiptId:number;model:string;reused:boolean}>>;
   outcome?:{label:string;values:number[];threshold:number|null;average:number|null;attentionCandidate:boolean;calibrated:false;factApproval:false};
 }
-export const newSelection=(sourceTier:string):SelectionState=>({config:selectionConfiguration(),sourceTier,attempts:{prefilter:1,'score-1':1,'score-2':1},results:{}});
+export const newSelection=(sourceTier:string,news=false):SelectionState=>({...(news?{structure:{attempt:1,promptVersion:PROMPT_VERSIONS.structure}}:{}),config:selectionConfiguration(),sourceTier,attempts:{prefilter:1,'score-1':1,'score-2':1},results:{}});
 export function assertSelectionInput(a:AnalyzeInputArticle){
   if(!a.bodyText?.trim()||a.bodyText.length>MAX_BODY_CHARS)throw new Conflict('Selection requires the complete original body within '+MAX_BODY_CHARS+' characters; no silent truncation');
 }

@@ -61,7 +61,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
           <form className="my-4 flex flex-wrap items-end gap-3" onSubmit={async e=>{e.preventDefault();await run("POST",base+"/flows",{identity:flowIdentity,selection},{success:"任务已创建，可进入查看"});}}>
             <label className="text-[13px]">尝试名称<input aria-label="任务尝试名称" required pattern="[a-zA-Z0-9_-]{1,64}" maxLength={64} value={flowIdentity} onChange={e=>setFlowIdentity(e.target.value)} className="mt-1 block rounded-control border border-line bg-bg-sunk px-3 py-2" placeholder="例如 review-20261020" /></label>
             <Button type="submit" disabled={terminal||frozen||!d.text?.hashMatches}>创建内部审核任务</Button>
-            <label className="text-[13px]"><input type="checkbox" checked={newsSource||selection} disabled={newsSource} onChange={e=>setSelection(e.target.checked)}/> 新闻候选先做正文预筛和双评分（最多新增3次调用，门槛未校准；不代替事实审核）</label>
+            <label className="text-[13px]"><input type="checkbox" checked={newsSource||selection} disabled={newsSource} onChange={e=>setSelection(e.target.checked)}/> 新闻候选先做正文预筛和双评分；新采集新闻另做事件事实抽取，连同摘要核查与终审（门槛未校准）</label>
           </form>
           <ul className="space-y-3 text-[13px]">{d.flows.map(task=><li key={task.id}><Link className="text-accent" to={`/admin/fishery/flows/${task.id}`}>{task.identity} · {task.status}</Link>{task.stale&&<span className="ml-2 text-hot">版本已失效</span>}</li>)}</ul>{!d.flows.length&&<p className="text-[13px] text-ink-3">尚无AI审核任务。</p>}
         </Card>

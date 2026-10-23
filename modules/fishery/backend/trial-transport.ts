@@ -8,7 +8,7 @@ export function trialWireBytes(options:{system:string;user:unknown;temperature?:
 export function validateTrialWire(url:unknown,options:RequestInit|undefined) {
   if(url!==TRIAL.endpoint||options?.method!=="POST"||typeof options.body!=="string"||Buffer.byteLength(options.body)>TRIAL.maxWireBytes) throw new Error("Trial request destination/method/size refused");
   const b=JSON.parse(options.body), allowed=["model","messages","temperature","max_tokens","response_format","thinking"];
-  if(Object.keys(b).some(k=>!allowed.includes(k))||b.model!==TRIAL.model||![512,1024,2048].includes(b.max_tokens)||b.thinking?.type!=="disabled"||Object.keys(b.thinking).length!==1||b.response_format?.type!=="json_object") throw new Error("Trial final request parameters refused");
+  if(Object.keys(b).some(k=>!allowed.includes(k))||b.model!==TRIAL.model||(!Number.isInteger(b.max_tokens)||b.max_tokens<1||b.max_tokens>TRIAL.maxOutputTokens)||b.thinking?.type!=="disabled"||Object.keys(b.thinking).length!==1||b.response_format?.type!=="json_object") throw new Error("Trial final request parameters refused");
   if(!Array.isArray(b.messages)||b.messages.length!==2||b.messages[0].role!=="system"||b.messages[1].role!=="user"||b.messages.some((m:Record<string,unknown>)=>typeof m.content!=="string"||Object.keys(m).some(k=>!["role","content"].includes(k)))) throw new Error("Only two plain-text messages are permitted");
   return {wireBytes:Buffer.byteLength(options.body),model:b.model as string};
 }
@@ -40,7 +40,7 @@ export function validateTrialLedger(value:unknown): asserts value is {id:string;
   if(!ledger||ledger.id!==TRIAL.id||ledger.maxRequests!==null||ledger.maxReservedMicroCny!==TRIAL.maxReservedMicroCny||ledger.policy!==amountOnlyPolicy||!Array.isArray(ledger.entries)||ledger.entries.some((e,i)=>e.id!==i+1)||trialBudget(ledger.entries).occupiedMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Existing cumulative authorization ledger missing/changed; explicit amount-only policy upgrade required");
 }
 export function trialCapacity(entries:TrialEntry[],requiredCalls=1) {
-  if(!Number.isInteger(requiredCalls)||requiredCalls<1||requiredCalls>5) throw new Error("Invalid stage capacity request");
+  if(!Number.isInteger(requiredCalls)||requiredCalls<1||requiredCalls>6) throw new Error("Invalid stage capacity request");
   const budget=trialBudget(entries);
   if(entries.some(e=>e.state!=="received")) throw new Error("Trial has pending, refused or unknown outcome; manual reconciliation required");
   if(budget.occupiedMicroCny+requiredCalls*TRIAL.reserveMicroCny>TRIAL.maxReservedMicroCny) throw new Error("Trial hard amount/reservation limit reached");

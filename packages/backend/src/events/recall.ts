@@ -37,13 +37,13 @@ export interface Recalled {
  * excluding composites and withdrawals. Fact ids do not follow time after a merge or an import;
  * a fact without eligible reports starts nothing.
  */
-export const rootFactOf = (story: ReturnType<typeof sql> | number) => sql`(
+export const rootFactOf = async (story: ReturnType<typeof sql> | number) => ({ expression: sql`(
   SELECT y.id FROM facts y
-  JOIN fact_articles z ON z.fact_id = y.id AND z.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`z.article_id`)}
+  JOIN fact_articles z ON z.fact_id = y.id AND z.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`z.article_id`)).condition}
   JOIN publications q ON q.article_id = z.article_id
   WHERE y.story_id = ${story}
   ORDER BY coalesce(q.published_at, q.discovered_at), y.id
-  LIMIT 1)`;
+  LIMIT 1)` });
 
 /** Reports of the recall window that belong to a live fact. */
 async function recallPool(): Promise<PoolRow[]> {
@@ -55,7 +55,7 @@ async function recallPool(): Promise<PoolRow[]> {
     JOIN stories st ON st.id = f.story_id AND st.merged_into IS NULL
     JOIN articles a ON a.id = fa.article_id
     LEFT JOIN publications p ON p.article_id = a.id
-    WHERE fa.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`a.id`)} AND a.discovered_at > now() - make_interval(days => ${RECALL_DAYS})`;
+    WHERE fa.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`a.id`)).condition} AND a.discovered_at > now() - make_interval(days => ${RECALL_DAYS})`;
 }
 
 type ReadingRow = ReportView & { article_id: string; revision: number; fact_id: number | null };
@@ -223,14 +223,14 @@ export async function candidateViews(recalled: Recalled[]): Promise<CandidateVie
   }[]>`
     SELECT DISTINCT ON (fa.fact_id) fa.fact_id, f.story_id, f.title AS fact_title, f.subject, f.action, f.object, f.occurred_at,
            p.title, p.summary, s.name AS source, (s.tier = 'T1') AS first_party, p.published_at AS at, a.publication_time AS "publicationTime",
-           (SELECT count(*) FROM fact_articles x WHERE x.fact_id = fa.fact_id AND x.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`x.article_id`)}) AS members,
-           ${rootFactOf(sql`f.story_id`)} AS root_fact_id
+           (SELECT count(*) FROM fact_articles x WHERE x.fact_id = fa.fact_id AND x.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`x.article_id`)).condition}) AS members,
+           ${(await rootFactOf(sql`f.story_id`)).expression} AS root_fact_id
     FROM fact_articles fa
     JOIN facts f ON f.id = fa.fact_id
     JOIN publications p ON p.article_id = fa.article_id
     JOIN articles a ON a.id = p.article_id
     JOIN sources s ON s.id = p.source_id
-    WHERE fa.fact_id = ANY(${ids}) AND fa.role IN ('primary', 'report') AND ${groupingEvidenceCondition(sql`fa.article_id`)}
+    WHERE fa.fact_id = ANY(${ids}) AND fa.role IN ('primary', 'report') AND ${(await groupingEvidenceCondition(sql`fa.article_id`)).condition}
     ORDER BY fa.fact_id, (fa.role = 'primary') DESC, p.timeline_at ASC`,
     sql<SelectedRow[]>`
       SELECT p.fact_id, p.article_id, p.title, p.summary, p.body_mode, p.score, p.timeline_at,
@@ -270,14 +270,14 @@ export async function relatedPosts(a: { id: string; url: string; x_post: { reply
     SELECT fa.article_id, fa.fact_id, f.story_id, f.title AS fact_title
     FROM articles b JOIN fact_articles fa ON fa.article_id = b.id AND fa.role IN ('primary', 'report')
     JOIN facts f ON f.id = fa.fact_id JOIN stories st ON st.id = f.story_id AND st.merged_into IS NULL
-    WHERE b.url = ${a.url} AND b.id <> ${a.id} AND ${groupingEvidenceCondition(sql`fa.article_id`)} ORDER BY fa.created_at LIMIT 1`;
+    WHERE b.url = ${a.url} AND b.id <> ${a.id} AND ${(await groupingEvidenceCondition(sql`fa.article_id`)).condition} ORDER BY fa.created_at LIMIT 1`;
   const ids = [a.x_post?.replyTo ?? null, a.x_post?.quoted?.url ? (/\/status\/(\d+)/.exec(a.x_post.quoted.url)?.[1] ?? null) : null].filter((x): x is string => !!x);
   const referenced = ids.length
     ? await sql<PoolRow[]>`
         SELECT fa.article_id, fa.fact_id, f.story_id, f.title AS fact_title
         FROM articles b JOIN fact_articles fa ON fa.article_id = b.id AND fa.role IN ('primary', 'report')
         JOIN facts f ON f.id = fa.fact_id JOIN stories st ON st.id = f.story_id AND st.merged_into IS NULL
-        WHERE b.identity_key = ANY(${ids.map((id) => `x:${id}`)}) AND b.id <> ${a.id} AND ${groupingEvidenceCondition(sql`fa.article_id`)}`
+        WHERE b.identity_key = ANY(${ids.map((id) => `x:${id}`)}) AND b.id <> ${a.id} AND ${(await groupingEvidenceCondition(sql`fa.article_id`)).condition}`
     : [];
   return { sameUrl: sameUrl ?? null, referenced };
 }

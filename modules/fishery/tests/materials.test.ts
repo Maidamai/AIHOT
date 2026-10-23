@@ -1,3 +1,7 @@
+import { loadReport } from "@aihot/backend/publication/reports";
+import { runNewsEditorial, composeApprovedReports, retryNewsEditorial, newsQueue } from "../backend/news-editorial.ts";
+import { recallFacts } from "@aihot/backend/events/recall";
+import { reportText } from "@aihot/backend/events/relate";
 import { loadPool } from "@aihot/backend/publication/pool";
 import { publicationQueue } from "../backend/publication-queue.ts";
 import {noticeFixture} from './fixtures.ts';
@@ -94,13 +98,13 @@ test('two dispatchers on the same approved snapshot create one task, queue job a
 });
 function selectionMock(body:string,sends:string[],options:{label?:string;failSecond?:()=>boolean;after?:(stage:string)=>Promise<void>;missingEvidence?:boolean;score?:number}={}){
  return async(q:any)=>{
-  const stage=q.purpose==='prefilter_article'?'prefilter':q.purpose==='score_article'?q.subject.includes(':score-1:')?'score-1':'score-2':q.purpose==='fishery_draft'?'generation':'review';
+  const stage=q.purpose==='prefilter_article'?'prefilter':q.purpose==='score_article'?q.subject.includes(':score-1:')?'score-1':'score-2':q.purpose==='fishery_draft'?'generation':q.purpose==='structure_article'?'structure':'review';
   if(stage==='score-2'&&options.failSecond?.())throw new Error('Synthetic second score before response');
   const e=['p1s1'],u={date:{precision:'unknown',value:null},evidence:[]};
   const data=stage==='prefilter'?{label:options.label??'PASS',reason:'Synthetic relevant original'}:stage.startsWith('score-')?{attentionScore:options.score??95}:stage==='generation'?{
    relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:options.missingEvidence?'原文没有这个数字9999。':body,evidence:e}],
    dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]
-  }:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound source',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
+  }:stage==='structure'?{scope:'single',category:'policy',tags:['政策'],subjects:[],fact:{title:'测试机构发布远洋船队申报安排',subject:'测试机构',action:'发布',object:'远洋船队申报安排',occurredAt:null,evidence:body,conditions:[]}}:{decision:'supported',coverage:'complete_input',findings:JSON.parse(q.user).claims.map((claim:any)=>({field:claim.id,verdict:'supported',reason:'Synthetic bound source',evidence:claim.evidenceIds}))};
   const r=await paidRequest({service:'selection-local-mock',model:'mock',purpose:q.purpose,subject:q.subject,identity:{promptVersion:q.promptVersion,system:q.system,user:q.user},attemptTag:q.attemptTag},async()=>{
    sends.push(stage);await options.after?.(stage);return {response:data};
   });
@@ -255,8 +259,8 @@ async function fixture(options: { unknownRights?: boolean; articleId?: string; s
 }
 const approve = (id: string, revision = 1, sourceRevision = 1) => review(id, { revision, sourceRevision, decision: "approved", applicabilityReviewed: false, note: "Manual fixture review" }, "reviewer");
 
-async function automaticFixture(number:number){
-  const body='合成公海远洋渔业事实，仅供自动派发离线测试。',url=`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto${number}.htm`;
+async function automaticFixture(number:number,body='合成公海远洋渔业事实，仅供自动派发离线测试。'){
+  const url=`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto${number}.htm`;
   const doc=await importCapturedMaterial({id:'moa',...COLUMNS.moa},url,{...observationFixture,language:'zh',sourceCapture:{adapter:'moa',sourceUrl:url,capturedAt:'2026-10-21T08:00:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
   await upsertMaterial({sourceId:'fishery-column-moa',url:`https://example.org/auto-body-${number}`,title:'Synthetic automatic source',publishedAt:new Date(),bodyText:body,bodyStatus:'ok',via:'fishery-mock',raw:{fisheryDocumentId:doc.id}});
   return {...doc,body};
@@ -1004,7 +1008,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     await boss.updateQueue(flowQueue.name,{retryLimit:0,expireInSeconds:600});
     release=await registerManualFlowConsumer(boss,jobs=>runQueuedFlows(jobs,invoke));
     await assert.rejects(registerManualFlowConsumer(boss),/already running/);
-    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name,QUEUES.republishSource].sort());
+    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name,newsQueue.name,QUEUES.republishSource].sort());
     assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.schedule`)[0]!.n,0);
     assert.equal(calls,0,"idle startup performs no model calls");
     config.modelCallsEnabled=false;
@@ -2022,4 +2026,89 @@ test('NPFC verified changed PDF bytes invalidate approval despite semantic measu
   const changed=await capture('npfc-semantic-valid-'+conflict);assert.equal(changed.items[0].state,'failed');const imported=await importBatch(changed.id,'tester');assert.equal(imported.rows.length,0);assert.equal(imported.evidenceUpdates.length,1);assert.equal(imported.acquisitions[0].confirmedChange,true);
   const history=await documentHistory(first.id),latest=history.observations[1].payload.sourceCapture;assert.equal(history.observations.length,2);assert.equal(latest.attachmentSha256,sha256(pdf));assert.equal(latest.attachmentUrl,newPdfUrl);if(conflict==='landing-title')assert.equal(sha256(pdf),sha256(oldBytes),'A verified new PDF URL invalidates the dependency even when bytes match');assert.equal(latest.bodySha256,null);assert.equal(latest.parseStatus,'unverified');assert.match(latest.conflicts.join(';'),conflict==='measure'?/measure version/:conflict==='effective-date'?/effective dates/:/listing and landing title/);assert.equal((await materialDetail(first.id)).state,'unverified');assert.equal(history.reviews[0].revision,1);assert.equal(history.document.withdrawn_reason,null);assert.equal((await flowDetail(task.id)).stale,true);assert.equal((await flowDetail(task.id)).internalArticle,null);
  }
+});
+
+
+test('reviewed news facts reuse core events, selection and editions; replay, withdrawal and revision stay bounded',async()=>{
+  const keys=['LLM_MODEL','LLM_BASE_URL','LLM_API_KEY','LLM_REASONING_TOKENS','LLM_EXTRA_JSON','GROUP_MODEL','GROUP_REVIEW_MODEL','STRUCTURE_MODEL'] as const,old=keys.map(k=>process.env[k]),enabled=config.modelCallsEnabled;
+  const [priorLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+  const originalFetch=globalThis.fetch;let paid=0;
+  let lease:Awaited<ReturnType<typeof acquireProcessingLease>>|undefined;
+  const make=async(n:number)=>{
+    const d=await automaticFixture(n,'测试机构发布远洋船队申报安排，仅供隔离测试，不是真实新闻。');
+    const [core]=await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||' {"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id} RETURNING id`;
+    const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,source.revision);
+    const task=await createFlow(d.id,{identity:'structured-'+n},'tester'),sent:string[]=[];
+    assert.equal(await flowRequiredCalls(task.id),6);
+    const detail=await runFlow(task.id,selectionMock(d.body,sent));
+    assert.equal(detail.status,'needs_human_review',JSON.stringify(detail.error));assert.deepEqual(sent,['prefilter','score-1','score-2','generation','structure','review']);
+    assert.equal(detail.quality_review.structureSha256,hash(detail.selection.structure.result));
+    await decideFlow(task.id,{decision:'qualified',snapshotHash:detail.snapshotHash,note:'Synthetic full summary and event-fact approval'},'tester');
+    await syncFisheryPublications('synthetic-structured',new Date(),{target:{kind:'article',id:d.id}});
+    const [binding]=await sql`SELECT projection_hash,material_revision FROM fishery_publication_bindings WHERE item_id=${d.id}`;
+    return {...d,articleId:core.id,task,detail,job:{articleId:core.id,revision:binding.material_revision,projectionHash:binding.projection_hash,actor:'tester'}};
+  };
+  try{
+    process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL='https://api.deepseek.com';process.env.LLM_API_KEY='synthetic-local-only';process.env.LLM_REASONING_TOKENS='0';process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';config.modelCallsEnabled=true;process.env.GROUP_MODEL='default';process.env.GROUP_REVIEW_MODEL='default';process.env.STRUCTURE_MODEL='default';
+    await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
+    globalThis.fetch=async()=>{paid++;return Response.json({model:TRIAL.model,choices:[{message:{content:JSON.stringify({query:'synthetic',decisions:[{id:'C1',relation:'SAME_OCCURRENCE',confidence:1}],selection:{addsValue:false,reason:'Synthetic same fact'}})}}],usage:{prompt_tokens:200,completion_tokens:80}});};
+    lease=await acquireProcessingLease();
+    assert.deepEqual(await lease.run(()=>composeApprovedReports()),{generated:[]});assert.equal(paid,0);
+    const first=await make(71);
+    const before=(await sql`SELECT selected,selection_candidate FROM publications WHERE article_id=${first.articleId}`)[0];assert.equal(before.selected,false);assert.equal(before.selection_candidate,true);
+    await lease.release();lease=undefined;
+    const boss=await getBoss({schedule:false,supervise:false}),stopConsumer=await registerManualFlowConsumer(boss,async()=>{});
+    try{for(let n=0;n<80;n++){if((await sql`SELECT selected FROM publications WHERE article_id=${first.articleId}`)[0].selected)break;await new Promise(r=>setTimeout(r,50));}}finally{await stopConsumer();}
+    lease=await acquireProcessingLease();
+    await lease.run(()=>runNewsEditorial(first.job));assert.equal(paid,0,'First event needs no comparison');
+    const firstPub=(await sql`SELECT selected,story_id,fact_id FROM publications WHERE article_id=${first.articleId}`)[0];assert.equal(firstPub.selected,true);assert.ok(firstPub.fact_id);
+    const second=await make(72);await lease.run(()=>runNewsEditorial(second.job));assert.equal(paid,1,'Second same-fact report uses the original batch judgement');
+    const secondPub=(await sql`SELECT fact_id FROM publications WHERE article_id=${second.articleId}`)[0];assert.equal(secondPub.fact_id,firstPub.fact_id);
+    const [ledger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;assert.equal(ledger.value.entries.length,1);assert.equal(ledger.value.entries[0].state,'received');
+    await syncFisheryPublications('synthetic replay');await lease.run(()=>runNewsEditorial(first.job));await lease.run(()=>runNewsEditorial(second.job));assert.equal(paid,1);
+    assert.equal((await sql`SELECT count(*)::int AS n FROM analyses WHERE article_id=${first.articleId}`)[0].n,1);
+    const future=new Date(Date.now()+40*86400000),reports=await lease.run(()=>composeApprovedReports(future));assert.ok(reports.generated.some(k=>k.startsWith('daily:')));assert.ok(reports.generated.some(k=>k.startsWith('weekly:')));assert.ok(reports.generated.some(k=>k.startsWith('monthly:')));assert.equal(paid,1,'All editions reuse reviewed copy without overview calls');
+    assert.deepEqual(await lease.run(()=>composeApprovedReports(future)),{generated:[]});
+    await decideFlow(first.task.id,{decision:'rejected',snapshotHash:first.detail.snapshotHash,note:'Synthetic withdrawal'},'tester');
+    assert.equal((await loadItemDetail(first.articleId)).kind,'not_found');await assert.rejects(lease.run(()=>runNewsEditorial(first.job)),/Current approved/);assert.equal(paid,1);
+    await decideFlow(second.task.id,{decision:'rejected',snapshotHash:second.detail.snapshotHash,note:'Synthetic withdrawal of remaining evidence'},'tester');
+    for(const issue of reports.generated){const [kind,key]=issue.split(':');const detail=await loadReport(kind as 'daily'|'weekly'|'monthly',key);assert.equal(detail!.lead,null);const citations=[...detail!.sections.flatMap(s=>s.items),...detail!.flashes];assert.ok(citations.length);for(const citation of citations){assert.equal(citation.available,false);assert.equal(citation.summary,null);assert.equal(citation.sourceUrl,'');}}
+    assert.equal((await recallFacts('another',reportText('测试机构发布远洋船队申报安排',first.body),0.6,10)).length,0,'Revoked articles cannot supply event identity');
+    await decideFlow(second.task.id,{decision:'qualified',snapshotHash:second.detail.snapshotHash,note:'Synthetic reapproval before revision'},'tester');await syncFisheryPublications('synthetic reapproval');
+    const [currentMaterial]=await sql`SELECT url,identity_key FROM articles WHERE id=${second.articleId}`;
+    const revised=await upsertMaterial({identityKey:currentMaterial.identity_key,sourceId:'fishery-column-moa',url:currentMaterial.url,title:'Changed synthetic news',publishedAt:new Date(),bodyText:second.body+'正文版本发生变化。',bodyStatus:'ok',via:'synthetic-revision'});assert.equal(revised.articleId,second.articleId);
+    await syncFisheryPublications('synthetic replay of changed core body');
+    assert.equal((await loadItemDetail(second.articleId)).kind,'not_found');await assert.rejects(lease.run(()=>runNewsEditorial(second.job)),/Current approved/);assert.equal(paid,1);
+  }finally{
+    await lease?.release();globalThis.fetch=originalFetch;config.modelCallsEnabled=enabled;keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});
+    if(priorLedger)await sql`UPDATE settings SET value=${sql.json(priorLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
+  }
+});
+
+
+test('news structure receipt survives persistence failure and fact edits invalidate its review',async()=>{
+  const d=await automaticFixture(73,'测试机构发布远洋船队申报安排，仅供隔离测试，不是真实新闻。');
+  await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||'{"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id}`;
+  const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,source.revision);
+  const task=await createFlow(d.id,{identity:'structure-recovery'},'tester'),sent:string[]=[],invoke=selectionMock(d.body,sent);
+  await sql.unsafe(`CREATE FUNCTION structure_save_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${task.id}' AND OLD.stage='structure' AND NEW.stage='review' THEN RAISE EXCEPTION 'Synthetic structure persistence interruption'; END IF; RETURN NEW; END $$`);
+  await sql.unsafe('CREATE TRIGGER structure_save_fault BEFORE UPDATE ON fishery_flow_tasks FOR EACH ROW EXECUTE FUNCTION structure_save_fault()');
+  try{
+    const failed=await runFlow(task.id,invoke);assert.equal(failed.status,'failed');assert.equal(failed.stage,'structure');assert.equal(failed.error.phase,'persist');assert.equal(sent.length,5);
+    await sql.unsafe('DROP TRIGGER structure_save_fault ON fishery_flow_tasks');
+    await assert.rejects(retryFlow(task.id,{note:'Synthetic forbidden regeneration',mode:'regenerate',acknowledgeNewCharge:true},'tester'),/resume same attempt/);
+    await retryFlow(task.id,{note:'Synthetic resume saved structure receipt'},'tester');
+    const done=await runFlow(task.id,invoke);assert.equal(done.status,'needs_human_review',JSON.stringify(done.error));assert.equal(sent.length,6);assert.equal(sent.filter(s=>s==='structure').length,1);
+    await decideFlow(task.id,{decision:'qualified',snapshotHash:done.snapshotHash,note:'Synthetic current news approval'},'tester');
+    await syncFisheryPublications('synthetic recovery projection',new Date(),{target:{kind:'article',id:d.id}});
+    const [binding]=await sql`SELECT article_id,projection_hash,material_revision FROM fishery_publication_bindings WHERE item_id=${d.id}`;
+    await sql`UPDATE pgboss.job SET state='failed',completed_on=now() WHERE name='fishery.news' AND data->>'articleId'=${binding.article_id}`;
+    const recovery={projectionHash:binding.projection_hash,revision:binding.material_revision,mode:'regenerate',reason:'Synthetic explicit recovery'};
+    await assert.rejects(retryNewsEditorial(task.id,recovery,'tester'),/new-charge acknowledgement/);
+    const resumed=await retryNewsEditorial(task.id,{...recovery,mode:'resume'},'tester');assert.equal(resumed.attempt,1);assert.ok(resumed.id);
+    await assert.rejects(retryNewsEditorial(task.id,{...recovery,mode:'resume'},'tester'),/settled failed/);
+    await sql`UPDATE fishery_flow_tasks SET selection=jsonb_set(selection,'{structure,result,fact,subject}','"Changed unsupported subject"') WHERE id=${task.id}`;
+    assert.equal((await flowDetail(task.id)).reviewBound,false);
+    await assert.rejects(decideFlow(task.id,{decision:'qualified',snapshotHash:done.snapshotHash,note:'Must not approve altered fact'},'tester'),/Structured news identity/);
+  }finally{await sql.unsafe('DROP TRIGGER IF EXISTS structure_save_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION structure_save_fault()');}
 });

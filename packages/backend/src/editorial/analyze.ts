@@ -315,7 +315,7 @@ export async function runSelectionScores(
 export async function runStructure(a: AnalyzeInputArticle, opts: StepOpts = {}): Promise<NonNullable<AnalysisRun["structure"]>> {
   const model = await modelFor("structure");
   checkAnalysisRunning();
-  const res = await chatJson({
+  const res = await (opts.invoke ?? chatJson)({
     model,
     purpose: "structure_article",
     subject: subjectOf(a),

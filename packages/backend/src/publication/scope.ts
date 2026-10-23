@@ -72,10 +72,12 @@ export function latestCompositeCondition(article: postgres.PendingQuery<postgres
  * A summary-only report or one awaiting publication keeps its existing eligibility.
  * Historical memberships and judgements are retained independently of this predicate.
  */
-export function groupingEvidenceCondition(article: postgres.PendingQuery<postgres.Row[]>) {
-  return sql`NOT ${latestCompositeCondition(article)} AND NOT EXISTS (
+export async function groupingEvidenceCondition(article: postgres.PendingQuery<postgres.Row[]>) {
+  const current = await currentPublicationCondition();
+  return { condition: sql`NOT ${latestCompositeCondition(article)} AND NOT EXISTS (
     SELECT 1 FROM publications grouping_publication
-    WHERE grouping_publication.article_id = ${article} AND grouping_publication.visibility = 'withdrawn')`;
+    WHERE grouping_publication.article_id = ${article} AND grouping_publication.visibility = 'withdrawn')
+    AND NOT EXISTS (SELECT 1 FROM publications p WHERE p.article_id = ${article} AND NOT (${current.condition}))` };
 }
 
 /** `fa` links report `p` to a fact as evidence: a primary or report membership, never a composite. */

@@ -7,6 +7,7 @@
 //    caller. ops.recover releases it once after 30 minutes (operations/recover.ts), so a lost answer
 //    costs at most one repeat; after that it waits for the admin. A primary handed to a backup stays
 //    unknown for billing and is not automatically released or sent again.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { sql, type Db } from "../db.ts";
 import { sha256, stableJson } from "../lib/ids.ts";
 import { shutdownSignal } from "../lib/shutdown.ts";
@@ -251,7 +252,17 @@ async function checkBudget(tx: Db, service: string, model?: string | null): Prom
  * Runs a paid request at most once per logical key and returns its raw response.
  * A caller persisting business results completes the receipt in the same transaction.
  */
+// A caller with explicit billing reconciliation can forbid retrying failed receipts without
+// replacing the shared receipt store or changing other workers' recovery policy.
+const receiptPolicy = new AsyncLocalStorage<{ retryFailed: boolean; attemptTag?:string; assertAuthorized?: () => Promise<void> }>();
+export function withReceiptPolicy<T>(policy: { retryFailed: boolean; attemptTag?:string; assertAuthorized?: () => Promise<void> }, run: () => Promise<T>): Promise<T> {
+  return receiptPolicy.run(policy, run);
+}
+
 export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallOutcome>, beforeRequest?: (tx: Db) => Promise<void>): Promise<ReceiptResult> {
+  const policy = receiptPolicy.getStore();
+  await policy?.assertAuthorized?.();
+  if (policy?.attemptTag) req = {...req, attemptTag: `${policy.attemptTag}:${req.attemptTag ?? "0"}`};
   const logicalKey = logicalKeyFor(req);
 
   const claimed = await sql.begin(async (tx) => {
@@ -270,6 +281,7 @@ export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallO
         return { kind: "unknown" as const, row: existing };
       }
       if (existing.status === "unknown") return { kind: "unknown" as const, row: existing };
+      if (policy?.retryFailed === false) throw new ModelOutputError("Failed receipt requires explicit billing reconciliation; automatic retry is disabled", existing.id);
       // failed: the provider did not take the request, or its answer was unusable; a new attempt is allowed.
       await checkBudget(tx, req.service, req.model);
       await beforeRequest?.(tx);

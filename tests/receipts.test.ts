@@ -9,7 +9,7 @@ import { config } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
 import { chatJson } from "@aihot/backend/providers/llm";
 import { embeddingsAvailable } from "@aihot/backend/providers/embeddings";
-import { assertAccepted, failureKind, ProviderRejectedError, BudgetExceededError, logicalKeyFor, markStalePendingReceipts, ModelOutputError, paidRequest, providerStopKey, ReceiptUnknownError } from "@aihot/backend/providers/receipts";
+import { withReceiptPolicy, assertAccepted, failureKind, ProviderRejectedError, BudgetExceededError, logicalKeyFor, markStalePendingReceipts, ModelOutputError, paidRequest, providerStopKey, ReceiptUnknownError } from "@aihot/backend/providers/receipts";
 import { autoReleaseUnknownReceipts } from "@aihot/backend/operations/recover";
 
 const usage = { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 };
@@ -416,4 +416,16 @@ test("one model's spent quota stops that model, not the service's other models",
     await sql`DELETE FROM receipts WHERE service = 'dashscope' AND model IN (${vision}, ${text})`;
     await sql`DELETE FROM settings WHERE key = ${providerStopKey("dashscope", vision)}`;
   }
+});
+
+
+test('explicit reconciliation policy reuses received answers but never retries a failed paid request',async()=>{
+  const request={service:'receipt-policy-test',purpose:'test',subject:'synthetic',identity:{test:tag()}};let sends=0;
+  const failed=()=>paidRequest(request,async()=>{sends++;throw new ProviderRejectedError('synthetic refusal',400,false);});
+  await assert.rejects(withReceiptPolicy({retryFailed:false},failed),/synthetic refusal/);
+  await assert.rejects(withReceiptPolicy({retryFailed:false},failed),/explicit billing reconciliation/);assert.equal(sends,1);
+  const retried=await withReceiptPolicy({retryFailed:false,attemptTag:'explicit-new-attempt'},()=>paidRequest(request,async()=>{sends++;return {response:{ok:true}};}));assert.equal(retried.reused,false);
+  const good={...request,identity:{test:tag()}};
+  const answer=()=>paidRequest(good,async()=>{sends++;return {response:{ok:true}};});
+  await withReceiptPolicy({retryFailed:false},answer);assert.equal((await withReceiptPolicy({retryFailed:false},answer)).reused,true);assert.equal(sends,3);
 });

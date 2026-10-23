@@ -36,10 +36,10 @@ export interface FlowReconciliation {
   ledger:{id:string|null;valid:boolean;entryCount:number;reservedMicroCny:number;states:string[]};receipts:{id:number;status:string;purpose:string;subject:string|null;responsePresent:boolean}[];jobs:{id:string;taskId:string;state:string}[];activeJobId:string|null;
 }
 export interface FlowView {
-  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;authoritative:boolean;materialRejected:boolean;materialApproved:boolean;stale:boolean;staleReason:string|null;
+  id:string;document_id:string;identity:string;status:string;stage:string;snapshotHash:string;reviewBound?:boolean;editorial?:{articleId:string;revision:number;projectionHash:string;status:string;error:string|null;job:{id:string;state:string;attempt:number}|null}|null;authoritative:boolean;materialRejected:boolean;materialApproved:boolean;stale:boolean;staleReason:string|null;
   timeline:FlowTimeline;reconciliation?:FlowReconciliation;
   generation_attempt:number;review_attempt:number;created_at:string;updated_at:string;
-  selection?:{config:{version:string;calibrated:false};results:Record<string,{data:unknown;receiptId:number;model:string}>;outcome?:{label:string;values:number[];threshold:number|null;average:number|null;attentionCandidate:boolean;calibrated:false;factApproval:false}}|null;
+  selection?:{structure?:{attempt:number;promptVersion:string;result?:{receiptId:number;scope:string;fact:unknown}};config:{version:string;calibrated:false};results:Record<string,{data:unknown;receiptId:number;model:string}>;outcome?:{label:string;values:number[];threshold:number|null;average:number|null;attentionCandidate:boolean;calibrated:false;factApproval:false}}|null;
   draft:{receiptId:number|null;promptVersion:string;model:string;provenance?:{origin:"human_revision";candidateHash:string;originalTaskId:string;receiptId:number;responseHash:string;reason:string;actor:string;at:string;diff:unknown};draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
   quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
   human_decision:{decision:string;actor:string;at:string;note:string}|null;
