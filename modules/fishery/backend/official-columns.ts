@@ -18,7 +18,7 @@ export const COLUMNS = {
     list: ".xw-list-1.gl_list li a", body: "#detailCont", issuer: "福建省海洋与渔业局",
   },
   'fujian-notices':{
-    name:'福建省海洋与渔业局 · 通知公告',tier:'T1',url:'https://hyyyj.fujian.gov.cn/xxgk/tzgg/',list:'.xw-list-1.gl_list li a[href]',body:'#detailCont .TRS_Editor',issuer:'福建省海洋与渔业局',
+    name:'福建省海洋与渔业局 · 通知公告',tier:'T1',url:'https://hyyyj.fujian.gov.cn/xxgk/tzgg/',list:'.xw-list-1.gl_list li a[href]',body:'#detailCont',issuer:'福建省海洋与渔业局',
   },
   iotc: {
     name: "IOTC · Current Conservation and Management Measures", url: "https://iotc.org/cmms/basic",

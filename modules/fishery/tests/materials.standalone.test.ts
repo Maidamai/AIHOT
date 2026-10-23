@@ -24,6 +24,17 @@ import {noticeFixture} from './fixtures.ts';
 import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged,noticeEvidenceSections} from '../backend/fujian-notices.ts';
 import {noticeDeadlineState} from '../contracts.ts';
 
+test('Fujian notices retain actual container text without an editor class and across sibling blocks',()=>{
+ const url='https://hyyyj.fujian.gov.cn/xxgk/tzgg/202610/t20261021_9999008.htm';
+ const facts=['这是隔离样本，船员业务通知正文直接写在文章容器中，不能只依赖编辑器类名。','完整申请条件和办理截止日期位于后续段落，采集不得遗漏。'];
+ for(const markup of [facts.map(s=>`<p>${s}</p>`).join(''),`<div class="TRS_Editor"><p>${facts[0]}</p></div><p>${facts[1]}</p>`]){
+  const raw=Buffer.from(`<meta name="ArticleTitle" content="合成业务通知"><meta name="PubDate" content="2026-10-21 16:42"><div id="detailCont">${markup}<script>discard()</script></div><footer>无关导航</footer>`);
+  const p=prepareNotice({requestedUrl:url,finalUrl:url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T12:00:00Z'},raw);
+  assert.equal(p.readyForReview,true);assert.equal(p.body,facts.join('\n'));assert.equal(p.sourceCapture.publishedAt,'2026-10-21T08:42:00.000Z');
+  assert.equal(noticeEvidenceSections(p.body!,p.sourceCapture)[0].end,p.body!.length);
+  assert.throws(()=>noticeEvidenceSections(p.body!,{...p.sourceCapture,parser:'official-column/fujian-notices/v2'}),/recapture/);
+ }
+});
 test('Fujian notices bind complete required attachments, real formats, page spans and archived revalidation',async()=>{
  const f=noticeFixture(),dir=await mkdtemp(path.join(tmpdir(),'notice-archive-'));
  const fetch:ColumnFetcher=async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=>null},body:url.endsWith('robots.txt')?Buffer.from('missing'):url.endsWith('/tzgg/')?Buffer.from(f.listing):url===f.url?Buffer.from(f.landing()):f.pdf});

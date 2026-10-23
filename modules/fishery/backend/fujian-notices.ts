@@ -13,7 +13,9 @@ export function noticePage(raw:Buffer,url:string){
  if(!pageUrl(url))throw new Error('Unexpected Fujian notice identity');
  const $=cheerio.load(new TextDecoder('utf8',{fatal:true}).decode(raw));
  const title=collapse($('meta[name=ArticleTitle]').attr('content')||$('h1.xl_tit').text())||null;
- const content=$('#detailCont .TRS_Editor').first().clone();content.find('script,style,iframe,form,noscript').remove();
+ // Current official notices also put paragraphs directly under #detailCont, without TRS_Editor.
+ // Keep the entire inspected article container, including sibling/nested editor blocks.
+ const content=$('#detailCont').first().clone();content.find('script,style,iframe,form,noscript').remove();
  content.find('td,th').append('\t');content.find('p,br,div,li,tr,h2,h3').append('\n');
  const text=content.text().split(/\n+/).map(collapse).filter(Boolean).join('\n');
  const attachments:Array<{url:string;label:string;extension:string}>=[];
@@ -79,7 +81,7 @@ export function prepareNotice(input:unknown,raw:Buffer,files:NoticeAttachment[]=
  if(conflicts.length)body=null;
  const first=context.attachments[0],firstFile=files[0],evidence=body?relevanceEvidence(relevanceParts.join('\n')):[];
  const sourceCapture=captureSchema.parse({adapter:'fujian-notices',acquisitionMode:'live_capture',sourceUrl:r.finalUrl,capturedAt:r.finishedAt,httpStatus:r.status,rawSha256:sha256(raw),bodySha256:body?sha256(body):null,
-  parser:'official-column/fujian-notices/v2',parseStatus:body?'parsed':r.status===200?'unverified':'failed',noticeContext:context,conflicts,
+  parser:'official-column/fujian-notices/v3',parseStatus:body?'parsed':r.status===200?'unverified':'failed',noticeContext:context,conflicts,
   publicationLiteral:page.literal,publishedAt:date?.publishedAt&&/\d{1,2}:\d{2}/.test(page.literal!)?new Date(date.publishedAt).toISOString():null,
   attachmentSha256:first?.sha256??null,attachmentUrl:first?.url??null,attachmentHttpStatus:first?.httpStatus??null,attachmentPages:first?.pages??null,attachmentCapturedAt:firstFile?archiveReceiptSchema.parse(firstFile.receipt).finishedAt:null});
  return {title:page.title,body,dates:{published:date?.publishedAt?{precision:'day' as const,value:beijingDate(date.publishedAt)}:unknownDate(),event:unknownDate(),adopted:unknownDate(),effectiveFrom:unknownDate(),effectiveUntil:unknownDate()},sourceCapture,
@@ -97,7 +99,7 @@ export function noticeAttachmentChanged(previous:NoticeContext|undefined,current
 // Model ingress requires the new capture metadata; old archive manifests remain readable for recapture/review.
 export function noticeEvidenceSections(body:string,input:unknown):EvidenceSection[] {
  const c=captureSchema.parse(input),n=c.noticeContext;
- if(c.adapter!=='fujian-notices'||c.parser!=='official-column/fujian-notices/v2'||c.httpStatus!==200||c.parseStatus!=='parsed'||c.conflicts.length||!c.bodySha256||!n||n.evidenceVersion!=='notice-sections/v2'||!n.pageBody)throw new Error('Notice source sections require complete v2 capture metadata; recapture before model input');
+ if(c.adapter!=='fujian-notices'||c.parser!=='official-column/fujian-notices/v3'||c.httpStatus!==200||c.parseStatus!=='parsed'||c.conflicts.length||!c.bodySha256||!n||n.evidenceVersion!=='notice-sections/v2'||!n.pageBody)throw new Error('Notice source sections require complete v3 capture metadata; recapture before model input');
  if(n.pageBody.sourceUrl!==c.sourceUrl||n.pageBody.rawSha256!==c.rawSha256)throw new Error('Notice webpage source provenance mismatch');
  const sections:EvidenceSection[]=[{id:'webpage',kind:'webpage',sourceUrl:n.pageBody.sourceUrl,rawSha256:n.pageBody.rawSha256,textSha256:n.pageTextSha256,start:n.pageBody.bodyStart,end:n.pageBody.bodyEnd}];
  for(const [i,a] of n.attachments.entries()){
