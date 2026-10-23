@@ -1,0 +1,1389 @@
+{
+  "acquisitionMode": "live_capture_then_offline_replay",
+  "feed": {
+    "receipt": {
+      "requestedUrl": "https://www.data.jma.go.jp/developer/xml/feed/other_l.xml",
+      "finalUrl": "https://www.data.jma.go.jp/developer/xml/feed/other_l.xml",
+      "status": 200,
+      "capturedAt": "2026-10-23T01:10:10.317034+00:00",
+      "bytes": 254372,
+      "sha256": "a6b7a6cbd389328d8fb2575280309fa539efd01dbceaa8eb36cc35db60929f04",
+      "headers": {
+        "Content-Type": "text/xml",
+        "Date": "Fri, 23 Oct 2026 01:10:10 GMT",
+        "Last-Modified": "Thu, 22 Oct 2026 23:35:28 GMT",
+        "ETag": "\"49a59db5ba197640f9eb65fb4cbf398e\"",
+        "Cache-Control": "max-age=60"
+      }
+    },
+    "updatedAt": "2026-10-23T08:35:11+09:00",
+    "entryCount": 549,
+    "uniqueUrls": 549,
+    "selectedWarningEntries": 376,
+    "oldestEntryUpdatedAt": "2026-10-16T02:25:38Z",
+    "recovery": "bootstrap_coverage_unknown"
+  },
+  "materialReceipts": [
+    {
+      "requestedUrl": "https://xml.kishou.go.jp/jmaxml_20261009_Manual%28pdf%29.zip",
+      "finalUrl": "https://xml.kishou.go.jp/jmaxml_20261009_Manual%28pdf%29.zip",
+      "status": 200,
+      "capturedAt": "2026-10-23T01:10:15.123731+00:00",
+      "bytes": 13228262,
+      "sha256": "441a5b802a42049b61f68d56c47040fe0f4c81f31b4427515f41b484bc4adc9f",
+      "headers": {
+        "Date": "Fri, 23 Oct 2026 01:10:11 GMT",
+        "Last-Modified": "Fri, 09 Oct 2026 04:20:06 GMT",
+        "ETag": "\"c9d8e6-65d60a9bfb419\"",
+        "Content-Type": "application/zip"
+      }
+    },
+    {
+      "requestedUrl": "https://xml.kishou.go.jp/jmaxml_20261019_Code.zip",
+      "finalUrl": "https://xml.kishou.go.jp/jmaxml_20261019_Code.zip",
+      "status": 200,
+      "capturedAt": "2026-10-23T01:10:16.171140+00:00",
+      "bytes": 1674470,
+      "sha256": "09725eca34b87bfeedd259d72d531ec6507a8282537aee11ce2250ae7de8ead9",
+      "headers": {
+        "Date": "Fri, 23 Oct 2026 01:10:15 GMT",
+        "Last-Modified": "Thu, 15 Oct 2026 01:17:49 GMT",
+        "ETag": "\"198ce6-65dd6d0e02940\"",
+        "Content-Type": "application/zip"
+      }
+    }
+  ],
+  "zoneCatalog": {
+    "workbook": "20260129_AreaMarineAJ.xlsx",
+    "sha256": "100744da77c7eaaad604076072872364e325023f5f7a957326706dfb457219ab",
+    "codeTypeCounts": {
+      "全般海上海域名": 78,
+      "地方海上予報区": 48
+    },
+    "geometryResolved": false
+  },
+  "samples": [
+    {
+      "receipt": {
+        "title": "全般海上警報（定時）（Ｒ０８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "updated": "2026-10-22T20:15:52Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:09.549602+00:00",
+        "bytes": 48200,
+        "sha256": "fd3de86f29342efdecb79f3e6a1e87e7783036034a623d15b5e3535198a3ebbf",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:09 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:16:52 GMT",
+          "ETag": "\"f7dece110b2cbb5d6e06ba26ac4c5c54\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPZU54",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "sha256": "fd3de86f29342efdecb79f3e6a1e87e7783036034a623d15b5e3535198a3ebbf",
+        "title": "全般海上警報（定時）（Ｒ０８）",
+        "headlineTitle": "全般海上警報",
+        "editorialOffice": "気象庁本庁",
+        "publishingOffice": "気象庁",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "全般海上警報",
+        "infoKindVersion": "1.0_3",
+        "sentAt": "2026-10-22T20:15:52Z",
+        "publishedAt": "2026-10-23T05:20:00+09:00",
+        "targetAt": "2026-10-23T05:20:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "groupKey": "[\"全般海上警報（定時）（Ｒ０８）\",\"気象庁本庁\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "低気圧",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "オホーツク海",
+            "code": "9050",
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "緯度経度領域",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "オホーツク海",
+            "code": "9050",
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "緯度経度領域",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "概況"
+          },
+          {
+            "name": "低圧部",
+            "code": null,
+            "codeType": null,
+            "type": "概況"
+          },
+          {
+            "name": "高気圧",
+            "code": null,
+            "codeType": null,
+            "type": "概況"
+          },
+          {
+            "name": "オホーツク海",
+            "code": "9050",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "日本海",
+            "code": "9010",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "ボッ海",
+            "code": "9020",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "黄海",
+            "code": "9030",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "東シナ海",
+            "code": "9040",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "南シナ海",
+            "code": "9070",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "トンキン湾",
+            "code": "9150",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "千島近海",
+            "code": "9160",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "千島の東",
+            "code": "9170",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "日本の東",
+            "code": "9080",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "日本のはるか東",
+            "code": "9090",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "日本の南",
+            "code": "9100",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "沖縄の南",
+            "code": "9120",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "小笠原諸島",
+            "code": "9330",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "南鳥島",
+            "code": "9320",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "フィリピンの東",
+            "code": "9220",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "ミンダナオ島の東",
+            "code": "9230",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "セレベス海",
+            "code": "9240",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "スル海",
+            "code": "9250",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "マリアナ諸島",
+            "code": "9300",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "カロリン諸島",
+            "code": "9310",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "トラック諸島",
+            "code": "9270",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "ウェーク島",
+            "code": "9290",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "マーシャル諸島",
+            "code": "9260",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "ミッドウェー諸島",
+            "code": "9280",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "アリューシャンの南",
+            "code": "9200",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "アリューシャン近海",
+            "code": "9190",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "カムチャツカの東",
+            "code": "9210",
+            "codeType": null,
+            "type": "全般海上予報"
+          },
+          {
+            "name": "ベーリング海",
+            "code": "9060",
+            "codeType": null,
+            "type": "全般海上予報"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "熱帯低気圧",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        },
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "低気圧",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        },
+        {
+          "codeType": "全般海上海域名",
+          "code": "9050",
+          "name": "オホーツク海",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "緯度経度領域",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        }
+      ],
+      "originalValueNodeCount": 180,
+      "originalValuesPreview": [
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Direction",
+          "value": "北西",
+          "unit": "１６方位漢字",
+          "type": "移動方向"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Speed",
+          "value": "9",
+          "unit": "ノット",
+          "type": "移動速度"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Pressure",
+          "value": "950",
+          "unit": "hPa",
+          "type": "中心気圧"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[1].WindPart.jmx_eb:WindSpeed",
+          "value": "85",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[1].WarningAreaPart[0].jmx_eb:WindSpeed",
+          "value": "50",
+          "unit": "ノット",
+          "type": "風速"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[1].WarningAreaPart[0].jmx_eb:Circle.jmx_eb:Axes.jmx_eb:Axis[0].jmx_eb:Direction",
+          "value": "北西",
+          "unit": "８方位漢字",
+          "type": "方向"
+        }
+      ],
+      "subAreaCount": 0,
+      "subAreaNames": [],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T18:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    },
+    {
+      "receipt": {
+        "title": "全般海上警報（定時）（Ｈ２９）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "updated": "2026-10-22T20:15:52Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:10.250797+00:00",
+        "bytes": 24777,
+        "sha256": "20dce3c83b420bff993b60c9f55a0e39d350ee6ba05d505c8f68f53bce2197af",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:10 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:16:10 GMT",
+          "ETag": "\"2330e3af7442f97ee41e38a3b1e779c8\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPZU52",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "sha256": "20dce3c83b420bff993b60c9f55a0e39d350ee6ba05d505c8f68f53bce2197af",
+        "title": "全般海上警報（定時）（Ｈ２９）",
+        "headlineTitle": "全般海上警報",
+        "editorialOffice": "気象庁本庁",
+        "publishingOffice": "気象庁",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "全般海上警報",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-22T20:15:52Z",
+        "publishedAt": "2026-10-23T05:20:00+09:00",
+        "targetAt": "2026-10-23T05:20:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "groupKey": "[\"全般海上警報（定時）（Ｈ２９）\",\"気象庁本庁\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "低気圧",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "オホーツク海",
+            "code": "9050",
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "緯度経度領域",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "オホーツク海",
+            "code": "9050",
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "緯度経度領域",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          },
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "概況"
+          },
+          {
+            "name": "低圧部",
+            "code": null,
+            "codeType": null,
+            "type": "概況"
+          },
+          {
+            "name": "高気圧",
+            "code": null,
+            "codeType": null,
+            "type": "概況"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "熱帯低気圧",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        },
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "低気圧",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        },
+        {
+          "codeType": "全般海上海域名",
+          "code": "9050",
+          "name": "オホーツク海",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "緯度経度領域",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        }
+      ],
+      "originalValueNodeCount": 64,
+      "originalValuesPreview": [
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Direction",
+          "value": "北西",
+          "unit": "１６方位漢字",
+          "type": "移動方向"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Speed",
+          "value": "9",
+          "unit": "ノット",
+          "type": "移動速度"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Pressure",
+          "value": "950",
+          "unit": "hPa",
+          "type": "中心気圧"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[1].WindPart.jmx_eb:WindSpeed",
+          "value": "85",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[1].WarningAreaPart[0].jmx_eb:WindSpeed",
+          "value": "50",
+          "unit": "ノット",
+          "type": "風速"
+        },
+        {
+          "path": "Body.MeteorologicalInfos[0].MeteorologicalInfo.Item.Kind[1].Property[1].WarningAreaPart[0].jmx_eb:Circle.jmx_eb:Axes.jmx_eb:Axis[0].jmx_eb:Direction",
+          "value": "北西",
+          "unit": "８方位漢字",
+          "type": "方向"
+        }
+      ],
+      "subAreaCount": 0,
+      "subAreaNames": [],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T18:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    },
+    {
+      "receipt": {
+        "title": "全般海上警報（臨時）（Ｈ２９）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "updated": "2026-10-22T23:15:48Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:10.748821+00:00",
+        "bytes": 8050,
+        "sha256": "5111ed6fe7b2c0795ec3a533cf12141884a2a6f046f3db824c183c5e80d2169e",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:10 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 23:16:15 GMT",
+          "ETag": "\"8920baa6221df7a517bf45ded278e764\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPZU53",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "sha256": "5111ed6fe7b2c0795ec3a533cf12141884a2a6f046f3db824c183c5e80d2169e",
+        "title": "全般海上警報（臨時）（Ｈ２９）",
+        "headlineTitle": "全般海上警報",
+        "editorialOffice": "気象庁本庁",
+        "publishingOffice": "気象庁",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "全般海上警報",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-22T23:15:48Z",
+        "publishedAt": "2026-10-23T08:20:00+09:00",
+        "targetAt": "2026-10-23T08:20:00+09:00",
+        "validUntil": "2026-10-24T06:00:00+09:00",
+        "groupKey": "[\"全般海上警報（臨時）（Ｈ２９）\",\"気象庁本庁\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": "全般海上海域名",
+            "type": "全般海上警報"
+          },
+          {
+            "name": "熱帯低気圧",
+            "code": null,
+            "codeType": null,
+            "type": "全般海上警報"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "全般海上海域名",
+          "code": null,
+          "name": "熱帯低気圧",
+          "scope": "original_dynamic_geometry_not_evaluated"
+        }
+      ],
+      "originalValueNodeCount": 24,
+      "originalValuesPreview": [
+        {
+          "path": "Body.MeteorologicalInfos.MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Direction",
+          "value": "北西",
+          "unit": "１６方位漢字",
+          "type": "移動方向"
+        },
+        {
+          "path": "Body.MeteorologicalInfos.MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Speed",
+          "value": "9",
+          "unit": "ノット",
+          "type": "移動速度"
+        },
+        {
+          "path": "Body.MeteorologicalInfos.MeteorologicalInfo.Item.Kind[1].Property[0].CenterPart.jmx_eb:Pressure",
+          "value": "955",
+          "unit": "hPa",
+          "type": "中心気圧"
+        },
+        {
+          "path": "Body.MeteorologicalInfos.MeteorologicalInfo.Item.Kind[1].Property[1].WindPart.jmx_eb:WindSpeed",
+          "value": "80",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.MeteorologicalInfos.MeteorologicalInfo.Item.Kind[1].Property[1].WarningAreaPart[0].jmx_eb:WindSpeed",
+          "value": "50",
+          "unit": "ノット",
+          "type": "風速"
+        },
+        {
+          "path": "Body.MeteorologicalInfos.MeteorologicalInfo.Item.Kind[1].Property[1].WarningAreaPart[0].jmx_eb:Circle.jmx_eb:Axes.jmx_eb:Axis[0].jmx_eb:Direction",
+          "value": "北西",
+          "unit": "８方位漢字",
+          "type": "方向"
+        }
+      ],
+      "subAreaCount": 0,
+      "subAreaNames": [],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T21:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "updated": "2026-10-22T23:35:00Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:11.284007+00:00",
+        "bytes": 6163,
+        "sha256": "2b3e61c0155a6d084f804739a9f2a6c1f7aea86799cec628bb593fc00c099d9e",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:11 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 23:35:24 GMT",
+          "ETag": "\"01a0030ba9602c955255963d3bf2add5\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPCU51",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "sha256": "2b3e61c0155a6d084f804739a9f2a6c1f7aea86799cec628bb593fc00c099d9e",
+        "title": "地方海上警報（Ｈ２８）",
+        "headlineTitle": "沖縄海上気象",
+        "editorialOffice": "沖縄気象台",
+        "publishingOffice": "沖縄気象台",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "地方海上警報",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-22T23:35:00Z",
+        "publishedAt": "2026-10-23T08:35:00+09:00",
+        "targetAt": "2026-10-23T08:35:00+09:00",
+        "validUntil": "2026-10-24T06:00:00+09:00",
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"沖縄気象台\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "沖縄南方海上",
+            "code": "6030",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "東シナ海南部",
+            "code": "6010",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "沖縄東方海上",
+            "code": "6020",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "沖縄南方海上",
+            "code": "6030",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "東シナ海南部",
+            "code": "6010",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "沖縄東方海上",
+            "code": "6020",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "沖縄海域",
+            "code": "6000",
+            "codeType": null,
+            "type": "気象要因"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "地方海上予報区",
+          "code": "6030",
+          "name": "沖縄南方海上",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "6010",
+          "name": "東シナ海南部",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "6020",
+          "name": "沖縄東方海上",
+          "scope": "official_named_zone_geometry_not_resolved"
+        }
+      ],
+      "originalValueNodeCount": 15,
+      "originalValuesPreview": [
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindDirection",
+          "value": "南",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[0]",
+          "value": "80",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[1]",
+          "value": "40",
+          "unit": "m/s",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Becoming.jmx_eb:WindDirection",
+          "value": "南東",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Becoming.jmx_eb:WindSpeed[0]",
+          "value": "65",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Becoming.jmx_eb:WindSpeed[1]",
+          "value": "35",
+          "unit": "m/s",
+          "type": "最大風速"
+        }
+      ],
+      "subAreaCount": 3,
+      "subAreaNames": [],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T21:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "updated": "2026-10-22T20:35:02Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:14:12.776046+00:00",
+        "bytes": 10372,
+        "sha256": "ecd2e36a419d5bc4f069226438ad641ce0f0c9d89df82868fe77cd1735271e06",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:14:12 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:35:23 GMT",
+          "ETag": "\"82e6ffdd76e82ce698106490ef518d7f\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPCU51",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "sha256": "ecd2e36a419d5bc4f069226438ad641ce0f0c9d89df82868fe77cd1735271e06",
+        "title": "地方海上警報（Ｈ２８）",
+        "headlineTitle": "札幌海上気象",
+        "editorialOffice": "札幌管区気象台",
+        "publishingOffice": "札幌管区気象台",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "地方海上警報",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-22T20:35:02Z",
+        "publishedAt": "2026-10-23T05:35:00+09:00",
+        "targetAt": "2026-10-23T05:35:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"札幌管区気象台\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "サハリン東方海上",
+            "code": "1010",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "サハリン西方海上",
+            "code": "1020",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "網走沖",
+            "code": "1030",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "宗谷海峡",
+            "code": "1040",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "北海道西方海上",
+            "code": "1050",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "サハリン東方海上",
+            "code": "1010",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "サハリン西方海上",
+            "code": "1020",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "網走沖",
+            "code": "1030",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "宗谷海峡",
+            "code": "1040",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "北海道西方海上",
+            "code": "1050",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "日本海北部及びオホーツク海南部",
+            "code": "1000",
+            "codeType": null,
+            "type": "気象要因"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "地方海上予報区",
+          "code": "1010",
+          "name": "サハリン東方海上",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "1020",
+          "name": "サハリン西方海上",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "1030",
+          "name": "網走沖",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "1040",
+          "name": "宗谷海峡",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "1050",
+          "name": "北海道西方海上",
+          "scope": "official_named_zone_geometry_not_resolved"
+        }
+      ],
+      "originalValueNodeCount": 19,
+      "originalValuesPreview": [
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindDirection",
+          "value": "西",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[0]",
+          "value": "35",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[1]",
+          "value": "18",
+          "unit": "m/s",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[1].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindDirection",
+          "value": "南西",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[1].Kind[1].Property.WindPart.SubArea.Becoming.jmx_eb:WindSpeed[0]",
+          "value": "30",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[1].Kind[1].Property.WindPart.SubArea.Becoming.jmx_eb:WindSpeed[1]",
+          "value": "15",
+          "unit": "m/s",
+          "type": "最大風速"
+        }
+      ],
+      "subAreaCount": 7,
+      "subAreaNames": [],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T18:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "updated": "2026-10-22T20:35:02Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:14:13.343877+00:00",
+        "bytes": 5050,
+        "sha256": "610a31dfd0e8757cf3d518c35d011c5608c83f0e70c2a146ce65621fc4971023",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:14:13 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:35:23 GMT",
+          "ETag": "\"c9b6ad0c37a0e8a76c5ea3fb14e18f36\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPCU51",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "sha256": "610a31dfd0e8757cf3d518c35d011c5608c83f0e70c2a146ce65621fc4971023",
+        "title": "地方海上警報（Ｈ２８）",
+        "headlineTitle": "函館海上気象",
+        "editorialOffice": "函館地方気象台",
+        "publishingOffice": "札幌管区気象台",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "地方海上警報",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-22T20:35:02Z",
+        "publishedAt": "2026-10-23T05:35:00+09:00",
+        "targetAt": "2026-10-23T05:35:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"函館地方気象台\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "北海道東方海上",
+            "code": "1110",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "釧路沖",
+            "code": "1120",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "北海道東方海上",
+            "code": "1110",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "釧路沖",
+            "code": "1120",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "北海道南方及び東方海上",
+            "code": "1100",
+            "codeType": null,
+            "type": "気象要因"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "地方海上予報区",
+          "code": "1110",
+          "name": "北海道東方海上",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "1120",
+          "name": "釧路沖",
+          "scope": "official_named_zone_geometry_not_resolved"
+        }
+      ],
+      "originalValueNodeCount": 6,
+      "originalValuesPreview": [
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindDirection",
+          "value": "北西",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[0]",
+          "value": "35",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[1]",
+          "value": "18",
+          "unit": "m/s",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[1].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindDirection",
+          "value": "西",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[1].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[0]",
+          "value": "30",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[1].Kind[1].Property.WindPart.SubArea.Base.jmx_eb:WindSpeed[1]",
+          "value": "15",
+          "unit": "m/s",
+          "type": "最大風速"
+        }
+      ],
+      "subAreaCount": 2,
+      "subAreaNames": [],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T18:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "updated": "2026-10-22T20:35:04Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:14:13.857580+00:00",
+        "bytes": 4666,
+        "sha256": "883b3098b6ca0f13b6e9a63e3a2033599db09889ddb7572a37c34b03cf9fb9f6",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:14:13 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:35:23 GMT",
+          "ETag": "\"d736214d4febc6386050dce44503b46e\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "productCode": "VPCU51",
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "sha256": "883b3098b6ca0f13b6e9a63e3a2033599db09889ddb7572a37c34b03cf9fb9f6",
+        "title": "地方海上警報（Ｈ２８）",
+        "headlineTitle": "神戸海上気象",
+        "editorialOffice": "神戸地方気象台",
+        "publishingOffice": "高松地方気象台",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "地方海上警報",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-22T20:35:04Z",
+        "publishedAt": "2026-10-23T05:35:00+09:00",
+        "targetAt": "2026-10-23T05:35:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"神戸地方気象台\",\"通常\",null]",
+        "areas": [
+          {
+            "name": "瀬戸内海",
+            "code": "4010",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "四国沖北部",
+            "code": "4020",
+            "codeType": "地方海上予報区",
+            "type": "地方海上警報"
+          },
+          {
+            "name": "瀬戸内海",
+            "code": "4010",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "四国沖北部",
+            "code": "4020",
+            "codeType": null,
+            "type": "地方海上警報"
+          },
+          {
+            "name": "四国沖及び瀬戸内海",
+            "code": "4000",
+            "codeType": null,
+            "type": "気象要因"
+          }
+        ],
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "effectiveAt": null,
+      "notice": "official_warning_reference",
+      "areaBindings": [
+        {
+          "codeType": "地方海上予報区",
+          "code": "4010",
+          "name": "瀬戸内海",
+          "scope": "official_named_zone_geometry_not_resolved"
+        },
+        {
+          "codeType": "地方海上予報区",
+          "code": "4020",
+          "name": "四国沖北部",
+          "scope": "official_named_zone_geometry_not_resolved"
+        }
+      ],
+      "originalValueNodeCount": 9,
+      "originalValuesPreview": [
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea[0].Base.jmx_eb:WindDirection",
+          "value": "北東",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea[0].Becoming.jmx_eb:WindSpeed[0]",
+          "value": "30",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea[0].Becoming.jmx_eb:WindSpeed[1]",
+          "value": "15",
+          "unit": "m/s",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea[1].Base.jmx_eb:WindDirection",
+          "value": "北東",
+          "unit": "８方位漢字",
+          "type": "風向"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea[1].Becoming.jmx_eb:WindSpeed[0]",
+          "value": "30",
+          "unit": "ノット",
+          "type": "最大風速"
+        },
+        {
+          "path": "Body.Warning.Item[0].Kind[1].Property.WindPart.SubArea[1].Becoming.jmx_eb:WindSpeed[1]",
+          "value": "15",
+          "unit": "m/s",
+          "type": "最大風速"
+        }
+      ],
+      "subAreaCount": 3,
+      "subAreaNames": [
+        "豊後および紀伊水道を除く海域",
+        "紀伊水道"
+      ],
+      "reviewStateAtCapture": "review_candidate",
+      "expiresAt": "2026-10-23T18:00:00.000Z",
+      "expiryBasis": "official_and_local_ttl",
+      "offlineCacheReplay": {
+        "mode": "archive_transport_not_live_HTTP",
+        "archiveReads": 1,
+        "invocations": 2,
+        "result": "same_bytes_cache_hit"
+      },
+      "navigationWarningComplete": false,
+      "replacesVesselWarningSystem": false
+    }
+  ],
+  "warningAndAtomBodyBytes": 361650,
+  "additionalMaterialBodyBytes": 14902732,
+  "liveCorrectionsObserved": 0,
+  "liveCancellationsObserved": 0,
+  "liveReleaseNoticesObserved": 0,
+  "navigationWarningComplete": false,
+  "replacesVesselWarningSystem": false
+}
