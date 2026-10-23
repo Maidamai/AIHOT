@@ -5,6 +5,8 @@ import { XMLParser, XMLValidator } from "fast-xml-parser";
 export const jmaFeeds = [
   "https://www.data.jma.go.jp/developer/xml/feed/regular_l.xml",
   "https://www.data.jma.go.jp/developer/xml/feed/extra_l.xml",
+  // Official xmlpull.html, long-period その他 link (verified 2026-10-23).
+  "https://www.data.jma.go.jp/developer/xml/feed/other_l.xml",
 ] as const;
 const base = "http://xml.kishou.go.jp/jmaxml1/";
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: false, trimValues: true });
