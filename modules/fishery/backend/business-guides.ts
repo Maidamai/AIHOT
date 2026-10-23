@@ -8,6 +8,7 @@ import { BUSINESS_TOPICS } from "../business-topics.ts";
 import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { businessGuidePayloadSchema, createBusinessGuideSchema, updateBusinessGuideSchema, decideBusinessGuideSchema,
   type BusinessGuideAIReview, type BusinessGuideContext, type BusinessGuidePayload, type BusinessGuideAdminRecord, type BusinessGuideReaderItem, type BusinessGuideReaderPage } from "../business-contracts.ts";
+import { noticeEvidenceSections } from "./fujian-notices.ts";
 import { buildEvidenceCatalog, type EvidenceCatalog } from "./evidence.ts";
 import { readSourceBody } from "./source-body.ts";
 import { hash, NotFound } from "./store.ts";
@@ -43,14 +44,17 @@ async function contextFor(documentId: string, db: Db): Promise<BusinessGuideCont
     body = article?.body_text ?? null;
   }
   if (!body || sha256(body) !== capture.bodySha256) throw new Conflict("Complete archived body missing or changed");
+  let sections: EvidenceCatalog["sections"];
+  try { sections = capture.adapter === "fujian-notices" ? noticeEvidenceSections(body, capture) : undefined; }
+  catch (error) { throw new Conflict(`Business evidence unavailable: ${(error as Error).message}`); }
   let pages: { page: number; text: string }[] | undefined;
-  if (capture.attachmentPages) {
+  if (!sections && capture.attachmentPages) {
     const markers = [...body.matchAll(/^--- Page (\d+) ---\r?\n/gm)];
     if (markers.length !== capture.attachmentPages || markers.some((m, i) => Number(m[1]) !== i + 1)) throw new Conflict("PDF coverage incomplete");
     pages = markers.map((m, i) => ({ page: i + 1, text: body.slice(m.index! + m[0].length, markers[i + 1]?.index ?? body.length).trim() }));
   }
   let catalog: EvidenceCatalog;
-  try { catalog = buildEvidenceCatalog({ body, bodySha256: capture.bodySha256, observationRevision: observation.revision, pages }); }
+  try { catalog = buildEvidenceCatalog({ body, bodySha256: capture.bodySha256, observationRevision: observation.revision, pages, sections }); }
   catch (error) { throw new Conflict(`Business evidence unavailable: ${(error as Error).message}`); }
   const snapshot: BusinessGuideContext["snapshot"] = {
     version: "fishery-business-guide/1", documentId, sourceId: doc.source_id, articleId: doc.article_id, canonicalUrl: doc.canonical_url, sourceRevision: source.revision, sourceProfileHash: hash(source.profile),
@@ -225,7 +229,7 @@ export async function eligibleBusinessGuideItems(db: Db, now: Date, onlyId: stri
     const [observation] = await db`SELECT payload FROM fishery_observations WHERE document_id=${row.document_id} AND revision=${context.snapshot.observationRevision}`;
     const attachmentUrl = observation?.payload.sourceCapture?.attachmentUrl;
     items.push({ id: row.id, documentId: row.document_id, revision: row.revision, payload: row.payload, source: context.source, snapshot: context.snapshot,
-      evidence: Object.fromEntries(context.catalog.spans.filter(s => ids.has(s.id)).map(s => [s.id, { quote: s.quote, paragraph: s.paragraph, page: s.page, url: capture && s.page !== null && attachmentUrl ? attachmentUrl : context.source.url }])),
+      evidence: Object.fromEntries(context.catalog.spans.filter(s => ids.has(s.id)).map(s => [s.id, { quote: s.quote, paragraph: s.paragraph, page: s.page, url: s.source?.url ?? (capture && s.page !== null && attachmentUrl ? attachmentUrl : context.source.url), ...(s.source ? { sourceId: s.source.id, sha256: s.source.sha256 } : {}) }])),
       verifiedAt: iso(row.verified_at), timeliness: projectBusinessTimeliness(row.payload.dates, now), qualification: { status: "qualified", label: "AI对照核查及最终审核通过" }, verification: { executorKind: ["human", "authorized_agent"].includes(row.human_decision?.executorKind) ? row.human_decision.executorKind : "unspecified", origin: "human_editorial", aiStatus: "passed", label: "编审整理，经AI对照核查及最终审核的内部信息参考；不构成申请或捕捞资格判断", legalApplicability: "not_determined" },
       eligibility: { canApply: null, canFish: null }, internalOnly: true });
   }

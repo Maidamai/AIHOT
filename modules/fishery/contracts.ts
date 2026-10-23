@@ -66,10 +66,12 @@ export const pdfTextEvidenceSchema=z.strictObject({
 export const noticeContextSchema=z.strictObject({
   nature:z.enum(['consultation','application_notice','funding_allocation','publicity','policy_reference','issued_document','unknown']),
   validity:z.literal('unknown'),deadline:dateSchema,deadlineLiteral:z.string().max(1000).nullable(),deadlineRole:z.enum(['consultation','application','publicity','unknown']),
+  evidenceVersion:z.literal('notice-sections/v2').optional(),
+  pageBody:z.strictObject({bodyStart:z.literal(0),bodyEnd:z.int().nonnegative(),sourceUrl:linkSchema,rawSha256:z.string().regex(/^[a-f0-9]{64}$/)}).optional(),
   pageTextSha256:z.string().regex(/^[a-f0-9]{64}$/),attachmentCount:z.int().min(0).max(1000),
   attachments:z.array(z.strictObject({url:linkSchema,label:z.string().max(500),extension:z.string().max(12),format:z.enum(['pdf','office_zip','ole','html','other','not_fetched']),
     sha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),httpStatus:z.int().min(100).max(599).nullable(),parseStatus:z.enum(['parsed','failed','unverified','not_fetched']),pages:z.int().positive().nullable(),
-    textSha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),bodyStart:z.int().nonnegative().nullable(),bodyEnd:z.int().nonnegative().nullable(),pdfTextEvidence:pdfTextEvidenceSchema.optional()})).max(3),
+    textSha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),bodyStart:z.int().nonnegative().nullable(),bodyEnd:z.int().nonnegative().nullable(),pageIntervals:z.array(z.strictObject({page:z.int().min(1).max(200),start:z.int().nonnegative(),end:z.int().positive()})).min(1).max(200).optional(),pdfTextEvidence:pdfTextEvidenceSchema.optional()})).max(3),
 });
 export type NoticeContext=z.infer<typeof noticeContextSchema>;
 export function noticeDeadlineState(n:NoticeContext,today:string){

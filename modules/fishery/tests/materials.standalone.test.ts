@@ -21,7 +21,7 @@ import {runFisherySelection,newSelection} from '../backend/selection.ts';
 import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backend/npfc-columns.ts';
 import type { ColumnFetcher } from '../backend/column-batches.ts';
 import {noticeFixture} from './fixtures.ts';
-import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged} from '../backend/fujian-notices.ts';
+import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged,noticeEvidenceSections} from '../backend/fujian-notices.ts';
 import {noticeDeadlineState} from '../contracts.ts';
 
 test('Fujian notices bind complete required attachments, real formats, page spans and archived revalidation',async()=>{
@@ -1305,4 +1305,76 @@ test('PDF extraction marks a mixed untextual second page unverified on both inst
   }});
   assert.equal(result.status,'unverified',platform);assert.equal(result.text,'');assert.deepEqual(result.textlessPages,[2]);
  }
+});
+
+function sectionedNoticeFixture(two=false){
+ const f=noticeFixture(),secondUrl=new URL('P0202507289999002.pdf',f.url).href;
+ const webpage='网页完整原文：远洋渔业办理事项。\n本页明确载明全部申请限制与原文说明，不能省略这些实际网页内容。';
+ const html=f.landing().replace(f.title+'</div>',webpage+'</div>').replace('</ul>',two?`<li><a href="${secondUrl}">第二份政策附件.pdf</a></li></ul>`:'</ul>');
+ const raw=Buffer.from(html),receipt={requestedUrl:f.url,finalUrl:f.url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'};
+ const second=Buffer.from('%PDF-second-synthetic'),texts=[f.text,'--- Page 1 ---\n第二份附件完整事实。'];
+ const files=[f.pdf,...(two?[second]:[])].map((bytes,i)=>({bytes,receipt:{...receipt,requestedUrl:i?secondUrl:f.pdfUrl,finalUrl:i?secondUrl:f.pdfUrl,sha256:sha256(bytes)},parsed:{status:'parsed' as const,rawSha256:sha256(bytes),parser:'synthetic/v1',pages:i?1:2,text:texts[i]!}}));
+ const prepared=prepareNotice(receipt,raw,files);assert.ok(prepared.body);
+ const input={...idTestInput(prepared.body),sections:noticeEvidenceSections(prepared.body,prepared.sourceCapture)};
+ return {f,prepared,input,files,receipt,raw,webpage};
+}
+test('Notice evidence preserves complete webpage plus each PDF with distinct physical-page provenance',async()=>{
+ for(const two of [false,true]){
+  const {prepared,input,webpage}=sectionedNoticeFixture(two),catalog=buildEvidenceCatalog(input),source=JSON.parse(buildFisheryDraftRequest(input,'mock').user as string);
+  assert.equal(catalog.version,'fishery-spans-v3-sections');assert.equal(source.body,prepared.body);assert.ok(source.body.startsWith(webpage));
+  assert.equal(catalog.sections!.length,two?3:2);assert.equal(catalog.pages.length,two?3:2);
+  assert.deepEqual(catalog.pages.map(p=>[p.source!.id,p.page]),two?[['attachment-1',1],['attachment-1',2],['attachment-2',1]]:[['attachment-1',1],['attachment-1',2]]);
+  assert.ok(catalog.spans.some(s=>s.source?.id==='webpage'&&s.quote.includes('全部申请限制')));
+  for(const span of catalog.spans){assert.equal(input.body.slice(span.start,span.end),span.quote);assert.equal(span.source!.url,catalog.sections!.find(section=>section.id===span.source!.id)!.sourceUrl);}
+  assert.equal(new Set(catalog.spans.map(s=>s.id)).size,catalog.spans.length);
+  assert.ok(catalog.spans.every(s=>!s.quote.startsWith('附件：')&&!s.quote.startsWith('原件：')),'Generated provenance labels are excluded from factual evidence');
+  const last=catalog.spans.at(-1)!,draft=buildFisheryDraftRequest(input,'mock').schema.parse({...idTestDraft(),summaryZh:[{sentence:last.quote,evidence:[last.id]}]});
+  assert.deepEqual(draft.summaryZh[0]!.evidence[0]!.source,last.source);validateFisheryDraft(input,draft);
+  const reviewed=await reviewFisheryDraft(input,draft,'mock',async options=>({data:options.schema.parse({decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Offline ID expansion only',evidence:[last.id]}]}),receiptId:999,model:'mock',usage:null,reused:false}));
+  assert.deepEqual(reviewed.review.findings[0]!.evidence[0]!.source,last.source);
+  const mutated=structuredClone(draft);mutated.summaryZh[0]!.evidence[0]!.source!.url='https://example.org/wrong.pdf';
+  assert.throws(()=>validateFisheryDraft(input,mutated),/Source-bound/);
+  delete mutated.summaryZh[0]!.evidence[0]!.source;assert.throws(()=>validateFisheryDraft(input,mutated),/Source-bound/);
+  const generatedParagraph=input.body.slice(0,input.body.indexOf('附件：')).split(/\n+/).filter(p=>p.trim()).length+1;
+  const forged=structuredClone(draft);forged.summaryZh[0]!.evidence=[{quote:'附件：政策附件.pdf',paragraph:generatedParagraph,page:null}];
+  assert.throws(()=>validateFisheryDraft(input,forged),/Source-bound/);
+ }
+});
+test('Notice metadata rejects missing pages, malformed spans and truncated source; provenance changes invalidate saved binding',()=>{
+ const {prepared,input,receipt,raw,files}=sectionedNoticeFixture(true),binding=evidenceBinding(buildEvidenceCatalog(input));
+ for(const mutate of [
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.pageBody!.bodyEnd--;},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.pageBody!.sourceUrl='https://example.org/notice';},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.pageBody!.rawSha256=sha256('altered raw');},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.attachments[0]!.bodyStart!++;},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.attachments[0]!.pageIntervals![0]!.end--;},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.attachments[0]!.pageIntervals!.pop();},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.attachments[1]!.pages=2;},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.attachments[1]!.url='https://example.org/replaced.pdf';},
+  (c:typeof prepared.sourceCapture)=>{c.noticeContext!.attachments[1]!.textSha256=sha256('truncated');},
+ ]){const capture=structuredClone(prepared.sourceCapture);mutate(capture);assert.throws(()=>noticeEvidenceSections(input.body,capture));}
+ for(const mutate of [(s:typeof input.sections)=>{s[1]!.rawSha256=sha256('changed PDF raw');},(s:typeof input.sections)=>{s[0]!.sourceUrl='https://example.org/other-webpage';}]){
+  const sections=structuredClone(input.sections);mutate(sections);assert.throws(()=>assertEvidenceBinding({...input,sections},binding),/changed/);
+ }
+ assert.throws(()=>buildEvidenceCatalog({...input,body:input.body.slice(0,-1),bodySha256:sha256(input.body.slice(0,-1))}),/section/);
+ const omit=prepareNotice(receipt,raw,[files[0]!]);assert.equal(omit.body,null);
+ const truncated=prepareNotice(receipt,raw,[{...files[0]!,parsed:{...files[0]!.parsed,text:'--- Page 1 ---\n只有第一页。'}},files[1]!]);assert.equal(truncated.body,null);
+ const old=structuredClone(prepared.sourceCapture);old.parser='official-column/fujian-notices/v1';delete old.noticeContext!.evidenceVersion;delete old.noticeContext!.pageBody;
+ assert.ok(observationSchema.shape.sourceCapture.parse(old));assert.throws(()=>noticeEvidenceSections(input.body,old),/recapture/);
+});
+test('Sectioned notices retain short actual webpage content while legacy single-PDF catalogs retain v2 hash and anchor shape',()=>{
+ const f=noticeFixture(),raw=Buffer.from(f.landing()),r={requestedUrl:f.url,finalUrl:f.url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'};
+ const prepared=prepareNotice(r,raw,[{bytes:f.pdf,receipt:{...r,requestedUrl:f.pdfUrl,finalUrl:f.pdfUrl,sha256:sha256(f.pdf)},parsed:{status:'parsed',rawSha256:sha256(f.pdf),parser:'synthetic/v1',pages:2,text:f.text}}]);
+ assert.ok(prepared.body!.startsWith(f.title));assert.ok(buildEvidenceCatalog({...idTestInput(prepared.body!),sections:noticeEvidenceSections(prepared.body!,prepared.sourceCapture)}).spans.some(s=>s.source!.id==='webpage'&&s.quote===f.title));
+ const body='--- Page 1 ---\n旧版完整事实。',input={...idTestInput(body),pages:[{page:1,text:'旧版完整事实。'}]},catalog=buildEvidenceCatalog(input);
+ const bound={version:'fishery-spans-v2',bodySha256:sha256(body),observationRevision:input.observationRevision,spans:[{id:'p2s1',quote:'旧版完整事实。',paragraph:2,page:1,start:15,end:22}],pages:[{page:1,start:15,end:22}]};
+ assert.equal(catalog.hash,sha256(JSON.stringify(bound)));assert.deepEqual(catalog,{...bound,hash:sha256(JSON.stringify(bound))});
+ const draft=buildFisheryDraftRequest(input,'mock').schema.parse({...idTestDraft(),summaryZh:[{sentence:'旧版完整事实。',evidence:['p2s1']}]});
+ assert.deepEqual(draft.summaryZh[0]!.evidence,[{quote:'旧版完整事实。',paragraph:2,page:1}]);
+});
+
+test('Legacy PDF evidence refuses a textless physical page even when old parsed metadata and markers claim completeness',()=>{
+ const body='--- Page 1 ---\n完整第一页。\n--- Page 2 ---\n',input={...idTestInput(body),pages:[{page:1,text:'完整第一页。'},{page:2,text:''}]};
+ assert.throws(()=>buildEvidenceCatalog(input),/page intervals/);
+ assert.throws(()=>buildFisheryDraftRequest(input,'mock'),/page intervals/);
 });

@@ -3,12 +3,15 @@ import { after, test } from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@aihot/backend/config";
+import { stopBoss } from "@aihot/backend/jobs/queue";
 import { sql, closeDb } from "@aihot/backend/db";
 import { createDocument, observe, registerSource, review } from "../backend/store.ts";
 import { sha256 } from "../backend/source-adapters.ts";
 import { buildEvidenceCatalog } from "../backend/evidence.ts";
+import { prepareNotice } from "../backend/fujian-notices.ts";
+import { noticeFixture } from "./fixtures.ts";
 import { observationFixture } from "./fixtures.ts";
-import { businessGuideContext, createBusinessGuide, updateBusinessGuide } from "../backend/business-guides.ts";
+import { businessGuideContext, createBusinessGuide, updateBusinessGuide, businessGuideAdminDetail, businessGuideReaderItem, decideBusinessGuide } from "../backend/business-guides.ts";
 import type { BusinessGuideContext, BusinessGuidePayload } from "../business-contracts.ts";
 import { assessGuideAIResult, buildGuideAIReviewRequest, guideAIClaims, createGuideAIReview, getCurrentGuideAIReview, processGuideAIReview, resumeGuideAIReview, resumeUnsentGuideAIReview, preflightGuideAIReview, guideAIResultToWire, guideAIOutputEnvelopeBytes, type GuideAIInvoke, type GuideAIResult } from "../backend/business-ai-review.ts";
 import { acquireProcessingLease } from "../backend/processing-lease.ts";
@@ -16,7 +19,7 @@ import { trialCapacity, TRIAL } from "../backend/trial-transport.ts";
 import { authorizationKey } from "../backend/authorization.ts";
 import { chatJson } from "@aihot/backend/providers/llm";
 
-after(closeDb);
+after(async()=>{await stopBoss();await closeDb();});
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error("Offline suite forbids network/model transport"); };
 after(() => { globalThis.fetch = originalFetch; });
@@ -293,4 +296,42 @@ test("unsent recovery requires lease, exact day refusal, unchanged binding/inten
     assert.equal(audit!.before.error.reason,"Budget for llm exhausted (day)");assert.equal(audit!.after.reservationDelta,0);assert.match(audit!.reason,/executor stopped/);
     await assert.rejects(resumeUnsentGuideAIReview(first.task.id,"operator","Again"),/failed unsent/);
   }); }finally{await lease.release();}
+});
+
+test("notice guide comparison and reader bind full webpage and two separate PDF Page1 sources",async()=>{
+ const f=await fixture(),n=noticeFixture(),secondUrl=new URL('P0202507289999002.pdf',n.url).href;
+ const raw=Buffer.from(n.landing().replace(n.title+'</div>',body+'</div>').replace('</ul>',`<li><a href="${secondUrl}">第二附件.pdf</a></li></ul>`)),r={requestedUrl:n.url,finalUrl:n.url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'};
+ const files=[n.pdf,Buffer.from('%PDF-second-notice-guide')].map((bytes,i)=>({bytes,receipt:{...r,requestedUrl:i?secondUrl:n.pdfUrl,finalUrl:i?secondUrl:n.pdfUrl,sha256:sha256(bytes)},parsed:{status:'parsed' as const,rawSha256:sha256(bytes),parser:'synthetic/v1',pages:1,text:`--- Page 1 ---\n${i?'第二附件原文保留完整限定。':'第一附件原文完整保留。'}`}}));
+ const prepared=prepareNotice(r,raw,files);assert.ok(prepared.body);await writeFile(f.filename,prepared.body);
+ await observe(f.id,{...f.observation,expectedRevision:1,rawSha256:sha256(raw),sourceCapture:{...prepared.sourceCapture,archiveId:(f.observation.sourceCapture as {archiveId:string}).archiveId}},'synthetic-editor');
+ await review(f.id,{revision:2,sourceRevision:1,decision:'approved',applicabilityReviewed:false,note:'Synthetic complete notice review'},'synthetic-reviewer');
+ const c=await businessGuideContext(f.id);assert.equal(c.catalog.version,'fishery-spans-v3-sections');assert.equal(c.catalog.sections!.length,3);
+ const p=payload(c),second=c.catalog.spans.find(s=>s.source?.id==='attachment-2')!;p.summary.push({value:second.quote,evidence:[second.id]});
+ const g=await createBusinessGuide({documentId:f.id,snapshotHash:c.snapshotHash,payload:p,reason:'Synthetic notice guide'},'synthetic-editor');
+ const task=await createGuideAIReview(g.id,{identity:'notice-guide',expectedRevision:g.revision,payloadHash:g.payloadHash,snapshotHash:g.snapshotHash},'synthetic-editor'),rid=await receipt(task);
+ await processGuideAIReview(task.id,(async options=>{
+  const source=JSON.parse(String(options.user)).source;assert.equal(source.body,prepared.body);assert.equal(source.sourceSections.length,3);
+  assert.deepEqual(source.pageSources.map((v:{page:number;source:{id:string;url:string}})=>[v.source.id,v.page,v.source.url]),[['attachment-1',1,n.pdfUrl],['attachment-2',1,secondUrl]]);
+  assert.equal(source.spanSources.find((v:{id:string})=>v.id===second.id).source.url,secondUrl);
+  return fake(answer(p),rid)(options);
+ }) as GuideAIInvoke);
+ const checked=await businessGuideAdminDetail(g.id);assert.equal(checked.aiReview.pass,true);
+ await decideBusinessGuide(g.id,{expectedRevision:checked.revision,payloadHash:checked.payloadHash,snapshotHash:checked.snapshotHash,decision:'approved',aiReviewHash:checked.aiReview.reviewHash!,reason:'Synthetic final notice approval'},'synthetic-reviewer');
+ const item=await businessGuideReaderItem(g.id);assert.equal(item.evidence[second.id]!.url,secondUrl);assert.equal(item.evidence[second.id]!.sha256,sha256(files[1]!.bytes));assert.equal(item.evidence[second.id]!.sourceId,'attachment-2');assert.equal(item.evidence[second.id]!.page,1);
+});
+
+test("historical parsed PDF empty page blocks guide creation, AI preflight and a previously qualified reader",async()=>{
+ const v=await guide(),task=await request(v.g,'legacy-empty-page'),rid=await receipt(task);
+ await processGuideAIReview(task.id,fake(answer(v.p),rid));
+ const checked=await businessGuideAdminDetail(v.g.id);assert.equal(checked.aiReview.pass,true);
+ await decideBusinessGuide(v.g.id,{expectedRevision:checked.revision,payloadHash:checked.payloadHash,snapshotHash:checked.snapshotHash,decision:'approved',aiReviewHash:checked.aiReview.reviewHash!,reason:'Synthetic old qualified source'},'synthetic-reviewer');
+ assert.ok(await businessGuideReaderItem(v.g.id));
+ const source=`--- Page 1 ---\n${body}\n--- Page 2 ---\n`,capture={...v.f.observation.sourceCapture,bodySha256:sha256(source),attachmentPages:2,attachmentUrl:'https://example.org/legacy.pdf',attachmentSha256:sha256('legacy PDF')};
+ await writeFile(v.f.filename,source);
+ await observe(v.f.id,{...v.f.observation,expectedRevision:1,sourceCapture:capture},'synthetic-editor');
+ await review(v.f.id,{revision:2,sourceRevision:1,decision:'approved',applicabilityReviewed:false,note:'Historical parsed metadata without textless-page flags'},'synthetic-reviewer');
+ await assert.rejects(businessGuideContext(v.f.id),/page intervals/);
+ await assert.rejects(createBusinessGuide({documentId:v.f.id,snapshotHash:v.c.snapshotHash,payload:v.p,reason:'Reject legacy empty-page guide'},'synthetic-editor'),/page intervals/);
+ await assert.rejects(preflightGuideAIReview(v.g.id),/page intervals/);
+ await assert.rejects(businessGuideReaderItem(v.g.id),/No current approved business information/);
 });

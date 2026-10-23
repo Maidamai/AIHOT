@@ -1,6 +1,6 @@
 // Evidence-bound adapter used only by explicit administrator tasks and guarded trial runners.
 import { z } from "zod";
-import {buildEvidenceCatalog,evidenceBinding,evidenceIdSchema,catalogSource,type EvidenceCatalog} from "./evidence.ts";
+import {buildEvidenceCatalog,evidenceBinding,evidenceIdSchema,catalogSource,type EvidenceCatalog,type EvidenceInput,anchorIds} from "./evidence.ts";
 import { readPublicationDate } from "@aihot/backend/sources/dates";
 import { dateSchema } from "../contracts.ts";
 import { sha256 } from "./source-adapters.ts";
@@ -9,7 +9,7 @@ import type { ChatJsonOptions, ChatJsonResult } from "@aihot/backend/providers/l
 // Bump for every canonical/wire schema or deterministic validation change; included in receipt/task fingerprints.
 export const FISHERY_RULES_VERSION="fishery-rules-v5.5";
 export const MAX_DRAFT_WIRE_BYTES=8192;
-export const quoteSchema = z.strictObject({ quote:z.string().min(1).max(1200), paragraph:z.int().positive(), page:z.int().positive().nullable() });
+export const quoteSchema = z.strictObject({ quote:z.string().min(1).max(1200), paragraph:z.int().positive(), page:z.int().positive().nullable(),source:z.strictObject({id:z.string().min(1).max(50),url:z.string().url().max(2048),sha256:z.string().regex(/^[a-f0-9]{64}$/)}).optional() });
 const dateFact = z.strictObject({ date:dateSchema, evidence:z.array(quoteSchema).max(12) }).superRefine((v,ctx)=>{
   if (v.date.precision!=="unknown"&&!v.evidence.length) ctx.addIssue({code:"custom",message:"Known date requires evidence"});
 });
@@ -33,7 +33,7 @@ export const fisheryDraftSchema = z.strictObject({
   if(v.entryIntoForce.value!=="unknown"&&!v.entryIntoForce.evidence.length) ctx.addIssue({code:"custom",message:"Policy state requires evidence"});
   if(v.entryIntoForce.value==="pending"&&v.dates.effective.date.precision!=="unknown") ctx.addIssue({code:"custom",message:"Pending is not an effective date"});
 });
-export interface DraftInput { documentId:string; observationRevision:number; body:string; bodySha256:string; language:string; pages?:{page:number;text:string}[]; }
+export interface DraftInput extends EvidenceInput { documentId:string; language:string; }
 export interface FisheryEvidenceOptions {mode?:"generation"|"manual_revision"}
 export function fisheryDraftWireSchema(catalog:EvidenceCatalog,options:FisheryEvidenceOptions={}) {
   const cap=options.mode==="manual_revision"?12:4;
@@ -106,11 +106,12 @@ export function validateFisheryDraft(input:DraftInput,value:unknown,options:Fish
   if(sha256(input.body)!==input.bodySha256) throw new Error("Source body changed");
   const result=fisheryDraftSchema.parse(value);
   if(Buffer.byteLength(JSON.stringify(JSON.stringify(result)))>MAX_DRAFT_WIRE_BYTES) throw new Error("Draft exceeds bounded review envelope; manual evidence review required");
-  const paragraphs=input.body.split(/\n+/).filter(p=>p.trim()),catalog=input.pages?.length?buildEvidenceCatalog(input):null;
+  const paragraphs=input.body.split(/\n+/).filter(p=>p.trim()),catalog=input.pages?.length||input.sections!==undefined?buildEvidenceCatalog(input):null;
   const evidenceGroups=[result.relevance.evidence,...result.summaryZh.map(s=>s.evidence),...Object.values(result.dates).map(d=>d.evidence),result.entryIntoForce.evidence,result.eventStatus.evidence,...result.locations.map(l=>l.evidence),...result.organizations.map(l=>l.evidence)];
   if(evidenceGroups.some(group=>group.length>(options.mode==="manual_revision"?12:4))) throw new Error("Evidence count exceeds server-selected generation/manual revision mode");
   const anchors=evidenceGroups.flat();
   for(const anchor of anchors) {
+    if(input.sections!==undefined&&anchorIds(catalog!,[anchor])[0]===null)throw new Error("Source-bound evidence anchor does not match catalog");
     if(!paragraphs[anchor.paragraph-1]?.includes(anchor.quote)) throw new Error("Quote is not continuous text in its source paragraph");
     if(anchor.page!==null&&(!catalog||!catalog.spans.some(s=>s.paragraph===anchor.paragraph&&s.page===anchor.page))) throw new Error("PDF page anchor does not match");
   }

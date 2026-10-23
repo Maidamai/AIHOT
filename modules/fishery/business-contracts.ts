@@ -76,7 +76,7 @@ export interface BusinessTimeliness {
 export interface BusinessGuideReaderItem {
   id: string; documentId: string; revision: number; payload: BusinessGuidePayload;
   source: BusinessGuideContext["source"]; snapshot: BusinessGuideSnapshot;
-  evidence: Record<string, { quote: string; paragraph: number; page: number | null; url: string }>;
+  evidence: Record<string, { quote: string; paragraph: number; page: number | null; url: string; sourceId?: string; sha256?: string }>;
   verifiedAt: string; timeliness: BusinessTimeliness; qualification: { status: "qualified"; label: string }; verification: { executorKind: BusinessExecutorKind; origin: "human_editorial"; aiStatus: "passed"; label: string; legalApplicability: "not_determined" };
   eligibility: { canApply: null; canFish: null }; internalOnly: true;
 }

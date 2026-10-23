@@ -60,14 +60,15 @@ export async function reviewFisheryDraft(input:DraftInput,draft:unknown,model:st
   if(review.findings.some(f=>f.evidence.length>(options.mode==="manual_revision"?12:4))) throw new Error("Review evidence exceeds server-selected generation/manual revision mode");
   const candidate=validateFisheryDraft(input,draft,options),catalog=buildEvidenceCatalog(input),paragraphs=input.body.split(/\n+/).filter(p=>p.trim());
   for(const finding of review.findings) for(const anchor of finding.evidence) {
+    if(input.sections!==undefined&&anchorIds(catalog,[anchor])[0]===null)throw new Error("Independent review source-bound anchor mismatch");
     if(!paragraphs[anchor.paragraph-1]?.includes(anchor.quote)||anchor.page!==null&&!catalog.spans.some(s=>s.paragraph===anchor.paragraph&&s.page===anchor.page)) throw new Error("Independent review evidence anchor mismatch");
   }
   const claims=fisheryClaims(candidate);
   const requiredIds=claims.map(c=>c.id);
   if(review.findings.length!==claims.length||new Set(review.findings.map(f=>f.field)).size!==review.findings.length||review.findings.some(f=>!requiredIds.includes(f.field))) throw new Error("Invalid canonical review claim manifest");
   for(const finding of review.findings) if(finding.verdict==="supported") {
-    const claim=claims.find(c=>c.id===finding.field),anchors=(claim?.assertion as {evidence:{quote:string;paragraph:number;page:number|null}[]}).evidence;
-    if(finding.evidence.some(a=>!anchors.some(bound=>bound.paragraph===a.paragraph&&bound.page===a.page&&bound.quote===a.quote))) throw new Error("Supported review cannot repair missing candidate anchors with different source evidence");
+    const claim=claims.find(c=>c.id===finding.field),anchors=(claim?.assertion as {evidence:z.infer<typeof quoteSchema>[]}).evidence;
+    if(finding.evidence.some(a=>!anchors.some(bound=>bound.paragraph===a.paragraph&&bound.page===a.page&&bound.quote===a.quote&&anchorIds(catalog,[bound])[0]===anchorIds(catalog,[a])[0]))) throw new Error("Supported review cannot repair missing candidate anchors with different source evidence");
   }
   const required=claims.map(c=>c.id),missing=required.filter(field=>!review.findings.some(f=>f.field===field&&f.verdict==="supported"&&f.evidence.length));
   const supported=review.decision==="supported"&&review.coverage==="complete_input"&&required.length>0&&!missing.length&&review.findings.every(f=>f.verdict==="supported"&&f.evidence.length);
