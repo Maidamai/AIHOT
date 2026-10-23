@@ -10,12 +10,13 @@ import { listTopicSummaries, loadTopicPage } from "@aihot/backend/publication/to
 import { installModules } from "@aihot/backend/modules";
 import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata, syncFisheryPublications } from "../backend/publication-bridge.ts";
 import { loadPool } from "@aihot/backend/publication/pool";
-import { loadItemDetail } from "@aihot/backend/publication/detail";
+import { loadItemDetail, exportMarkdown } from "@aihot/backend/publication/detail";
 import { loadItemShare } from "@aihot/backend/publication/og";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { itemFeed } from "@aihot/backend/publication/feeds";
 import { registerFeeds } from "../../../apps/api/src/routes/feeds.ts";
 import { registerV1 } from "../../../apps/api/src/routes/v1.ts";
+import { registerSite } from "../../../apps/api/src/routes/site.ts";
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { mkdir, writeFile, rm } from "node:fs/promises";
@@ -441,7 +442,7 @@ test("original RSS and v1 routes project guide dates at Beijing midnight without
   const created = await createBusinessGuide({ documentId: f.id, snapshotHash: context.snapshotHash, payload: input, reason: "Synthetic export lifecycle" }, "editor");
   const approved = await finalApproval(created, "reviewer");
   installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
-  const routes = Fastify(); registerFeeds(routes); registerV1(routes);
+  const routes = Fastify(); registerFeeds(routes); registerV1(routes); registerSite(routes);
   try {
     const id = (await syncFisheryPublications("synthetic-lifecycle")).rows.find(row => row.itemId === created.id)!.articleId;
     // Put this historical article inside the normal rolling window without substituting its original
@@ -455,8 +456,9 @@ test("original RSS and v1 routes project guide dates at Beijing midnight without
       try {
         const api = await routes.inject("/api/v1/items?mode=all&window=7d&by=timeline");
         const rss = await routes.inject({ url: "/feed/all.xml", ...(feedEtag ? { headers: { "if-none-match": feedEtag } } : {}) });
+        const markdown = await routes.inject(`/items/${id}/markdown`);
         assert.equal(api.statusCode, 200);
-        return { api: api.json(), rss: rss.body, feedStatus: rss.statusCode, feedEtag: String(rss.headers.etag) };
+        return { api: api.json(), rss: rss.body, feedStatus: rss.statusCode, feedEtag: String(rss.headers.etag), markdown };
       } finally { t.mock.timers.reset(); }
     };
     // A dated historical guide stays out of RSS's seven-day source-publication window.
@@ -472,6 +474,7 @@ test("original RSS and v1 routes project guide dates at Beijing midnight without
     assert.equal((await requestAt("2026-11-01T15:59:59.500Z", before.feedEtag)).feedStatus, 304);
     const after = await requestAt("2026-11-01T16:00:00Z", before.feedEtag);
     assert.equal(after.feedStatus, 200, "A pre-midnight ETag cannot hide the next Beijing day's deadline warning");
+    assert.equal(before.markdown.statusCode, 200); assert.equal(after.markdown.statusCode, 200);
     const first = before.api.items.find((item: { id: string }) => item.id === undatedId), last = after.api.items.find((item: { id: string }) => item.id === undatedId);
     assert.ok(first); assert.ok(last);
     assert.equal(first.reference.lifecycle.deadlinePassed, false); assert.equal(last.reference.lifecycle.deadlinePassed, true);
@@ -486,6 +489,10 @@ test("original RSS and v1 routes project guide dates at Beijing midnight without
     assert.doesNotMatch(before.rss, /已截止（按原文日期）/);
     assert.match(after.rss, /派生状态提示.*已截止（按原文日期）/s); assert.match(after.rss, /原文发布日期：未知/);
     assert.match(after.rss, /AI对照核查及最终审核通过/);
+    assert.doesNotMatch(before.markdown!.body, /已截止（按原文日期）/);
+    assert.match(after.markdown!.body, /## 派生状态提示\n\n.*已过文载失效日期.*已截止（按原文日期）/s);
+    assert.match(after.markdown!.body, /原文发布日期：2026-10-21（day）/);
+    assert.match(after.markdown!.body, /AI对照核查及最终审核通过/);
     const reference = (await fisheryReferenceMetadata([id], new Date("2026-11-01T16:00:00Z")))[id]!;
     assert.equal(reference.lifecycle!.policyExpired, true); assert.equal(reference.lifecycle!.documentStatus.value, null);
     assert.equal(reference.lifecycle!.dates.published.value.value, "2026-10-21");
@@ -497,7 +504,9 @@ test("original RSS and v1 routes project guide dates at Beijing midnight without
     await sql`UPDATE fishery_sources SET revision=revision+1 WHERE source_id=${f.sourceId}`;
     const stale = await requestAt("2026-11-01T16:00:00Z");
     assert.ok(!stale.rss.includes(undatedId)); assert.ok(!stale.api.items.some((item: { id: string }) => item.id === undatedId));
+    assert.equal(stale.markdown.statusCode, 404);
     assert.equal((await loadItemDetail(undatedId)).kind, "not_found");
+    assert.equal(await exportMarkdown(id), null);
   } finally { t.mock.timers.reset(); await routes.close(); installModules([]); }
 });
 
