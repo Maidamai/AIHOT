@@ -44,6 +44,24 @@ export interface ReferenceMetadata {
   /** Conservative final day from reviewed source dates; null remains unknown. */
   deadlineDate: string | null;
   expiryDate: string | null;
+  /** Current read projection; never written back into the approved summary or publication date. */
+  lifecycle?: {
+    timeZone: "Asia/Shanghai";
+    dates: Record<"published" | "effectiveFrom" | "deadline" | "expiresAt", {
+      value: { precision: "unknown"; value: null } | { precision: "year" | "month" | "day"; value: string };
+      evidence: string[];
+    }>;
+    documentStatus: { state: "unknown"; value: null; evidence: [] } | { state: "documented"; value: "formal" | "consultation"; evidence: string[] };
+    deadlinePassed: boolean | null;
+    /** Comparison against the source's expiry date, not a legal repeal determination. */
+    policyExpired: boolean | null;
+    applicationStatus: "unknown";
+    legalValidity: "unknown";
+    verifiedAt: string;
+    qualification: { status: "qualified"; label: string };
+    evidence: Record<string, { quote: string; paragraph: number; page: number | null; url: string }>;
+    notice: string;
+  };
 }
 
 export interface ItemSummary {

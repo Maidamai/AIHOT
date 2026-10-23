@@ -2,7 +2,7 @@ import type { ReferenceMetadata } from "@aihot/contracts/site";
 import { projectBusinessTimeliness } from "../business-timeliness.ts";
 import { publicationDecisionCurrent, type PublicationJob } from "./publication-queue.ts";
 import { BUSINESS_TOPICS } from "../business-topics.ts";
-import { beijingAt } from "@aihot/contracts/time";
+import { beijingAt, beijingDate } from "@aihot/contracts/time";
 import type postgres from "postgres";
 // A normal core material identity and editorial projection; qualification remains owned by the
 // existing reviewers and is re-read on every publication query. This grants no redistribution right.
@@ -34,7 +34,16 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
       if (!topic) throw new Conflict("Reviewed guide topic is absent from the configured business topics");
       const tags = [topic.label, "资料"];
       const time = projectBusinessTimeliness(item.payload.dates, now);
-      return { reference: { kind: "business_guide" as const, checkedAt: time.checkedAt, deadlineDate: time.deadline.lastDate, expiryDate: time.expiry.lastDate }, kind: "business_guide" as const, id: item.id, documentId: item.documentId, title: item.payload.title.value,
+      const dateLabels = { published: "原文发布日期", effectiveFrom: "文载生效日期", deadline: "办理截止日期", expiresAt: "文载失效日期" };
+      const dates = Object.entries(item.payload.dates).map(([key, field]) => `${dateLabels[key as keyof typeof dateLabels]}：${field.value.value ?? "未知"}（${field.value.precision}）`).join("；");
+      const nature = item.payload.documentStatus.value === "formal" ? "正式文件" : item.payload.documentStatus.value === "consultation" ? "征求意见稿" : "未知";
+      const notice = `读取时状态（对照${beijingDate(now)}，${time.timeZone}）：${time.label}；${dates}；文件性质：${nature}；法律效力未知，办理截止不等于政策废止；${item.qualification.label}。核查时间和采集时间均不是原文发布日期。`;
+      return { reference: { kind: "business_guide" as const, checkedAt: time.checkedAt, deadlineDate: time.deadline.lastDate, expiryDate: time.expiry.lastDate,
+        lifecycle: { timeZone: time.timeZone, dates: item.payload.dates, documentStatus: item.payload.documentStatus,
+          deadlinePassed: time.deadline.state === "unknown" ? null : time.deadline.state === "elapsed",
+          policyExpired: time.expiry.state === "unknown" ? null : time.expiry.state === "elapsed",
+          applicationStatus: "unknown" as const, legalValidity: "unknown" as const, verifiedAt: item.verifiedAt,
+          qualification: item.qualification, evidence: Object.fromEntries(Object.entries(item.evidence).map(([id, anchor]) => [id, { ...anchor, quote: anchor.quote.slice(0, 240) }])), notice } }, kind: "business_guide" as const, id: item.id, documentId: item.documentId, title: item.payload.title.value,
       summary: item.payload.summary.map(s => s.value).join("\n"), category: "reference", tags, url: item.source.url,
       publicationTime: item.payload.dates.published.value.precision === "day" ? item.payload.dates.published.value.value : null,
       binding: hash({ tags, revision: item.revision, payload: item.payload, source: item.source, snapshot: item.snapshot, evidence: item.evidence, verifiedAt: item.verifiedAt }) };

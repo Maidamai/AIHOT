@@ -1,4 +1,5 @@
-import { hasPublicationReadGuard } from "../modules.ts";
+import { hasPublicationReadGuard, publicationReferences } from "../modules.ts";
+import type { ReferenceMetadata } from "@aihot/contracts/site";
 // v1 items and the selected sync (snapshot + changes), read from the same public read layer.
 import type { PublicApiCategoryKey } from "@aihot/contracts/taxonomy";
 import { sql, type Db } from "../db.ts";
@@ -23,7 +24,7 @@ export interface V1ItemsQuery {
 export interface V1ItemsResult {
   schemaVersion: 1;
   query: { mode: string; category: string | null; window: string; q: string | null; by: string; ordering: string };
-  items: V1ItemPayload[];
+  items: (V1ItemPayload & { reference?: ReferenceMetadata; approvedSummary?: string | null })[];
   page: { count: number; hasMore: boolean; nextCursor: string | null };
 }
 
@@ -75,13 +76,18 @@ async function queryItems(query: V1ItemsQuery, now: Date): Promise<V1ItemsResult
   const page = rows.slice(0, query.limit);
   const hasMore = rows.length > query.limit;
   const last = page[page.length - 1];
+  const references = await publicationReferences(page.map(row => row.id), now);
   return {
     schemaVersion: 1,
     query: {
       mode: query.mode, category: query.category, window: query.window, q: query.q, by: query.by,
       ordering: query.by === "published" ? "publishedAtDesc" : "timelineDesc",
     },
-    items: page.map(rowToV1),
+    items: page.map(row => {
+      const item = rowToV1(row), reference = references[row.id];
+      return reference ? { ...item, reference, ...(reference.lifecycle ? { approvedSummary: item.summary,
+        summary: [item.summary, `【派生状态提示】${reference.lifecycle.notice}`].filter(Boolean).join("\n\n") } : {}) } : item;
+    }),
     page: {
       count: page.length,
       hasMore,

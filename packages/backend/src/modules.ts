@@ -284,6 +284,12 @@ export function serverModules(): readonly ServerModule[] {
   return installed;
 }
 
+/** Public date/status projections share the same current module qualification on every exit. */
+export async function publicationReferences(articleIds: string[], now: Date): Promise<Record<string, ReferenceMetadata>> {
+  if (!articleIds.length) return {};
+  return Object.assign({}, ...await Promise.all(serverModules().map(m => m.publication?.referenceMetadata?.(articleIds, now) ?? {})));
+}
+
 /** The first installed module's reminder for the person behind this request, at this exit. */
 export function requestNotice<K extends keyof RequestNotices>(exit: K, ...args: Parameters<RequestNotices[K]>): ReturnType<RequestNotices[K]> | null {
   for (const m of installed) {

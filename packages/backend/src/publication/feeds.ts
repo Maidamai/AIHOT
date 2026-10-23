@@ -11,6 +11,8 @@ import { proxyBodyImages } from "../media/imgproxy.ts";
 import { feedIssues, type FeedIssue, type ReportKind } from "./reports.ts";
 import { textToHtml } from "../content/sanitize.ts";
 import type { FeedNotice } from "../modules.ts";
+import { publicationReferences } from "../modules.ts";
+import type { ReferenceMetadata } from "@aihot/contracts/site";
 import { publicCategoryCondition, exportTranslation, xView, type ItemRow } from "./items.ts";
 import { publicSourceName } from "./rules.ts";
 import { listedCondition, seatedCondition } from "./scope.ts";
@@ -125,10 +127,11 @@ function fullContent(r: FeedRow, aihot: string): string | null {
   return `${proxyBodyImages(html, true, FEED_IMAGE_SECONDS)}<p>—— 本文由 ${escapeXml(SITE.name)} 聚合整理，完整版与${escapeXml(subjectAfter("更多", "动态"))}见 <a href="${aihot}">${aihot}</a></p>`;
 }
 
-function itemXml(r: FeedRow, includeContent: boolean): string {
+function itemXml(r: FeedRow, includeContent: boolean, reference?: ReferenceMetadata): string {
   const aihot = itemUrl(r.id);
   const summary = r.summary ?? "";
-  const description = `<p>${escapeXml(summary)}</p>\n<p>🔗 <a href="${escapeXml(r.url)}">阅读原文</a></p>\n<p>via ${escapeXml(SITE.name)} · <a href="${aihot}">${aihot}</a></p>`;
+  const status = reference?.lifecycle ? `\n<p>【派生状态提示】${escapeXml(reference.lifecycle.notice)}</p>` : "";
+  const description = `<p>${escapeXml(summary)}</p>${status}\n<p>🔗 <a href="${escapeXml(r.url)}">阅读原文</a></p>\n<p>via ${escapeXml(SITE.name)} · <a href="${aihot}">${aihot}</a></p>`;
   const publicCategory = toPublicApiCategory(r.category);
   const category = publicCategory ? `\n      <category>${escapeXml(feedCategoryLabel(publicCategory))}</category>` : "";
   let content = "";
@@ -189,7 +192,8 @@ export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKe
       ttl: m.pollHintMinutes,
     };
   }
-  const items = rows.map((r) => itemXml(r, includeContent));
+  const references = await publicationReferences(rows.map(r => r.id), now);
+  const items = rows.map((r) => itemXml(r, includeContent, references[r.id]));
   const first = notice?.(meta.selfPath);
   if (first) items.unshift(noticeXml(first));
   return channel(meta, items);

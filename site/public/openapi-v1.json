@@ -3434,7 +3434,62 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Public summary. Reviewed references may append an explicitly marked derived read-time status notice; approvedSummary then carries the unchanged approved text."
+          },
+          "approvedSummary": {
+            "type": ["string", "null"],
+            "description": "Unchanged approved summary, present on /api/v1/items when a reference has a derived lifecycle notice."
+          },
+          "reference": {
+            "type": "object",
+            "description": "Optional currently qualified reference metadata on /api/v1/items. Dates retain their original precision and evidence. It does not grant application eligibility or establish legal validity.",
+            "properties": {
+              "kind": { "const": "business_guide" },
+              "checkedAt": { "type": "string", "format": "date-time", "description": "Read-time comparison clock; never the source publication or verification time." },
+              "deadlineDate": { "type": ["string", "null"], "description": "Conservative final day from the reviewed source deadline, null if unknown." },
+              "expiryDate": { "type": ["string", "null"], "description": "Conservative final day from the reviewed source expiry, null if unknown." },
+              "lifecycle": {
+                "type": "object",
+                "properties": {
+                  "timeZone": { "const": "Asia/Shanghai" },
+                  "dates": {
+                    "type": "object",
+                    "required": ["published", "effectiveFrom", "deadline", "expiresAt"],
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "precision": { "enum": ["unknown", "year", "month", "day"] },
+                            "value": { "type": ["string", "null"] }
+                          }
+                        },
+                        "evidence": { "type": "array", "items": { "type": "string" } }
+                      }
+                    }
+                  },
+                  "documentStatus": {
+                    "type": "object",
+                    "description": "Document nature, independent of present legal validity.",
+                    "properties": {
+                      "state": { "enum": ["unknown", "documented"] },
+                      "value": { "enum": [null, "formal", "consultation"] },
+                      "evidence": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "deadlinePassed": { "type": ["boolean", "null"], "description": "True after the source deadline's last possible Beijing date; null when unknown. False does not imply applications are open." },
+                  "policyExpired": { "type": ["boolean", "null"], "description": "Source expiry-date comparison only; not a legal repeal determination. Null when unknown." },
+                  "applicationStatus": { "const": "unknown" },
+                  "legalValidity": { "const": "unknown" },
+                  "verifiedAt": { "type": "string", "format": "date-time" },
+                  "qualification": { "type": "object", "properties": { "status": { "const": "qualified" }, "label": { "type": "string" } } },
+                  "evidence": { "type": "object", "description": "Source evidence anchors keyed by evidence ID; quotes are limited to 240 characters." },
+                  "notice": { "type": "string", "description": "Readable derived status including source dates, document nature and qualification; distinct from approved text." }
+                }
+              }
+            }
           },
           "source": {
             "type": "object",

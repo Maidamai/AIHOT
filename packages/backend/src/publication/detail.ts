@@ -1,4 +1,4 @@
-import { serverModules } from "../modules.ts";
+import { serverModules, publicationReferences } from "../modules.ts";
 import { currentPublicationCondition } from "./scope.ts";
 // Item detail and Markdown export, both behind the same visibility and licence rules.
 import type { OutlineEntry, SiteItemDetail, StoryRef } from "@aihot/contracts/site";
@@ -87,7 +87,8 @@ export async function loadItemDetail(id: string, language: "zh" | "original" = "
     const detail = await module.publication?.itemDetails?.(id);
     if (detail != null) moduleDetails[module.name] = detail;
   }
-  const summary = { ...toItemSummary(row), ...(Object.keys(moduleDetails).length ? { moduleDetails } : {}) };
+  const reference = (await publicationReferences([id], now))[id];
+  const summary = { ...toItemSummary(row), ...(reference ? { reference } : {}), ...(Object.keys(moduleDetails).length ? { moduleDetails } : {}) };
   if (row.visibility === "summary-only") {
     const item: SiteItemDetail = {
       ...summary,

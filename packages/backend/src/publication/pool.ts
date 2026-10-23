@@ -1,4 +1,4 @@
-import { serverModules, hasPublicationReadGuard } from "../modules.ts";
+import { publicationReferences, hasPublicationReadGuard } from "../modules.ts";
 // Public pool (/all) with numeric pages, and search in its two orderings.
 import type { PoolResponse, TimelineFilters } from "@aihot/contracts/site";
 import { beijingDate, beijingMidnight } from "@aihot/contracts/time";
@@ -233,7 +233,7 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
       (SELECT max(p.updated_at) FROM publications p WHERE ${(await listedCondition(now)).condition}) AS updated_at`);
 
   const holders = await seatHolders(rows, now);
-  const reference = Object.assign({}, ...await Promise.all(serverModules().map(m => m.publication?.referenceMetadata?.(rows.map(r => r.id), now) ?? {})));
+  const reference = await publicationReferences(rows.map(r => r.id), now);
   return {
     filters: { channel: query.channel, category: query.category, tag: query.tag, q, tab },
     items: rows.map(r => ({ ...(holders.has(r.id) ? { ...toFeedItemSummary(r), reason: null, sameEvent: holders.get(r.id)! } : toFeedItemSummary(r)), ...(reference[r.id] ? { reference: reference[r.id] } : {}) })),

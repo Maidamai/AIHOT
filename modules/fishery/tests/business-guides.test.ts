@@ -14,6 +14,8 @@ import { loadItemDetail } from "@aihot/backend/publication/detail";
 import { loadItemShare } from "@aihot/backend/publication/og";
 import { itemAvailability } from "@aihot/backend/publication/availability";
 import { itemFeed } from "@aihot/backend/publication/feeds";
+import { registerFeeds } from "../../../apps/api/src/routes/feeds.ts";
+import { registerV1 } from "../../../apps/api/src/routes/v1.ts";
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { mkdir, writeFile, rm } from "node:fs/promises";
@@ -409,13 +411,18 @@ test("reviewed business topics reuse the original tag-filtered pool and disappea
     assert.equal(page.topic.total, 0, "Reference collection does not invent a selected report");
     const pool = await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"});
     assert.deepEqual(pool.items.map(item => item.id), [id]);
-    assert.deepEqual(pool.items[0]!.reference, { kind: "business_guide", checkedAt: pool.items[0]!.reference!.checkedAt, deadlineDate: "2026-11-01", expiryDate: null });
+    assert.equal(pool.items[0]!.reference!.kind, "business_guide");
+    assert.equal(pool.items[0]!.reference!.deadlineDate, "2026-11-01");
+    assert.equal(pool.items[0]!.reference!.expiryDate, null);
     const beforeMidnight = await fisheryReferenceMetadata([id], new Date("2026-11-01T15:59:59Z"));
     const afterMidnight = await fisheryReferenceMetadata([id], new Date("2026-11-01T16:00:00Z"));
     assert.equal(beforeMidnight[id]!.deadlineDate, "2026-11-01");
     assert.equal(afterMidnight[id]!.deadlineDate, "2026-11-01");
     assert.equal(afterMidnight[id]!.checkedAt, "2026-11-01T16:00:00.000Z");
-    assert.deepEqual(Object.keys(afterMidnight[id]!).sort(), ["checkedAt", "deadlineDate", "expiryDate", "kind"]);
+    assert.equal(beforeMidnight[id]!.lifecycle!.deadlinePassed, false);
+    assert.equal(afterMidnight[id]!.lifecycle!.deadlinePassed, true);
+    assert.equal(afterMidnight[id]!.lifecycle!.policyExpired, null);
+    assert.equal(afterMidnight[id]!.lifecycle!.applicationStatus, "unknown");
     const [row] = await sql`SELECT tags,selected,score FROM publications WHERE article_id=${id}`;
     assert.deepEqual(row!.tags, ["船员/外籍用工", "资料"]); assert.equal(row!.selected, false); assert.equal(row!.score, null);
     await withdraw(f.id, { expectedRevision: 1, reason: "Synthetic source withdrawal" }, "synthetic-reviewer");
@@ -424,6 +431,74 @@ test("reviewed business topics reuse the original tag-filtered pool and disappea
     assert.deepEqual(await fisheryReferenceMetadata([id], new Date()), {});
     assert.equal((await loadPool({channel:"all",category:"reference",tag:"船员/外籍用工",q:"合成通知"})).total, 0);
   } finally { installModules([]); }
+});
+
+test("original RSS and v1 routes project guide dates at Beijing midnight without rewriting approved history", async t => {
+  const f = await fixture(), context = await businessGuideContext(f.id), input = payload(context);
+  input.dates.published = { value: { precision: "day", value: "2026-10-21" }, evidence: [context.catalog.spans[0]!.id] };
+  input.dates.expiresAt = structuredClone(input.dates.deadline);
+  input.documentStatus = { state: "unknown", value: null, evidence: [] };
+  const created = await createBusinessGuide({ documentId: f.id, snapshotHash: context.snapshotHash, payload: input, reason: "Synthetic export lifecycle" }, "editor");
+  const approved = await finalApproval(created, "reviewer");
+  installModules([{ name: "fishery", publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive } }]);
+  const routes = Fastify(); registerFeeds(routes); registerV1(routes);
+  try {
+    const id = (await syncFisheryPublications("synthetic-lifecycle")).rows.find(row => row.itemId === created.id)!.articleId;
+    // Put this historical article inside the normal rolling window without substituting its original
+    // publication date. RSS's published ordering intentionally leaves old dated archives out.
+    await sql`UPDATE publications SET discovered_at='2026-10-21T02:00:00Z',timeline_at='2026-10-21T02:00:00Z' WHERE article_id=${id}`;
+    const stored = await sql`SELECT summary,published_at FROM publications WHERE article_id=${id}`;
+    const history = await sql`SELECT payload,payload_hash,human_decision FROM fishery_business_guides WHERE id=${created.id}`;
+    const receipts = (await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n;
+    const requestAt = async (date: string, feedEtag?: string) => {
+      t.mock.timers.enable({ apis: ["Date"], now: new Date(date) });
+      try {
+        const api = await routes.inject("/api/v1/items?mode=all&window=7d&by=timeline");
+        const rss = await routes.inject({ url: "/feed/all.xml", ...(feedEtag ? { headers: { "if-none-match": feedEtag } } : {}) });
+        assert.equal(api.statusCode, 200);
+        return { api: api.json(), rss: rss.body, feedStatus: rss.statusCode, feedEtag: String(rss.headers.etag) };
+      } finally { t.mock.timers.reset(); }
+    };
+    // A dated historical guide stays out of RSS's seven-day source-publication window.
+    const archived = await requestAt("2026-11-01T15:59:59Z");
+    assert.ok(!archived.rss.includes(id));
+    // Reuse an independently approved undated guide to exercise the actual RSS/API route, rather
+    // than changing a stored approved publication date or bypassing its binding predicate.
+    const undated = await draft(f.id); await finalApproval(undated, "reviewer");
+    const undatedId = (await syncFisheryPublications("synthetic-undated-lifecycle")).rows.find(row => row.itemId === undated.id)!.articleId;
+    await sql`UPDATE publications SET discovered_at='2026-11-01T12:00:00Z',timeline_at='2026-11-01T12:00:00Z' WHERE article_id=${undatedId}`;
+    const before = await requestAt("2026-11-01T15:59:59Z");
+    assert.equal(before.feedStatus, 200);
+    assert.equal((await requestAt("2026-11-01T15:59:59.500Z", before.feedEtag)).feedStatus, 304);
+    const after = await requestAt("2026-11-01T16:00:00Z", before.feedEtag);
+    assert.equal(after.feedStatus, 200, "A pre-midnight ETag cannot hide the next Beijing day's deadline warning");
+    const first = before.api.items.find((item: { id: string }) => item.id === undatedId), last = after.api.items.find((item: { id: string }) => item.id === undatedId);
+    assert.ok(first); assert.ok(last);
+    assert.equal(first.reference.lifecycle.deadlinePassed, false); assert.equal(last.reference.lifecycle.deadlinePassed, true);
+    assert.equal(last.reference.lifecycle.policyExpired, null); assert.equal(last.reference.lifecycle.legalValidity, "unknown");
+    assert.deepEqual(last.reference.lifecycle.dates, undated.payload.dates);
+    assert.equal(last.reference.lifecycle.verifiedAt, (await businessGuideAdminDetail(undated.id)).verifiedAt);
+    assert.equal(last.reference.lifecycle.qualification.status, "qualified");
+    assert.ok(Object.keys(last.reference.lifecycle.evidence).length > 0);
+    assert.equal(last.publishedAt, null); assert.equal(last.approvedSummary, undated.payload.summary.map(s => s.value).join("\n"));
+    assert.match(last.summary, /派生状态提示.*已截止（按原文日期）/s);
+    assert.match(last.summary, /办理截止不等于政策废止/); assert.match(last.summary, /可申请状态未知/);
+    assert.doesNotMatch(before.rss, /已截止（按原文日期）/);
+    assert.match(after.rss, /派生状态提示.*已截止（按原文日期）/s); assert.match(after.rss, /原文发布日期：未知/);
+    assert.match(after.rss, /AI对照核查及最终审核通过/);
+    const reference = (await fisheryReferenceMetadata([id], new Date("2026-11-01T16:00:00Z")))[id]!;
+    assert.equal(reference.lifecycle!.policyExpired, true); assert.equal(reference.lifecycle!.documentStatus.value, null);
+    assert.equal(reference.lifecycle!.dates.published.value.value, "2026-10-21");
+    assert.equal(reference.lifecycle!.dates.effectiveFrom.value.value, null);
+    assert.deepEqual(await sql`SELECT summary,published_at FROM publications WHERE article_id=${id}`, stored);
+    assert.deepEqual(await sql`SELECT payload,payload_hash,human_decision FROM fishery_business_guides WHERE id=${created.id}`, history);
+    assert.equal(approved.payloadHash, history[0]!.payload_hash);
+    assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0]!.n, receipts + 1, "Only the second explicit fake AI review creates a receipt");
+    await sql`UPDATE fishery_sources SET revision=revision+1 WHERE source_id=${f.sourceId}`;
+    const stale = await requestAt("2026-11-01T16:00:00Z");
+    assert.ok(!stale.rss.includes(undatedId)); assert.ok(!stale.api.items.some((item: { id: string }) => item.id === undatedId));
+    assert.equal((await loadItemDetail(undatedId)).kind, "not_found");
+  } finally { t.mock.timers.reset(); await routes.close(); installModules([]); }
 });
 
 
