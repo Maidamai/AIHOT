@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { preparePdfBlankReview, recordPdfBlankReview, loadVerifiedPdfBlankReview } from "../backend/pdf-blank-review.ts";
+import { verifyManualSource } from "../backend/manual-sources.ts";
+import { pdfBlankProofSchema } from "../backend/pdf-blank-proof.ts";
 import path from "node:path";
 import { config } from "@aihot/backend/config";
 import { stopBoss } from "@aihot/backend/jobs/queue";
@@ -334,4 +338,75 @@ test("historical parsed PDF empty page blocks guide creation, AI preflight and a
  await assert.rejects(createBusinessGuide({documentId:v.f.id,snapshotHash:v.c.snapshotHash,payload:v.p,reason:'Reject legacy empty-page guide'},'synthetic-editor'),/page intervals/);
  await assert.rejects(preflightGuideAIReview(v.g.id),/page intervals/);
  await assert.rejects(businessGuideReaderItem(v.g.id),/No current approved business information/);
+});
+
+const blankPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+function blankRenderer(raw:Buffer,variant=0){
+ let renders=0;
+ const options={platform:'linux' as const,execute:async(program:string,args:string[])=>{
+  if(args[0]==='-v')return {stdout:'',stderr:`${path.basename(program)} version 24.10.0`};
+  if(program==='/usr/bin/pdfinfo'){assert.deepEqual(await readFile(args.at(-1)!),raw);return {stdout:args.includes('-box')?`Page ${args[1]} MediaBox: 0.00 0.00 595.28 841.89\n`:'Pages: 34\nEncrypted: no\n',stderr:''};}
+  assert.equal(program,'/usr/bin/pdftoppm');assert.deepEqual(args.slice(0,8),['-f',args[1],'-l',args[1],'-r','144','-png','-singlefile']);assert.deepEqual(await readFile(args.at(-2)!),raw);
+  const png=Buffer.from(blankPng);if(variant)png[png.length-1]=variant;await writeFile(args.at(-1)!+'.png',png);renders++;return {stdout:'',stderr:''};
+ }};return {options,renders:()=>renders};
+}
+const blankRequest=(receipt:Awaited<ReturnType<typeof preparePdfBlankReview>>)=>({reviewId:receipt.reviewId,expectedRawSha256:receipt.rawSha256,expectedPageHashes:receipt.pageImages,confirmation:'confirmed_blank' as const,reason:'Authorized agent viewed both complete native-rendered page images; no automatic blank classification',executorKind:'authorized_agent' as const});
+test('blank-review proof admits only bounded ordered partial physical-page coverage',()=>{
+ const good={version:'pdf-blank-review/1',reviewId:'55555555-5555-4555-8555-555555555555',rawSha256:'a'.repeat(64),physicalPages:34,pageImages:[{page:2,sha256:'b'.repeat(64)},{page:4,sha256:'c'.repeat(64)}],proofHash:'d'.repeat(64)};
+ assert.ok(pdfBlankProofSchema.safeParse(good).success);
+ for(const pageImages of [[],[good.pageImages[1],good.pageImages[0]],[good.pageImages[0],good.pageImages[0]],[{page:35,sha256:'b'.repeat(64)}],Array.from({length:34},(_,i)=>({page:i+1,sha256:'b'.repeat(64)}))])assert.equal(pdfBlankProofSchema.safeParse({...good,pageImages}).success,false);
+ assert.equal(pdfBlankProofSchema.safeParse({...good,blankPages:[2,4]}).success,false,'Manifest-style self declarations are not proof');
+});
+test('blank review rerenders the exact original, records an explicit agent audit and loads immutable PNG proof',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'blank-review-')),raw=Buffer.from('%PDF-synthetic-native-render-review'),native=blankRenderer(raw);
+ try{
+  const prepared=await preparePdfBlankReview(dir,raw,[2,4],native.options),subject=`pdf-blank-review:${prepared.reviewId}`;
+  assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${subject}`).length,0,'Preparing images cannot authorize blank pages');
+  const reviewDir=path.join(dir,'fishery-pdf-blank-reviews',prepared.reviewId);assert.equal((await readdir(reviewDir)).filter(f=>f.endsWith('.png')).length,1,'Identical native images share content-addressed bytes');
+  const proof=await recordPdfBlankReview(dir,raw,blankRequest(prepared),'authorized-review-agent',native.options);assert.equal(native.renders(),4,'Registration independently rerenders both reviewed physical pages');
+  assert.deepEqual(await loadVerifiedPdfBlankReview(dir,raw,prepared.reviewId),proof);assert.equal(proof.physicalPages,34);assert.deepEqual(proof.pageImages.map(p=>p.page),[2,4]);
+  const [entry]=await sql`SELECT actor,action,after FROM audit_log WHERE subject=${subject}`;assert.equal(entry!.action,'fishery.pdf_blank_review');assert.equal(entry!.after.actor,'authorized-review-agent');assert.equal(entry!.after.confirmation,'confirmed_blank');assert.equal(entry!.after.executorKind,'authorized_agent');assert.match(entry!.after.renderer.options,/mediaBox; 144 dpi/);assert.equal(entry!.after.rawSha256,sha256(raw));
+  await assert.rejects(recordPdfBlankReview(dir,raw,blankRequest(prepared),'authorized-review-agent',native.options),/already registered/);
+  await assert.rejects(loadVerifiedPdfBlankReview(dir,Buffer.from('%PDF-replaced-original'),prepared.reviewId),/original PDF hash changed/);
+  const altered={...entry!.after,reason:'changed audit reason'};await sql`UPDATE audit_log SET after=${sql.json(altered)} WHERE subject=${subject}`;
+  await assert.rejects(loadVerifiedPdfBlankReview(dir,raw,prepared.reviewId),/audit.*changed/);await sql`UPDATE audit_log SET after=${sql.json(entry!.after)} WHERE subject=${subject}`;
+  const png=path.join(reviewDir,proof.pageImages[0]!.sha256+'.png');await writeFile(png,Buffer.from(blankPng).fill(0,blankPng.length-1));await assert.rejects(loadVerifiedPdfBlankReview(dir,raw,prepared.reviewId),/PNG hash changed/);
+  await rm(png);const other=path.join(dir,'copied.png');await writeFile(other,blankPng);await symlink(other,png);await assert.rejects(loadVerifiedPdfBlankReview(dir,raw,prepared.reviewId),/ELOOP|symbolic link/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('blank registration rejects caller-authored provenance, missing visual confirmation and full-document blanks with zero audit',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'blank-review-refusal-')),raw=Buffer.from('%PDF-synthetic-provenance-refusal'),native=blankRenderer(raw);
+ try{
+  await assert.rejects(preparePdfBlankReview(dir,raw,Array.from({length:34},(_,i)=>i+1),native.options),/partial physical coverage/);
+  await assert.rejects(preparePdfBlankReview(dir,raw,[4,2],native.options),/strictly increasing/);
+  const prepared=await preparePdfBlankReview(dir,raw,[2,4],native.options),request=blankRequest(prepared),subject=`pdf-blank-review:${prepared.reviewId}`;
+  await assert.rejects(recordPdfBlankReview(dir,raw,{...request,confirmation:'unreviewed'},'agent',native.options));
+  await assert.rejects(recordPdfBlankReview(dir,Buffer.from('%PDF-other'),request,'agent',native.options),/original PDF hash mismatch/);
+  await assert.rejects(loadVerifiedPdfBlankReview(dir,raw,prepared.reviewId),/audited/);
+  await assert.rejects(recordPdfBlankReview(dir,raw,request,'agent',blankRenderer(raw,1).options),/rerender differs/);
+  const receiptFile=path.join(dir,'fishery-pdf-blank-reviews',prepared.reviewId,'render.json'),forged={...prepared,renderer:{...prepared.renderer,version:'caller-self-declared'}};await writeFile(receiptFile,JSON.stringify(forged));
+  await assert.rejects(recordPdfBlankReview(dir,raw,request,'agent',native.options),/rerender differs/);assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${subject}`).length,0);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('audited manual PDF blank pages bind v4 business context and invalidate existing guides when original proof changes',async()=>{
+ const f=await fixture({manual:true}),raw=Buffer.from('%PDF-synthetic-reviewed-manual-source'),native=blankRenderer(raw),rendered=await preparePdfBlankReview(config.dataDir,raw,[2,4],native.options),proof=await recordPdfBlankReview(config.dataDir,raw,blankRequest(rendered),'authorized-review-agent',native.options);
+ const text=Array.from({length:34},(_,i)=>`--- Page ${i+1} ---\n${[2,4].includes(i+1)?'':i===0?body:`合成其余物理页完整原文${i+1}。`}\n`).join('\n');
+ const sourceDir=path.dirname(f.filename),url='https://hyyyj.fujian.gov.cn/xxgk/tzgg/202507/P020250728594612073287.pdf',manifest={version:'manual-official-source/1',id:f.sourceId,url,name:'Synthetic manual notice',attribution:'来源原文',title:'合成完整手工PDF',publishedAt:null,publicationLiteral:null,rawSha256:sha256(raw),bodySha256:sha256(text),parser:'manual-official-pdf/v1',blankReviewId:proof.reviewId};
+ const sourceReceipt={requestedUrl:url,finalUrl:url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'};
+ await writeFile(f.filename,text);await writeFile(path.join(sourceDir,'raw.bin'),raw);await writeFile(path.join(sourceDir,'manifest.json'),JSON.stringify(manifest));await writeFile(path.join(sourceDir,'receipt.json'),JSON.stringify(sourceReceipt));
+ const prepared=await verifyManualSource(config.dataDir,f.sourceId,{parsePdf:async bytes=>({status:'parsed',rawSha256:sha256(bytes),parser:'synthetic/v1',pages:34,text})});
+ await observe(f.id,{...f.observation,expectedRevision:1,rawSha256:sha256(raw),sourceCapture:prepared.sourceCapture},'synthetic-editor');
+ await review(f.id,{revision:2,sourceRevision:1,decision:'approved',applicabilityReviewed:false,note:'Synthetic complete audited manual source'},'synthetic-reviewer');
+ const c=await businessGuideContext(f.id);assert.equal(c.catalog.version,'fishery-spans-v4-reviewed-blanks');assert.equal(c.catalog.pages.length,34);assert.ok(c.catalog.spans.every(s=>s.page!==2&&s.page!==4));
+ const p=payload(c),pages=c.catalog.pages.map(page=>({page:page.page,text:text.slice(page.start,page.end).trim()})),sourceInput={body:text,bodySha256:sha256(text),observationRevision:2,pages,pdfBlankReview:proof},comparison=buildGuideAIReviewRequest(sourceInput,p);
+ assert.equal(comparison.catalog.hash,c.catalog.hash);assert.equal(JSON.parse(String(comparison.request.user)).source.reviewedBlankPages.proofHash,proof.proofHash);
+ const g=await createBusinessGuide({documentId:f.id,snapshotHash:c.snapshotHash,payload:p,reason:'Synthetic proof-bound guide'},'synthetic-editor'),task=await createGuideAIReview(g.id,{identity:'reviewed-blank-guide',expectedRevision:g.revision,payloadHash:g.payloadHash,snapshotHash:g.snapshotHash},'synthetic-editor'),rid=await receipt(task);
+ await processGuideAIReview(task.id,fake(answer(p),rid));const checked=await businessGuideAdminDetail(g.id);assert.equal(checked.aiReview.pass,true);
+ await decideBusinessGuide(g.id,{expectedRevision:checked.revision,payloadHash:checked.payloadHash,snapshotHash:checked.snapshotHash,decision:'approved',aiReviewHash:checked.aiReview.reviewHash!,reason:'Synthetic final proof-bound guide'},'synthetic-reviewer');assert.ok(await businessGuideReaderItem(g.id));
+ const [before]=await sql`SELECT count(*)::int AS n FROM receipts`,png=path.join(config.dataDir,'fishery-pdf-blank-reviews',proof.reviewId,proof.pageImages[0]!.sha256+'.png');
+ await writeFile(png,Buffer.from(blankPng).fill(0,blankPng.length-1));await assert.rejects(businessGuideContext(f.id),/PNG hash changed/);await assert.rejects(preflightGuideAIReview(g.id),/PNG hash changed/);await assert.rejects(businessGuideReaderItem(g.id),/No current approved/);await writeFile(png,blankPng);
+ await writeFile(path.join(sourceDir,'raw.bin'),Buffer.from('%PDF-altered-original'));await assert.rejects(businessGuideContext(f.id),/original PDF hash changed/);await writeFile(path.join(sourceDir,'raw.bin'),raw);
+ await sql`UPDATE audit_log SET after=jsonb_set(after,'{renderer,version}','"tampered"'::jsonb) WHERE subject=${`pdf-blank-review:${proof.reviewId}`}`;await assert.rejects(businessGuideContext(f.id),/audit.*changed/);
+ const [after]=await sql`SELECT count(*)::int AS n FROM receipts`;assert.equal(after!.n,before!.n,'Tampered proof cannot trigger any model request');
 });
