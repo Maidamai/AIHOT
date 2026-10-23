@@ -9,6 +9,7 @@ import {prepareNotice} from '../../../modules/fishery/backend/fujian-notices.ts'
 import {sha256} from '../../../modules/fishery/backend/source-adapters.ts';
 
 const initial: ArchiveStatus = {
+  registered:true, adapted:true, normalCycleVerified:false, latestPending:2, historyDeferred:15, revisionChecks:3,
   enabled: true, coreSourceEnabled: false, mode: "hourly", runId: "synthetic-authorization",
   heartbeatAt: "2026-10-21T10:00:00Z", lastSuccessAt: "2026-10-21T09:58:00Z", lastFailureAt: null, lastError: null,
   currentRound: "synthetic-current-round", lastRound: "synthetic-previous-round", pendingCandidates: 17,
@@ -49,6 +50,7 @@ const api = fakeApi(async(url, response, request) => {
   if (url.pathname === "/api/admin/nav-counts") return {};
   if (url.pathname === "/api/admin/fishery/batches") return { rows: batches, archiveStatus: status, archiveSources:sourceStatuses, progress: [], rounds: [] };
   if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/detail')return selectionMaterial;
+  if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/processing-eligibility')return {eligible:false,reason:"合成测试素材尚未审核",nomination:null};
   if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/flows'){
    if(request.method==='GET')return {rows:[]};
    assert.equal(request.method,'POST');assert.equal(request.headers['x-csrf-token'],'synthetic-csrf');
@@ -72,10 +74,15 @@ test("existing collection page distinguishes controlled archive from disabled co
     await visit(page, web.origin + "/admin/fishery/collect");
     const card = page.getByRole("region", { name: "Moa 受控归档状态" });
     await expect(card.getByText("已启用", { exact: true })).toBeVisible();
-    await expect(card.getByText("已停用", { exact: true })).toBeVisible();
+    await expect(card.getByText("未启用（由受控归档管理）", { exact: true })).toBeVisible();
     await expect(card.getByText("synthetic-current-round", { exact: true })).toBeVisible();
     await expect(card.getByText("synthetic-previous-round", { exact: true })).toBeVisible();
-    await expect(card.getByText("剩余候选", { exact: true }).locator("..")).toContainText("17");
+    await expect(card.getByText("近期待采", { exact: true }).locator("..")).toContainText("2");
+    await expect(card.getByText("历史延后", { exact: true }).locator("..")).toContainText("15");
+    await expect(card.getByText("正文修订复核", { exact: true }).locator("..")).toContainText("3");
+    await expect(card.getByText("已收录", { exact: true })).toBeVisible();
+    await expect(card.getByText("已适配", { exact: true })).toBeVisible();
+    await expect(card.getByText("正常周期未验证", { exact: true })).toBeVisible();
     await expect(card.locator('time[datetime="2026-10-21T10:00:00Z"]')).toBeVisible();
     await expect(card.locator('time[datetime="2026-10-21T09:58:00Z"]')).toBeVisible();
     await expect(card.locator('time[datetime="2026-10-21T11:00:00Z"]')).toBeVisible();
@@ -113,11 +120,11 @@ test("missing archive state and null health stay unknown on the existing phone a
     const card = page.getByRole("region", { name: "Moa 受控归档状态" });
     await expect(card.getByText("受控归档状态尚未提供", { exact: false })).toBeVisible();
     await expect(card.getByText("已启用", { exact: true })).toHaveCount(0);
-    status = { ...initial, enabled: false, coreSourceEnabled: null, mode: "validation", runId: null, heartbeatAt: null, lastSuccessAt: null, lastFailureAt: null, lastError: null, currentRound: null, lastRound: null, pendingCandidates: null, cursorUrl: null, coverage: null, nextRunAt: null, validationClaimed: 0, validationLimit: 2 };
+    status = { ...initial, enabled: false, coreSourceEnabled: null, mode: "validation", runId: null, heartbeatAt: null, lastSuccessAt: null, lastFailureAt: null, lastError: null, currentRound: null, lastRound: null, pendingCandidates: null, latestPending:null, historyDeferred:null, revisionChecks:null, cursorUrl: null, coverage: null, nextRunAt: null, validationClaimed: 0, validationLimit: 2 };
     await page.getByRole("button", { name: "刷新记录", exact: true }).click();
     await expect(card.getByText("未启用", { exact: true })).toBeVisible();
     await expect(card.getByText("最后心跳", { exact: true }).locator("..")).toContainText("—");
-    await expect(card.getByText("剩余候选", { exact: true }).locator("..")).toContainText("未知");
+    await expect(card.getByText("近期待采", { exact: true }).locator("..")).toContainText("未知");
     await expect(card.getByText("覆盖范围未知", { exact: true })).toBeVisible();
     await expect(card.getByText("验证轮次已认领 0/2", { exact: true })).toBeVisible();
     await expect(page.getByText("synthetic-existing-batch", { exact: true })).toBeVisible();

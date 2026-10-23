@@ -76,6 +76,8 @@ export interface AdminSourceUpdate {
 }
 
 export interface AdminSourceRuntime {
+  registered?: boolean; adapted?: boolean; normalCycleVerified?: boolean;
+  latestPending?: number | null; historyDeferred?: number | null; revisionChecks?: number | null;
   enabled: boolean; health: string; intervalMinutes: number | null;
   nextRunAt: string | null; lastSuccessAt: string | null; heartbeatAt: string | null; lastError: string | null;
   label: string; detailPath: string;

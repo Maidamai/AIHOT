@@ -10,6 +10,7 @@ import type {listColumnProgress,listColumnRounds} from "../backend/column-progre
 import { noStore, useFreshMaterial } from "./shared.tsx";
 import {noticeDeadlineState} from '../contracts.ts';
 import {beijingDate} from '@aihot/contracts/time';
+import { SourceStages } from "@aihot/web/features/admin/source-runtime";
 
 export const headers = noStore;
 export async function loader({request}:LoaderArgs) { return adminGet<{rows:BatchListEntry[];archiveStatus?:ArchiveStatus;archiveSources?:ArchiveStatus[];progress?:Awaited<ReturnType<typeof listColumnProgress>>;rounds?:Awaited<ReturnType<typeof listColumnRounds>>}>(request,"/api/admin/fishery/batches"); }
@@ -20,11 +21,12 @@ function ArchiveHealth({ status }: { status: ArchiveStatus | undefined }) {
   return <section aria-label={`${name} 受控归档状态`} className="mb-5"><Card title={`${name} 受控归档`} right={<div className="flex flex-wrap gap-3"><Link to="/admin/runs" className="text-accent">运行记录</Link><Link to={`/admin/sources/${status?.sourceId??"fishery-column-moa"}`} className="text-accent">核心信源</Link></div>}>
     {!status ? <p className="text-[13px] text-ink-3">受控归档状态尚未提供，请刷新或查看运行记录；不能据此判断归档是否开启。</p> : <>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-[13px]">
-        <span>受控归档：</span><Badge tone={status.enabled ? "ok" : status.pausedReason ? "warn" : "muted"}>{status.enabled ? "已启用" : status.pausedReason ? "已暂停" : "未启用"}</Badge>
-        <span className="ml-2">核心信源：</span><Badge tone={status.coreSourceEnabled === false ? "muted" : status.coreSourceEnabled === true ? "warn" : "muted"}>{status.coreSourceEnabled === null ? "未知" : status.coreSourceEnabled ? "已启用" : "已停用"}</Badge>
+        <span>受控归档调度：</span><Badge tone={status.enabled ? "ok" : status.pausedReason ? "warn" : "muted"}>{status.enabled ? "调度已开启" : status.pausedReason ? "已暂停" : "尚未启动"}</Badge>
+        <span className="ml-2">核心通用采集：</span><Badge tone={status.coreSourceEnabled === true ? "warn" : "muted"}>{status.coreSourceEnabled === null ? "未知" : status.coreSourceEnabled ? "已启用" : "未启用（由受控归档管理）"}</Badge>
         <span className="text-ink-3">{status.mode === "hourly" ? "小时节奏" : status.mode === "six_hourly" ? "每 6 小时" : status.mode === "validation" ? "有界验证" : "模式未记录"}</span>
       </div>
-      <p className="mb-4 text-[13px] leading-relaxed text-ink-3">核心信源与受控归档是两项独立状态。核心信源停用不代表受控归档关闭；实际执行以下次时间和当前轮记录为准。每轮最多 {status.maxPages} 个列表页、{status.maxArticles} 篇文章，不代表全站覆盖。</p>
+      <div className="mb-3"><SourceStages runtime={{ ...status, health: "unknown", intervalMinutes: null, label: "受控归档", detailPath: "/admin/fishery/collect" }} /></div>
+      <p className="mb-4 text-[13px] leading-relaxed text-ink-3">已收录、已适配、已启用和正常周期已验证分别表示不同进度。核心通用采集关闭不表示来源暂停；受控归档的实际执行以下次时间和当前轮记录为准。每轮最多 {status.maxPages} 个列表页、{status.maxArticles} 篇文章，不代表全站覆盖。</p>
       <dl className="grid gap-x-6 gap-y-4 text-[13px] sm:grid-cols-2 xl:grid-cols-4">
         <div><dt className="mb-1 text-ink-3">最后心跳</dt><dd><Time at={status.heartbeatAt} /></dd></div>
         <div><dt className="mb-1 text-ink-3">最近成功</dt><dd><Time at={status.lastSuccessAt} /></dd></div>
@@ -32,7 +34,9 @@ function ArchiveHealth({ status }: { status: ArchiveStatus | undefined }) {
         <div><dt className="mb-1 text-ink-3">下次执行</dt><dd><Time at={status.nextRunAt} /></dd></div>
         <div><dt className="mb-1 text-ink-3">当前轮</dt><dd className="break-all">{status.currentRound ?? "未记录"}</dd></div>
         <div><dt className="mb-1 text-ink-3">上一轮</dt><dd className="break-all">{status.lastRound ?? "未记录"}</dd></div>
-        <div><dt className="mb-1 text-ink-3">剩余候选</dt><dd>{status.pendingCandidates ?? "未知"}</dd></div>
+        <div><dt className="mb-1 text-ink-3">近期待采</dt><dd>{status.latestPending ?? "未知"}</dd></div>
+        <div><dt className="mb-1 text-ink-3">历史延后</dt><dd>{status.historyDeferred ?? "未知"}</dd></div>
+        <div><dt className="mb-1 text-ink-3">正文修订复核</dt><dd>{status.revisionChecks ?? "未知"}</dd></div>
         <div><dt className="mb-1 text-ink-3">连续失败</dt><dd className={status.consecutiveFailures ? "text-hot" : ""}>{status.consecutiveFailures}</dd></div>
         <div className="sm:col-span-2"><dt className="mb-1 text-ink-3">列表游标与页范围</dt><dd className="break-all">{status.cursorUrl ?? "未知"}</dd><dd className="mt-1 text-ink-3">{status.coverage ? `${COVERAGE[status.coverage] ?? status.coverage}（${status.coverage}）` : "覆盖范围未知"}</dd></div>
         <div className="sm:col-span-2"><dt className="mb-1 text-ink-3">归档授权批号</dt><dd className="break-all">{status.runId ?? "未记录"}</dd>{status.mode === "validation" && <dd className="mt-1 text-ink-3">验证轮次已认领 {status.validationClaimed ?? "未知"}/{status.validationLimit ?? "未知"}</dd>}</div>

@@ -23,6 +23,15 @@ export interface MaterialDetail extends MaterialRow {
   text: { body: string; truncated: boolean; hashMatches: boolean; acquisitionMode: string | null } | null;
 }
 
+export interface ProcessingEligibility {
+  eligible: boolean; reason: string;
+  nomination: {
+    id: number; kind: "policy" | "open_window" | "regulation_change";
+    reason: string; evidenceQuote: string; expiresAt: string;
+    status: "current" | "stale" | "expired" | "revoked";
+  } | null;
+}
+
 
 export const FLOW_STATES:Record<string,string>={queued:"待处理",running:"处理中",failed:"失败，待人工核对",needs_evidence:"待补证",needs_human_review:"待人工审核",qualified:"内部合格",rejected:"已拒绝"};
 export interface FlowTimeline {

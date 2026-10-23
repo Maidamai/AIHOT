@@ -7,7 +7,7 @@ import { adminGet } from "../../lib/admin.server";
 import { useAdminAction } from "../../features/admin/action";
 import { bj, duration, num } from "../../features/admin/format";
 import { KIND_LABEL, MODE_LABEL, TIER_LABEL, VISIBILITY_LABEL } from "../../features/admin/labels";
-import { SourceHealth, sourceInterval, SourceRuntimeLink } from "../../features/admin/source-runtime";
+import { SourceHealth, sourceInterval, SourceRuntimeLink, SourceStages } from "../../features/admin/source-runtime";
 import { AdminPage, Badge, Button, ButtonLink, Card, DataTable, Empty, Field, Input, Json, KV, ReasonDialog, Select, Stat, Textarea, Time } from "../../features/admin/ui";
 
 
@@ -143,12 +143,16 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
       {runtime && (
         <Card className="mb-5" title="实际采集运行" right={<SourceRuntimeLink runtime={runtime} />}>
           <p className="mb-3 text-[13px] text-ink-3">此信源由{runtime.label}管理。启停、采集频率与手动执行请查看运行状态页；下方核心配置不会控制该采集任务。</p>
+          <div className="mb-4"><SourceStages runtime={runtime} /></div>
           <KV items={[
             ["健康", <SourceHealth source={s} />],
             ["采集频率", sourceInterval(s)],
             ["上次成功", <Time at={runtime.lastSuccessAt} />],
             ["下次执行", <Time at={runtime.nextRunAt} />],
             ["最后心跳", <Time at={runtime.heartbeatAt} />],
+            ["近期待采", runtime.latestPending ?? "未知"],
+            ["历史延后", runtime.historyDeferred ?? "未知"],
+            ["正文修订复核", runtime.revisionChecks ?? "未知"],
           ]} />
         </Card>
       )}
@@ -257,7 +261,7 @@ export default function SourceDetail({ loaderData }: Route.ComponentProps) {
             {runtime && <p className="mb-3 text-[12.5px] text-ink-3">以下为核心采集配置和历史记录，实际运行见上方{runtime.label}状态。</p>}
             <KV
               items={[
-                ...(runtime ? [["核心采集", s.enabled ? "已启用" : "已停用"], ["核心采集方式", KIND_LABEL[s.kind] ?? s.kind], ["核心采集间隔", `${s.interval_minutes} 分`]] as Array<[string, string]> : []),
+                ...(runtime ? [["核心通用采集", s.enabled ? "已启用" : "未启用（由受控采集管理）"], ["核心采集方式", KIND_LABEL[s.kind] ?? s.kind], ["核心采集间隔", `${s.interval_minutes} 分`]] as Array<[string, string]> : []),
                 ["上次抓取", s.last_fetch_at ? bj(s.last_fetch_at, true) : null],
                 ["上次成功", s.last_ok_at ? bj(s.last_ok_at, true) : null],
                 ["下次抓取", s.next_fetch_at ? bj(s.next_fetch_at, true) : null],

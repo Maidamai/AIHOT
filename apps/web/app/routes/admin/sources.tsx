@@ -5,7 +5,7 @@ import type { AdminSources } from "@aihot/contracts/admin";
 import { adminGet } from "../../lib/admin.server";
 import { num } from "../../features/admin/format";
 import { KIND_LABEL, MODE_LABEL } from "../../features/admin/labels";
-import { SourceHealth, sourceInterval, SourceRuntimeLink } from "../../features/admin/source-runtime";
+import { SourceHealth, sourceInterval, SourceRuntimeLink, SourceStages } from "../../features/admin/source-runtime";
 import { AdminPage, Badge, ButtonLink, Card, DataTable, FilterChips, Input, Pager, Select, Stat, Time } from "../../features/admin/ui";
 
 
@@ -75,6 +75,7 @@ export default function Sources({ loaderData }: Route.ComponentProps) {
                   </Link>
                   <div className="font-mono text-[11.5px] text-ink-4">{r.id}</div>
                   {r.runtime && <div className="mt-1 text-[12px]"><SourceRuntimeLink runtime={r.runtime} /></div>}
+                  {r.runtime && <div className="mt-2"><SourceStages runtime={r.runtime} /></div>}
                   {(r.runtime ? r.runtime.lastError : r.health === "failing" ? r.last_error : null) && <div className="mt-1 line-clamp-1 text-[12px] text-hot">{r.runtime ? r.runtime.lastError : r.last_error}</div>}
                 </div>
               ),

@@ -7,16 +7,69 @@ import type { AdminMe } from "@aihot/contracts/admin";
 import { adminGet } from "@aihot/web/lib/admin.server";
 import type { ComponentProps, LoaderArgs, MetaFunction } from "@aihot/web/lib/route-types";
 import { useAdminAction } from "@aihot/web/features/admin/action";
-import { AdminPage, Badge, Button, Card, KV, ReasonDialog } from "@aihot/web/features/admin/ui";
+import { AdminPage, Badge, Button, Card, Field, Input, KV, ReasonDialog, Select, Textarea } from "@aihot/web/features/admin/ui";
 import { bj } from "@aihot/web/features/admin/format";
-import type { MaterialDetail, FlowView } from "../ui-contracts.ts";
+import type { MaterialDetail, FlowView, ProcessingEligibility } from "../ui-contracts.ts";
 import { acquisitionLabel, dateLabel, noStore, StateBadge, TrialNotice, useFreshMaterial } from "./shared.tsx";
 
 export const headers = noStore;
 export const meta: MetaFunction = () => [{ title: `素材详情 · ${SITE.name} 后台` }];
-export async function loader({ request, params }: LoaderArgs) { const base=`/api/admin/fishery/documents/${encodeURIComponent(params.id!)}`;const [detail,flows]=await Promise.all([adminGet<MaterialDetail>(request,base+"/detail"),adminGet<{rows:FlowView[]}>(request,base+"/flows")]);return {...detail,flows:flows.rows}; }
+export async function loader({ request, params }: LoaderArgs) { const base=`/api/admin/fishery/documents/${encodeURIComponent(params.id!)}`;const [detail,flows,eligibility]=await Promise.all([adminGet<MaterialDetail>(request,base+"/detail"),adminGet<{rows:FlowView[]}>(request,base+"/flows"),adminGet<ProcessingEligibility>(request,base+"/processing-eligibility")]);return {...detail,flows:flows.rows,eligibility}; }
 type Command = { id: string; kind: "approved" | "rejected" | "withdraw"; revision: number; sourceRevision: number };
 const actionNames = { approved: "记录审核通过", rejected: "拒绝材料", withdraw: "撤回材料" };
+const nominationKinds = { policy: "政策资料", open_window: "申报窗口", regulation_change: "法规变化" } as const;
+const nominationStatuses = { current: "当前版本申请", stale: "版本已失效", expired: "评估期限已到", revoked: "已撤销" } as const;
+
+function ProcessingCandidate({ document: d }: { document: MaterialDetail & { eligibility: ProcessingEligibility } }) {
+  const { run, busy } = useAdminAction(), fresh = useFreshMaterial();
+  const [kind, setKind] = useState<keyof typeof nominationKinds>("policy"), [quote, setQuote] = useState(""), [reason, setReason] = useState(""), [expires, setExpires] = useState("");
+  const [revoke, setRevoke] = useState(false), [error, setError] = useState<string | null>(null);
+  const capture = d.latest?.payload.sourceCapture, nomination = d.eligibility.nomination;
+  const ready = d.state === "approved" && d.text?.hashMatches && capture?.httpStatus === 200 && capture.parseStatus === "parsed" && !!capture.bodySha256 && !capture.conflicts.length;
+  const snapshot = `${d.id}:${d.latest?.revision}:${d.source.revision}`;
+  const [draftFor, setDraftFor] = useState(snapshot);
+  if (draftFor !== snapshot) {
+    setDraftFor(snapshot); setQuote(""); setReason(""); setExpires(""); setRevoke(false); setError(null);
+  }
+  const limit = new Date(Date.now() + 30 * 86400_000 + 8 * 3600_000).toISOString().slice(0, 16);
+  const base = `/api/admin/fishery/documents/${d.id}/processing-eligibility`;
+  return <Card title="有界业务审核候选">
+    <p className="text-[13px] leading-relaxed text-ink-3">将已审核且正文完整核验的素材提为政策、申报窗口或法规变化的业务审核候选。只授予最长 30 天的处理评估期，不证明政策有效、窗口开放、事实通过或可以发布；全站最多保留 20 条活跃资格。</p>
+    <p className="mt-3 text-[13px] text-ink-2">历史材料仍归历史参考，不计入近期资讯。后续事实核查、有效性审核和最终发布仍须分别完成。</p>
+    <p className="mt-3 text-[13px]" role="status">{d.eligibility.eligible ? "当前已具备有界处理资格" : "当前无生效的有界处理资格"}：{d.eligibility.reason}</p>
+    {nomination && <div className="mt-4 rounded-control bg-bg-sunk p-3 text-[12.5px]">
+      <div className="flex flex-wrap gap-2"><Badge tone={nomination.status === "current" ? "ok" : "warn"}>{nominationStatuses[nomination.status]}</Badge><Badge>{nominationKinds[nomination.kind]}</Badge></div>
+      <p className="mt-2">审计记录 #{nomination.id} · 处理评估截止 {bj(nomination.expiresAt, true)} 北京时间</p>
+      <blockquote className="mt-2 whitespace-pre-wrap break-words border-l-2 border-line pl-3">{nomination.evidenceQuote}</blockquote>
+      <p className="mt-2 whitespace-pre-wrap break-words">申请原因：{nomination.reason}</p>
+      {nomination.status === "current" && <Button className="mt-3" tone="danger" disabled={busy} onClick={() => setRevoke(true)}>撤销候选资格</Button>}
+    </div>}
+    {!ready && <p className="mt-4 text-[13px] text-ink-3">暂不能申请：必须先核验当前完整正文，并通过当前观察及来源许可版本的素材审核。待审核、已拒绝、提取失败或旧版本批准均不能申请。</p>}
+    <form className="mt-4 space-y-4" onSubmit={async event => {
+      event.preventDefault(); setError(null);
+      if (!ready || busy || draftFor !== snapshot) return;
+      const expiresAt = new Date(`${expires}:00+08:00`);
+      if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 30 * 86400_000) { setError("处理评估截止时间须在未来 30 天内；该期限不是政策有效期。"); return; }
+      const result = await run("POST", base, { revision: d.latest!.revision, sourceRevision: d.source.revision, kind, evidenceQuote: quote.trim(), reason: reason.trim(), expiresAt: expiresAt.toISOString() }, { success: "候选申请已记录；事实、效力和发布仍须审核" });
+      if (result) { setQuote(""); setReason(""); setExpires(""); }
+      else { setError("申请未保存，请重新核对当前审核、正文、版本和活跃资格上限。"); fresh.revalidate(); }
+    }}>
+      <fieldset disabled={!ready || busy} className="min-w-0 space-y-4">
+        <Field label="候选类型"><Select aria-label="候选类型" value={kind} onChange={event => setKind(event.target.value as keyof typeof nominationKinds)}>{Object.entries(nominationKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field>
+        <Field label="原文证据" hint="逐条申请；每次引用一段支持此候选类型的连续原文（12–1500 字），不用标题、推断或改写替代。"><Textarea aria-label="候选原文证据" rows={4} required minLength={12} maxLength={1500} value={quote} onChange={event => setQuote(event.target.value)} /></Field>
+        <Field label="申请原因（12–2000 字）"><Textarea aria-label="候选申请原因" rows={2} required minLength={12} maxLength={2000} value={reason} onChange={event => setReason(event.target.value)} /></Field>
+        <Field label="处理评估截止时间（北京时间）" hint="最长 30 天，仅限本次业务审核处理，不是政策有效期或申报截止日。"><Input aria-label="处理评估截止时间（北京时间）" type="datetime-local" required max={limit} value={expires} onChange={event => setExpires(event.target.value)} /></Field>
+        <Button type="submit" disabled={quote.trim().length < 12 || reason.trim().length < 12 || !expires || busy || !ready}>申请有界审核候选</Button>
+      </fieldset>
+      {error && <p role="alert" className="text-[13px] text-hot">{error}</p>}
+    </form>
+    <ReasonDialog open={revoke} title="撤销候选资格" confirmLabel="撤销资格" danger busy={busy} description="记录撤销原因并即时停止此候选资格，不删除素材、审核历史或原文证据。" onClose={() => setRevoke(false)} onSubmit={async reason => {
+      const result = await run("DELETE", base, { reason }, { success: "候选资格已撤销" });
+      if (!result) fresh.revalidate();
+      return result !== null;
+    }} />
+  </Card>;
+}
 
 export default function Material({ loaderData: d }: ComponentProps<typeof loader>) {
   const o = d.latest?.payload, c = o?.sourceCapture, { run, busy } = useAdminAction(), fresh = useFreshMaterial();
@@ -48,6 +101,7 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
     {(d.state === "failed" || d.state === "unverified") && <div role="alert" className="mb-5 rounded-card bg-hot-soft p-4 text-[13px] text-hot ring-1 ring-hot/20"><strong>{c?.httpStatus !== 200 ? `HTTP ${c?.httpStatus}：原文获取失败` : `解析未核验：${c?.parseStatus}`}</strong><p className="mt-1">没有可用正文时不能导出。不会用搜索缓存补正文，也不据此认定官方撤稿。</p></div>}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
       <div className="min-w-0 space-y-5">
+        <ProcessingCandidate key={d.id} document={d} />
         {c?.noticeContext&&<Card title="公告与附件核验"><KV items={[
           ['公告性质',({consultation:'征求意见（不是正式生效政策）',application_notice:'申报通知（资格仍待核）',funding_allocation:'资金下达（不是到账或开放申报）',publicity:'公示（不是申报通知）',policy_reference:'政策资料（不证明现行有效）',issued_document:'文件发布（效力待核）',unknown:'待核实'})[c.noticeContext.nature]],
           ['原文明确的截止日',dateLabel(c.noticeContext.deadline)],
