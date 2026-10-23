@@ -364,8 +364,9 @@ async function stageInvoke<S extends z.ZodType>(id:string,snapshotHash:string,st
   return invoke(options);
 }
 export async function runFlow(id:string,invoke:FisheryInvoke,authorize:(run:()=>Promise<void>)=>Promise<void>=run=>run(),options:{requireProcessingLease?:boolean}={}) {
-  const [task]=await sql`SELECT document_id FROM fishery_flow_tasks WHERE id=${id}`;
+  const [task]=await sql`SELECT document_id,status FROM fishery_flow_tasks WHERE id=${id}`;
   if(!task) throw new NotFound("Flow not found");
+  if(task.status!=="queued") throw new Conflict("Flow is not queued; running/failed/unknown outcomes require explicit operator reconciliation");
   const requireLease=options.requireProcessingLease||invoke===chatJson;
   const assertLease=async()=>{
     if(requireLease) try {await assertProcessingLease();}catch(error){throw new FlowExecutionLost("Fishery processing lease lost; old runner cannot write or invoke",{cause:error});}
