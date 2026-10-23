@@ -12,10 +12,11 @@ import { extractPdf } from "./pdf-text.ts";
 import {assertNpfcRobots,discoverNpfc,npfcAttachment,prepareNpfc} from './npfc-columns.ts';
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { captureNpfcPdf, verifyNpfcPdf, type ConditionalHeaders } from "./npfc-pdf-cache.ts";
+import {noticePage,attachmentFormat,prepareNotice,type NoticeAttachment} from './fujian-notices.ts';
 
 export const batchIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}$/);
 const archiveIdSchema = z.string().regex(/^[a-zA-Z0-9-]{1,64}_[a-f0-9]{16}$/);
-export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc> | ReturnType<typeof prepareNpfc>;
+export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnType<typeof prepareIotc> | ReturnType<typeof prepareNpfc> | ReturnType<typeof prepareNotice>;
 export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
@@ -106,6 +107,19 @@ export async function verifyBatchItem(dataDir: string, batch: ColumnBatch, item:
     await verifyNpfcPdf(dataDir,batch,item.archiveId,npfcAttachment(raw,receipt.finalUrl),attachment);
     result=prepareNpfc(candidate,receipt,raw,{receipt:attachment.receipt,bytes:attachment.body,parsed:await(options.parsePdf??extractPdf)(attachment.body)});
     result.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
+  } else if(item.column==='fujian-notices'){
+    const robots=await readArchive(root,'fujian-notices-robots',256*1024),listing=await readArchive(root,'fujian-notices-list',6*1024*1024),listingUrl=item.listingUrl??COLUMNS['fujian-notices'].url;
+    if(robots.receipt.status!==404||robots.receipt.requestedUrl!=='https://hyyyj.fujian.gov.cn/robots.txt'||robots.receipt.finalUrl!==robots.receipt.requestedUrl)throw new Error('Notice robots policy unverified');
+    columnPageIndex(item.column,listingUrl);
+    if(listing.receipt.status!==200||listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl||!discoverColumn(item.column,listing.body.toString('utf8')).candidates.some(c=>c.url===item.url))throw new Error('Notice absent from archived official listing');
+    const files:NoticeAttachment[]=[];
+    if(receipt.status===200)for(const [i] of noticePage(raw,receipt.finalUrl).attachments.slice(0,3).entries()){
+      const name=`${item.archiveId}-attachment-${i}`;
+      const exists=await stat(path.join(root,`${name}.receipt.json`)).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
+      if(!exists)break;
+      const a=await readArchive(root,name,10*1024*1024);files.push({receipt:a.receipt,bytes:a.body,...(a.receipt.status===200&&attachmentFormat(a.body)==='pdf'?{parsed:await(options.parsePdf??extractPdf)(a.body)}:{})});
+    }
+    result=prepareNotice(receipt,raw,files);
   } else result = prepareColumnArticle(item.column, receipt, raw);
   result.sourceCapture.archiveId = item.archiveId;
   if(replay) {
@@ -227,11 +241,12 @@ type Response = { url: string; status: number; body: Buffer; headers: { get(name
 export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal;headers?:ConditionalHeaders}) => Promise<Response>;
 type Fetcher=ColumnFetcher;
 const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8", ...(options?.headers?.["if-none-match"]?{"if-none-match":options.headers["if-none-match"]}:{}), ...(options?.headers?.["if-modified-since"]?{"if-modified-since":options.headers["if-modified-since"]}:{}) } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[]};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
-  if(options.page&&(columns.length!==1||options.iotcSelect?.length)) throw new Error("Incremental page requires exactly one column without direct selection");
+  if(options.page&&(columns.length!==1||options.iotcSelect?.length||options.noticeSelect?.length)) throw new Error("Incremental page requires exactly one column without direct selection");
+  if(options.noticeSelect?.length&&(columns.length!==1||columns[0]!=='fujian-notices'||options.noticeSelect.length>limit||new Set(options.noticeSelect).size!==options.noticeSelect.length))throw new Error('Notice selection must fit one notice batch limit');
   if(options.page) columnPageIndex(columns[0]!,options.page.url);
   if (options.iotcSelect?.length && (!columns.includes("iotc") || options.iotcSelect.length > limit)) throw new Error("IOTC selection needs the IOTC column and must fit the batch limit");
   const root = path.join(batchRoot(options.dataDir), id);
@@ -256,7 +271,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
     await check();
     const startedAt = new Date().toISOString(), response = await fetch(url,{signal:options.signal,...(headers?{headers}:{})});
     await check();
-    const maxBytes = name.endsWith("-robots") ? 256 * 1024 : name.includes("-pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024;
+    const maxBytes = name.endsWith("-robots") ? 256 * 1024 : name.includes("-pdf")||name.includes('-attachment-') ? 10 * 1024 * 1024 : 6 * 1024 * 1024;
     if (response.body.length > maxBytes) throw new Error("Captured response too large; full bytes required");
     const receipt = { requestedUrl: url, finalUrl: response.url, status: response.status, startedAt, finishedAt: new Date().toISOString(), contentType: response.headers.get("content-type"), bytes: response.body.length, sha256: sha256(response.body),etag:response.headers.get("etag"),lastModified:response.headers.get("last-modified"),...(headers?{requestHeaders:headers}:{}) };
     await writeRaw(`${name}.bin`,response.body);
@@ -273,7 +288,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       if (column === "iotc") assertIotcRobots(robots.receipt, robots.body);
       else if(column==='npfc')assertNpfcRobots(robots.receipt,robots.body);
       else if (robots.receipt.status !== 404) throw new Error(`Robots status ${robots.receipt.status}; stop for policy inspection`);
-      const delay = column === "iotc"||column==='npfc' ? 10_000 : 1200;
+      const delay = column === "iotc"||column==='npfc' ? 10_000 : column==='fujian-notices'?3000:1200;
       await wait(delay);
       const listingUrl=options.page?.url??config.url,listing = await get(listingUrl, `${column}-list`);
       if (listing.receipt.status !== 200 || new URL(listing.receipt.finalUrl).origin !== new URL(config.url).origin || ((column === "iotc"||column==='npfc') && listing.receipt.finalUrl !== listingUrl)) throw new Error(`Listing unavailable: HTTP ${listing.receipt.status} or unexpected identity`);
@@ -284,6 +299,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       if (!discovered.listed) throw new Error("Official listing selector returned no article identities");
       let ready = 0;
       let candidates = [...discovered.candidates].sort((a, b) => Number(a.priority === "context") - Number(b.priority === "context"));
+      if(column==='fujian-notices'&&options.noticeSelect?.length){if(options.noticeSelect.some(url=>!candidates.some(c=>c.url===url)))throw new Error('Requested notice absent from current listing; no direct URL bypass');candidates=candidates.filter(c=>options.noticeSelect!.includes(c.url));}
       if(options.page) candidates=candidates.filter(c=>!options.page!.completedUrls.includes(c.url));else candidates=candidates.slice(0,12);
       const iotcCandidates = column === "iotc" ? discoverIotc(new TextDecoder("utf8", { fatal: true }).decode(listing.body)).candidates : [];
       if (column === "iotc") {
@@ -294,7 +310,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       }
       for (const candidate of candidates) {
         if (ready >= limit) break;
-        if(options.page&&source.attempted>=limit) break;
+        if((options.page||column==='fujian-notices')&&source.attempted>=limit) break;
         const archiveId = `${id}_${sha256(column + candidate.url).slice(0, 16)}`;
         const item: BatchItem = { column, url: candidate.url, discoveryTitle: candidate.title, listDate: candidate.listDate, state: "failed", archiveId, prepared: null, error: null };
         if(options.page) item.listingUrl=listingUrl;
@@ -320,6 +336,15 @@ export async function collectColumns(options: { id: string; dataDir: string; col
             prepared=prepareNpfc(discoverNpfc(html).candidates.find(c=>c.url===candidate.url)!,article.receipt,article.body,pdf);
             prepared.evidence.push({url:listingUrl,sha256:sha256(listing.body),page:null,section:'Archived current NPFC listing; identity only, no legal applicability decision'});
             if(prepared.readyForReview&&attachment)pendingCache.push(attachment.publish);
+          } else if(column==='fujian-notices'){
+            const files:NoticeAttachment[]=[];
+            if(article.receipt.status===200)for(const [i,a] of noticePage(article.body,article.receipt.finalUrl).attachments.slice(0,3).entries()){
+              try{
+                await wait(delay);const file=await get(a.url,`${archiveId}-attachment-${i}`);
+                files.push({receipt:file.receipt,bytes:file.body,...(file.receipt.status===200&&attachmentFormat(file.body)==='pdf'?{parsed:await(options.parsePdf??extractPdf)(file.body)}:{})});await check();
+              }catch(error){await check();item.error=String((error as Error).message).slice(0,500);break;}
+            }
+            prepared=prepareNotice(article.receipt,article.body,files);
           } else prepared = prepareColumnArticle(column, article.receipt, article.body);
           prepared.sourceCapture.archiveId = archiveId;
           const { body, ...metadata } = prepared;
@@ -327,7 +352,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           if (body) {await check();await writeFile(path.join(root,"body",`${archiveId}.txt`),body,{mode:0o600,flag:"wx"});await check();}
           item.state = prepared.readyForReview ? "ready" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
           if (item.state === "ready") ready++;
-          if (item.state === "failed") item.error = [...prepared.sourceCapture.conflicts, ...prepared.warnings].join("; ") || "Article parse failed";
+          if (item.state === "failed") item.error = [item.error,...prepared.sourceCapture.conflicts, ...prepared.warnings].filter(Boolean).join("; ") || "Article parse failed";
         } catch (error) { item.error = String((error as Error).message).slice(0, 500); }
         await persist();
       }

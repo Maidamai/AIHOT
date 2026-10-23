@@ -63,9 +63,26 @@ export const pdfTextEvidenceSchema=z.strictObject({
   version:z.literal("pdf-footnotes/v1"),layoutSha256:z.string().regex(/^[a-f0-9]{64}$/),structureSha256:z.string().regex(/^[a-f0-9]{64}$/),textSha256:z.string().regex(/^[a-f0-9]{64}$/),
   transformations:z.array(z.strictObject({page:z.int().positive(),marker:z.string().regex(/^\d{1,3}$/),sourceStart:z.int().nonnegative(),sourceEnd:z.int().positive(),outputStart:z.int().nonnegative(),outputEnd:z.int().positive(),sourceText:z.string().min(1).max(3),replacement:z.string().min(3).max(5),base:pdfTextNodeSchema,reference:pdfTextNodeSchema,footnote:pdfTextNodeSchema,footnoteLines:z.array(pdfTextNodeSchema).min(1).max(20),footnoteText:z.string().min(1).max(1200)})).max(128),
 });
+export const noticeContextSchema=z.strictObject({
+  nature:z.enum(['consultation','application_notice','funding_allocation','publicity','policy_reference','issued_document','unknown']),
+  validity:z.literal('unknown'),deadline:dateSchema,deadlineLiteral:z.string().max(1000).nullable(),deadlineRole:z.enum(['consultation','application','publicity','unknown']),
+  pageTextSha256:z.string().regex(/^[a-f0-9]{64}$/),attachmentCount:z.int().min(0).max(1000),
+  attachments:z.array(z.strictObject({url:linkSchema,label:z.string().max(500),extension:z.string().max(12),format:z.enum(['pdf','office_zip','ole','html','other','not_fetched']),
+    sha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),httpStatus:z.int().min(100).max(599).nullable(),parseStatus:z.enum(['parsed','failed','unverified','not_fetched']),pages:z.int().positive().nullable(),
+    textSha256:z.string().regex(/^[a-f0-9]{64}$/).nullable(),bodyStart:z.int().nonnegative().nullable(),bodyEnd:z.int().nonnegative().nullable(),pdfTextEvidence:pdfTextEvidenceSchema.optional()})).max(3),
+});
+export type NoticeContext=z.infer<typeof noticeContextSchema>;
+export function noticeDeadlineState(n:NoticeContext,today:string){
+  if(n.deadline.precision!=='day')return 'unknown' as const;
+  return n.deadline.value<today?'closed' as const:n.deadline.value===today?'deadline_today' as const:'future_deadline' as const;
+}
+export function completeNoticeAttachments(n:NoticeContext){
+  return n.attachmentCount===n.attachments.length&&n.attachments.every(a=>a.httpStatus===200&&a.format==='pdf'&&a.extension==='pdf'&&a.parseStatus==='parsed'&&a.sha256&&a.textSha256&&a.pages&&a.bodyStart!==null&&a.bodyEnd!==null&&a.bodyEnd>a.bodyStart);
+}
 export const captureSchema = z.strictObject({
   acquisitionMode: z.enum(["live_capture", "archive_replay", "unknown"]).default("unknown"),
-  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
+  adapter: z.enum(["jinjiang", "iotc", "npfc", "fuzhou", "moa", "fujian", "fujian-notices", "manual_official"]), sourceUrl: linkSchema, capturedAt: instant,
+  noticeContext:noticeContextSchema.optional(),
   regulatoryListing:z.strictObject({measureNumber:z.string().regex(/^\d{4}-\d{2}$/),statedEffectiveDate:z.string().max(100).nullable(),membership:z.literal('listed_current_only'),applicableSea:z.literal('unknown'),effectiveStatus:z.literal('unknown')}).optional(),
   archiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
   manualArchiveId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/).optional(),
@@ -79,6 +96,8 @@ export const captureSchema = z.strictObject({
   publishedAt: instant.nullable().default(null), publicationLiteral: z.string().max(150).nullable().default(null),
   conflicts: z.array(text.max(300)).max(20),
 }).superRefine((c, ctx) => {
+  if((c.adapter==='fujian-notices')!==!!c.noticeContext)ctx.addIssue({code:'custom',message:'Fujian notice captures require their bound page/attachment context only'});
+  if(c.noticeContext&&c.parseStatus==='parsed'&&!completeNoticeAttachments(c.noticeContext))ctx.addIssue({code:'custom',message:'Parsed notices require every complete verified attachment'});
   if((c.adapter==='npfc')!==!!c.regulatoryListing)ctx.addIssue({code:'custom',message:'NPFC captures require their bound unreviewed measure identity only'});
   if ((c.manualArchiveId && c.adapter !== "manual_official") || (c.adapter === "manual_official" && (!c.manualArchiveId || c.archiveId)))
     ctx.addIssue({code:"custom",message:"Manual official captures require their own manual archive only"});

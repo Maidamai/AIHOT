@@ -5,6 +5,8 @@ import { chromium, expect, type Browser } from "@playwright/test";
 import type { ArchiveStatus } from "../../../modules/fishery/backend/archive-worker.ts";
 import type { BatchListEntry } from "../../../modules/fishery/backend/column-batches.ts";
 import { fakeApi, startWebServer, visit, type WebServer } from "./web-server.ts";
+import {prepareNotice} from '../../../modules/fishery/backend/fujian-notices.ts';
+import {sha256} from '../../../modules/fishery/backend/source-adapters.ts';
 
 const initial: ArchiveStatus = {
   enabled: true, coreSourceEnabled: false, mode: "hourly", runId: "synthetic-authorization",
@@ -17,6 +19,13 @@ const batches: BatchListEntry[] = [
   { version: "fishery-column-batch/0.1", id: "synthetic-existing-batch", startedAt: "2026-10-20T09:00:00Z", finishedAt: "2026-10-20T09:01:00Z", status: "complete", sources: [], items: [] },
   { id: "synthetic-unreadable-batch", status: "unreadable", error: "Synthetic unreadable archive record" },
 ];
+test('phone collection page keeps expired unsupported attachments pending instead of claiming an open opportunity',async()=>{
+ const url='https://hyyyj.fujian.gov.cn/xxgk/tzgg/202511/t20251124_9999001.htm',raw=Buffer.from('<meta name="ArticleTitle" content="合成渔业项目名单公示"><meta name="PubDate" content="2025-11-25 10:20"><div id="detailCont"><div class="TRS_Editor">公示时间2025年11月25日至2025年11月27日。公示不是申报通知。该合成样本仅验证页面展示，不是真实项目。</div></div><ul class="myzj_xl_list"><li><a href="P0202511259999001.xlsx">项目清单.xlsx</a></li></ul>'),r=prepareNotice({requestedUrl:url,finalUrl:url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'},raw),{body:_,...prepared}=r;
+ batches.push({version:'fishery-column-batch/0.1',id:'synthetic-notice-batch',startedAt:'2026-10-23T00:00:00Z',finishedAt:'2026-10-23T00:01:00Z',status:'complete',sources:[],items:[{column:'fujian-notices',url,discoveryTitle:r.title!,listDate:null,state:'failed',archiveId:'synthetic-notice-batch_aaaaaaaaaaaaaaaa',prepared,error:'Required XLSX not verified; review required'}]});
+ const {context,page}=await authorizedPage(375);
+ try{await visit(page,web.origin+'/admin/fishery/collect');await expect(page.getByText('已截止，仅作历史资料',{exact:false})).toBeVisible();await expect(page.getByText('完整性不足保持待复核',{exact:false})).toBeVisible();await expect(page.getByText('Required XLSX not verified; review required',{exact:true})).toBeVisible();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:'/tmp/fujian-notice-synthetic-phone.png',fullPage:true});}
+ finally{batches.pop();await context.close();}
+});
 let status: ArchiveStatus | undefined = initial;
 let sourceStatuses:ArchiveStatus[]|undefined;
 let browser: Browser;

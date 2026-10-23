@@ -1,4 +1,6 @@
 import { SITE } from "@aihot/site";
+import {beijingDate} from '@aihot/contracts/time';
+import {noticeDeadlineState} from '../contracts.ts';
 import { useState } from "react";
 import { Link, useRouteLoaderData } from "react-router";
 import type { AdminMe } from "@aihot/contracts/admin";
@@ -44,6 +46,14 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
     {(d.state === "failed" || d.state === "unverified") && <div role="alert" className="mb-5 rounded-card bg-hot-soft p-4 text-[13px] text-hot ring-1 ring-hot/20"><strong>{c?.httpStatus !== 200 ? `HTTP ${c?.httpStatus}：原文获取失败` : `解析未核验：${c?.parseStatus}`}</strong><p className="mt-1">没有可用正文时不能导出。不会用搜索缓存补正文，也不据此认定官方撤稿。</p></div>}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
       <div className="min-w-0 space-y-5">
+        {c?.noticeContext&&<Card title="公告与附件核验"><KV items={[
+          ['公告性质',({consultation:'征求意见（不是正式生效政策）',application_notice:'申报通知（资格仍待核）',funding_allocation:'资金下达（不是到账或开放申报）',publicity:'公示（不是申报通知）',policy_reference:'政策资料（不证明现行有效）',issued_document:'文件发布（效力待核）',unknown:'待核实'})[c.noticeContext.nature]],
+          ['原文明确的截止日',dateLabel(c.noticeContext.deadline)],
+          ['时限进度',({closed:'已截止，仅作历史资料',deadline_today:'截止日当天，具体时刻待核',future_deadline:'原文截止日在未来，不能据此认定可申请',unknown:'时限待核实'})[noticeDeadlineState(c.noticeContext,beijingDate(new Date()))]],
+          ['政策现行有效性','待核实；发布时间与资金下达不等于生效或到账'],
+        ]}/>{c.noticeContext.deadlineLiteral&&<p className="mt-3 text-[13px]">原文：{c.noticeContext.deadlineLiteral}</p>}
+          <ul className="mt-3 space-y-2 text-[13px]">{c.noticeContext.attachments.map(a=><li key={a.url}><a className="text-accent break-all" href={a.url} target="_blank" rel="noreferrer">{a.label||a.url}</a> · {a.format} / {a.parseStatus} · {a.pages??'未知'}页</li>)}</ul><p className="mt-3 text-[12px] text-ink-3">必需附件 {c.noticeContext.attachmentCount} 件。未完整解析的附件保持待复核，不以页面标题补正文。</p>
+        </Card>}
         <Card title="AI 草稿与内部审核任务">
           <p className="text-[13px] text-ink-3">创建任务不发送模型请求。任务绑定当前观察、正文与来源许可版本；AI核查后仍须人工决定内部合格，不能公开发布。</p>
           <form className="my-4 flex flex-wrap items-end gap-3" onSubmit={async e=>{e.preventDefault();await run("POST",base+"/flows",{identity:flowIdentity,selection},{success:"任务已创建，可进入查看"});}}>

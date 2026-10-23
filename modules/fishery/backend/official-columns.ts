@@ -17,13 +17,16 @@ export const COLUMNS = {
     name: "福建省海洋与渔业局 · 省局动态", url: "https://hyyyj.fujian.gov.cn/xxgk/hydt/stdt/",
     list: ".xw-list-1.gl_list li a", body: "#detailCont", issuer: "福建省海洋与渔业局",
   },
+  'fujian-notices':{
+    name:'福建省海洋与渔业局 · 通知公告',url:'https://hyyyj.fujian.gov.cn/xxgk/tzgg/',list:'.xw-list-1.gl_list li a[href]',body:'#detailCont .TRS_Editor',issuer:'福建省海洋与渔业局',
+  },
   iotc: {
     name: "IOTC · Current Conservation and Management Measures", url: "https://iotc.org/cmms/basic",
     list: "table.views-table tbody tr", body: "#content .node-cmm", issuer: "Indian Ocean Tuna Commission (IOTC)",
   },
   npfc:{name:'NPFC 北太平洋渔业委员会 · 逐项养护管理措施',url:NPFC_LIST,list:'.region-content .view-document-list td.views-field-title > a[href]',body:'.region-content',issuer:'North Pacific Fisheries Commission (NPFC)'},
 } as const;
-export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc"]);
+export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-notices"]);
 export type ColumnId = z.infer<typeof columnIdSchema>;
 export interface ColumnPagination { pageUrl:string; pageIndex:number; nextUrl:string|null; totalPages:number|null; scope:"verified_pagination"|"current_page_only"|"pagination_unverified"; }
 export function columnPageIndex(id:ColumnId,input:string) {
@@ -49,7 +52,7 @@ export function discoverColumnPagination(id:ColumnId,html:string,pageUrl=COLUMNS
     if(Number(current[1])!==pageIndex||Number(count[1])<1||Number(count[1])>1000||pageIndex>=Number(count[1])) throw new Error("Official listing page metadata disagrees with URL");
     return {...base,scope:"verified_pagination",totalPages:Number(count[1]),nextUrl:pageIndex+1<Number(count[1])?new URL(`index_${pageIndex+1}.htm`,COLUMNS.moa.url).href:null};
   }
-  if(id==="fujian") return base; // The observed JS pagebar does not disclose a verified URL mechanism.
+  if(id==="fujian"||id==='fujian-notices') return base; // The observed JS pagebar does not disclose a verified URL mechanism.
   if(id==='npfc')return {...base,scope:'current_page_only'};
   const $=cheerio.load(html),links=$("ul.pager li.pager-next a[href]").toArray().map(a=>new URL($(a).attr("href")!,pageUrl).href);
   if(new Set(links).size>1) throw new Error("Conflicting IOTC next-page links");
@@ -88,7 +91,7 @@ export function discoverColumn(id: ColumnId, html: string): { candidates: Candid
     try { url = new URL(href, column.url); } catch { continue; }
     if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname) || !/\/t\d{8}_\d+\.s?html?$/.test(url.pathname) || !linkSchema.safeParse(url.href).success || seen.has(url.href)) continue;
     seen.add(url.href); listed++;
-    const title = collapse(node.attr("title") || node.text()), priority = titlePriority(title);
+    const title = collapse(node.attr("title") || node.text()), priority = titlePriority(title)??(id==='fujian-notices'&&/强企惠渔|渔业.*(?:补助|补贴|资金|保险|条例)/.test(title)?'context':null);
     if (!priority) { rejected++; continue; }
     const date = /\b\d{4}-\d{2}-\d{2}\b/.exec(node.closest("li").text())?.[0] ?? null;
     candidates.push({ url: url.href, title, listDate: date, priority });
@@ -104,7 +107,7 @@ export function relevanceEvidence(body: string): string[] {
   }).slice(0, 8);
 }
 
-export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc">, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
+export function prepareColumnArticle(id: Exclude<ColumnId, "iotc"|"npfc"|'fujian-notices'>, receiptInput: unknown, raw: Buffer, acquisitionMode: "live_capture" | "archive_replay" = "live_capture") {
   const receipt = archiveReceiptSchema.parse(receiptInput), column = COLUMNS[id], origin = new URL(column.url).origin;
   const conflicts: string[] = [], warnings: string[] = [];
   if (sha256(raw) !== receipt.sha256) conflicts.push("Raw bytes differ from the HTTP receipt");

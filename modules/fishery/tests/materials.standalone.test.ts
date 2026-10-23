@@ -20,6 +20,54 @@ import { TRIAL, installTrialTransport, trialCapacity, trialUsage,validateTrialWi
 import {runFisherySelection,newSelection} from '../backend/selection.ts';
 import {discoverNpfc,npfcAttachment,prepareNpfc,assertNpfcRobots} from '../backend/npfc-columns.ts';
 import type { ColumnFetcher } from '../backend/column-batches.ts';
+import {noticeFixture} from './fixtures.ts';
+import {noticePage,noticeClassification,prepareNotice,noticeAttachmentChanged} from '../backend/fujian-notices.ts';
+import {noticeDeadlineState} from '../contracts.ts';
+
+test('Fujian notices bind complete required attachments, real formats, page spans and archived revalidation',async()=>{
+ const f=noticeFixture(),dir=await mkdtemp(path.join(tmpdir(),'notice-archive-'));
+ const fetch:ColumnFetcher=async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=>null},body:url.endsWith('robots.txt')?Buffer.from('missing'):url.endsWith('/tzgg/')?Buffer.from(f.listing):url===f.url?Buffer.from(f.landing()):f.pdf});
+ try{
+  const b=await collectColumns({id:'notice-complete',dataDir:dir,columns:['fujian-notices'],limit:1,wait:async()=>{},fetch,parsePdf:f.parsePdf});
+  assert.equal(b.items[0].state,'ready',b.items[0].error??'');const p=await verifyBatchItem(dir,b,b.items[0],{parsePdf:f.parsePdf});
+  assert.equal(p.dates.published.value,'2025-07-29','PubDate is used, never URL date');
+  assert.equal(p.sourceCapture.publishedAt,'2025-07-29T02:20:00.000Z');
+  const a=p.sourceCapture.noticeContext!.attachments[0];assert.equal(p.body!.slice(a.bodyStart!,a.bodyEnd!),f.text);assert.equal(a.textSha256,sha256(f.text));assert.equal(a.pages,2);
+  const old=prepareColumnArticle('fujian',{requestedUrl:COLUMNS.fujian.url+'202507/t20250728_9999001.htm',finalUrl:COLUMNS.fujian.url+'202507/t20250728_9999001.htm',status:200,finishedAt:new Date().toISOString(),sha256:sha256(Buffer.from(f.landing()))},Buffer.from(f.landing()));assert.equal(old.readyForReview,false,'A landing title is insufficient');
+  const first=p.sourceCapture.noticeContext!,missing={...first,attachments:first.attachments.map(a=>({...a,httpStatus:404,sha256:sha256('404')}))};assert.equal(noticeAttachmentChanged(first,missing),false);
+  assert.equal(noticeAttachmentChanged(first,{...first,attachments:first.attachments.map(a=>({...a,sha256:sha256('changed')}))}),true);
+  await writeFile(path.join(batchRoot(dir),b.id,'raw',`${b.items[0].archiveId}-attachment-0.bin`),'tampered');
+  await assert.rejects(verifyBatchItem(dir,b,b.items[0],{parsePdf:f.parsePdf}),/hash mismatch/);
+  let sends=0;const absent=await collectColumns({id:'notice-absent',dataDir:dir,columns:['fujian-notices'],noticeSelect:[f.url.replace('9999001','9999002')],limit:1,wait:async()=>{},fetch:async(...args)=>{sends++;return fetch(...args);}});assert.equal(sends,2);assert.equal(absent.items.length,0);assert.match(absent.sources[0].error!,/absent/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('Fujian notices fail closed on unsupported, scanned, missing, spoofed and incomplete attachments',async()=>{
+ const f=noticeFixture(),raw=Buffer.from(f.landing()),receipt={requestedUrl:f.url,finalUrl:f.url,status:200,sha256:sha256(raw),finishedAt:'2026-10-23T00:00:00Z'},pr={...receipt,requestedUrl:f.pdfUrl,finalUrl:f.pdfUrl,sha256:sha256(f.pdf)},parsed=await f.parsePdf(f.pdf);
+ for(const file of [undefined,{receipt:pr,bytes:f.pdf,parsed:{...parsed,status:'unverified' as const,text:'',pages:0,error:'No text; no automatic OCR'}},{receipt:{...pr,status:404},bytes:f.pdf,parsed},{receipt:pr,bytes:f.pdf,parsed:{...parsed,text:'--- Page 1 ---\nOnly first page'}},{receipt:{...pr,sha256:sha256('<html>blocked</html>')},bytes:Buffer.from('<html>blocked</html>'),parsed}]){
+  const p=prepareNotice(receipt,raw,file?[file]:[]);assert.equal(p.readyForReview,false);assert.equal(p.body,null);assert.equal(p.sourceCapture.parseStatus,'unverified');
+ }
+ const xurl=f.pdfUrl.replace('.pdf','.xlsx'),xraw=Buffer.from(f.landing(xurl)),xbytes=Buffer.from([80,75,3,4,1,2]);
+ const x=prepareNotice({...receipt,sha256:sha256(xraw)},xraw,[{receipt:{...pr,requestedUrl:xurl,finalUrl:xurl,sha256:sha256(xbytes)},bytes:xbytes}]);
+ assert.equal(x.sourceCapture.noticeContext!.attachments[0].format,'office_zip');assert.equal(x.body,null);
+ const neutral=prepareNotice(receipt,raw,[{receipt:pr,bytes:f.pdf,parsed:{...parsed,pages:1,text:'--- Page 1 ---\n普通近岸养殖技术安排。'}}]);
+ assert.equal(neutral.readyForReview,false,'Copied landing title and attachment label cannot prove DWF relevance');
+ const mixed=prepareNotice(receipt,raw,[{receipt:pr,bytes:f.pdf,parsed:{...parsed,text:'--- Page 1 ---\n远洋渔业正文\n--- Page 2 ---\n'}}]);assert.equal(mixed.body,null,'Textless pages cannot silently stand for scanned pages');assert.match(mixed.warnings.join(';'),/textless/);
+ const n=neutral.sourceCapture.noticeContext!;assert.equal(noticeAttachmentChanged(n,{...n,pageTextSha256:sha256('changed actual landing body'),attachments:n.attachments.map(a=>({...a,httpStatus:404,sha256:sha256('404')}))}),true,'Verified 200 page-body changes invalidate old evidence independently of attachment unavailability');
+ assert.throws(()=>noticePage(Buffer.from(f.landing('https://example.org/P0202507289.pdf')),f.url),/origin/);
+ const body=Buffer.from(`<meta name="ArticleTitle" content="远洋公示"><div id="detailCont"><div class="TRS_Editor"><table><tr><td>远洋项目</td><td>${'合成完整资料。'.repeat(10)}</td></tr></table></div></div>`);
+ const table=prepareNotice({...receipt,sha256:sha256(body)},body);assert.equal(table.readyForReview,true);assert.match(table.body!,/远洋项目 合成完整/);
+});
+test('Fujian notice dates separate ended publicity, application, consultation, allocation and unknown validity',()=>{
+ const publicity=noticeClassification('资金项目名单公示','公示时间2025年11月25日至2025年11月27日（3个工作日）。');assert.equal(publicity.nature,'publicity');assert.equal(publicity.deadline.value,'2025-11-27');
+ const context={...publicity,pageTextSha256:sha256(''),attachmentCount:0,attachments:[]};
+ assert.equal(noticeDeadlineState(context,'2026-10-23'),'closed');assert.equal(noticeDeadlineState(context,'2025-11-27'),'deadline_today');assert.equal(noticeDeadlineState(context,'2025-11-26'),'future_deadline');
+ assert.equal(noticeClassification('申报通知','申报企业应于2026年1月27日前提交。').deadline.value,'2026-01-27');
+ assert.equal(noticeClassification('申报通知','申报企业应于1月27日前提交。').deadline.precision,'unknown');
+ assert.equal(noticeClassification('名单公示','公示时间2025年11月25日至11月27日。').deadline.precision,'unknown','Abbreviated range end must not become its complete start date');
+ assert.equal(noticeClassification('下达渔业资金通知','2026年1月27日前提交。').nature,'funding_allocation');
+ assert.equal(noticeClassification('征求意见通知','意见反馈截止2026年1月27日。').nature,'consultation');
+ assert.equal(noticeClassification('政策明白纸','有效期至2026年1月27日。').validity,'unknown');
+});
 
 function npfcCacheFixture() {
  const url='https://www.npfc.int/cmm-2026-01-cache-test',pdfUrl='https://www.npfc.int/system/files/2026-04/cache-test.pdf',title='CMM 2026-01 Synthetic cache test';

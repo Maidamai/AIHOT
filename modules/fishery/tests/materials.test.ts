@@ -1,4 +1,24 @@
 import { publicationQueue } from "../backend/publication-queue.ts";
+import {noticeFixture} from './fixtures.ts';
+
+test('Fujian required attachment updates invalidate approval, but unavailable unchanged dependencies do not',async()=>{
+ const f=noticeFixture(),pdf=pdfFixture(false,false,'NPFC synthetic complete regulatory reference; not a current application.');
+ const capture=(id:string,mode:'original'|'duplicate'|'404'|'scan'|'page-change')=>collectColumns({id,dataDir:config.dataDir,columns:['fujian-notices'],limit:1,wait:async()=>{},fetch:async url=>{
+  const robots=url.endsWith('robots.txt'),list=url===COLUMNS['fujian-notices'].url,attachment=url===f.pdfUrl;
+  return {url,status:robots||attachment&&mode==='404'||attachment&&mode==='page-change'?404:200,headers:{get:()=>null},body:robots?Buffer.from('missing'):list?Buffer.from(f.listing):attachment?mode==='scan'?pdfFixture(true):mode==='404'||mode==='page-change'?Buffer.from('missing'):pdf:Buffer.from(mode==='page-change'?f.landing().replaceAll(f.title,'变更后的远洋资金政策资料'):f.landing())};
+ }});
+ const initial=await capture('notice-db-original','original');assert.equal(initial.items[0].state,'ready',initial.items[0].error??'');
+ const first=await importBatch(initial.id,'tester'),id=first.rows[0].id;
+ const [s]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-fujian-notices'`;await approve(id,1,s.revision);
+ const duplicate=await capture('notice-db-duplicate','duplicate');await importBatch(duplicate.id,'tester');assert.equal((await documentHistory(id)).observations.length,1);assert.equal((await materialDetail(id)).state,'approved');
+ const missing=await capture('notice-db-missing','404');await importBatch(missing.id,'tester');assert.equal((await documentHistory(id)).observations.length,1);assert.equal((await materialDetail(id)).state,'approved');
+ const changed=await capture('notice-db-scan','scan');assert.equal(changed.items[0].state,'failed');const update=await importBatch(changed.id,'tester');assert.equal(update.rows.length,0);assert.equal(update.evidenceUpdates.length,1);
+ const history=await documentHistory(id);assert.equal(history.observations.length,2);assert.equal(history.observations[1].payload.sourceCapture.parseStatus,'unverified');assert.equal(history.reviews.length,1);assert.notEqual((await materialDetail(id)).state,'approved');
+ await importBatch(changed.id,'tester');assert.equal((await documentHistory(id)).observations.length,2,'Identical failed attachment evidence is idempotent');
+ const pageChange=await capture('notice-db-page-change','page-change');await importBatch(pageChange.id,'tester');assert.equal((await documentHistory(id)).observations.length,3,'Changed verified landing body is evidence even with a 404 attachment');
+ assert.equal((await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${id}`).length,0,'Pending source material never starts a paid flow');
+ const [source]=await sql`SELECT enabled,participation_mode FROM sources WHERE id='fishery-column-fujian-notices'`;assert.equal(source.enabled,false);assert.equal(source.participation_mode,'editorial');
+});
 
 test('second-score provider refusal keeps its own stage and never starts article generation',async()=>{
  const d=await selectionFixture(71),sent:string[]=[],base=selectionMock(d.body,sent);

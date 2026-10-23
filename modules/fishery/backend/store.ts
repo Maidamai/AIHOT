@@ -120,9 +120,9 @@ export function evidenceIdentity(input: unknown) {
 }
 type CaptureColumn={id:string;name:string;issuer:string};
 type CapturedImport={id:string;revision:number;unchanged:boolean};
-export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true}):Promise<CapturedImport|null>;
+export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedNoticeAttachmentsOnly?:boolean}):Promise<CapturedImport|null>;
 export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string):Promise<CapturedImport>;
-export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean}={}) {
+export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean;changedNoticeAttachmentsOnly?:boolean}={}) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const sourceId = `fishery-column-${column.id}`;
   // A configured column owner is attribution only; do not infer a page publisher or policy issuer.
@@ -150,6 +150,10 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     }
     if (doc!.withdrawn_reason) throw new Conflict("Document withdrawn; batch cannot restore it");
     const [previous] = await tx`SELECT revision,payload FROM fishery_observations WHERE document_id=${doc!.id} ORDER BY revision DESC LIMIT 1`;
+    if(options.changedNoticeAttachmentsOnly){
+      const {noticeAttachmentChanged}=await import('./fujian-notices.ts');
+      if(payload.sourceCapture?.httpStatus!==200||payload.sourceCapture.conflicts.length||!noticeAttachmentChanged(previous?.payload.sourceCapture?.noticeContext,payload.sourceCapture.noticeContext))return null;
+    }
     if (previous && evidenceIdentity({ ...previous.payload, expectedRevision:0 }) === evidenceIdentity({ ...payload, expectedRevision:0 })) return { id:doc!.id as string, revision:previous.revision as number, unchanged:true };
     const revision = (previous?.revision ?? 0) + 1;
     await tx`INSERT INTO fishery_observations(document_id,revision,actor,content_hash,payload) VALUES (${doc!.id},${revision},${actor},${hash(payload)},${tx.json(payload)})`;
@@ -165,13 +169,13 @@ export async function documentHistory(id: string) {
   return { document: Object.assign({}, document, sourceAttributionOf(document.issuer)), observations, reviews };
 }
 
-export async function recordCapturedAcquisition(columnId:string,canonicalUrl:string,record:{batchId:string;archiveId:string;outcome:"ready"|"irrelevant"|"unavailable";capture:unknown;relevance:unknown;reason:string},actor:string) {
+export async function recordCapturedAcquisition(columnId:string,canonicalUrl:string,record:{batchId:string;archiveId:string;outcome:"ready"|"irrelevant"|"unavailable";confirmedChange?:boolean;capture:unknown;relevance:unknown;reason:string},actor:string) {
   return capturedTransaction(columnId,async tx=>{
     const [document]=await tx`SELECT id FROM fishery_documents WHERE source_id=${`fishery-column-${columnId}`} AND canonical_url=${canonicalUrl} FOR UPDATE`;
     if(!document) return null;
     const subject=`fishery:${document.id}`;
     if(!(await tx`SELECT 1 FROM audit_log WHERE subject=${subject} AND action='fishery.acquisition' AND after->>'batchId'=${record.batchId} AND after->>'archiveId'=${record.archiveId} LIMIT 1`).length)
-      await audit(actor,"fishery.acquisition",subject,record.outcome==="unavailable"?"Acquisition unavailable; no confirmed source-body change":"Verified archived acquisition result",null,record,{db:tx});
+      await audit(actor,"fishery.acquisition",subject,record.confirmedChange?"Confirmed source page or required-attachment change; previous approval invalidated":record.outcome==="unavailable"?"Acquisition unavailable; no confirmed source-body change":"Verified archived acquisition result",null,record,{db:tx});
     return {documentId:String(document.id),...record};
   });
 }

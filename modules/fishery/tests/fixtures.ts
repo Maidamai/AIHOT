@@ -1,4 +1,12 @@
 import {createHash} from "node:crypto";
+export function noticeFixture(){
+ const url='https://hyyyj.fujian.gov.cn/xxgk/tzgg/202507/t20250728_9999001.htm',pdfUrl=new URL('P0202507289999001.pdf',url).href,title='合成远洋资金政策明白纸';
+ const listing=`<ul class="xw-list-1 gl_list"><li><a href="${url}">${title}</a></li></ul>`;
+ const landing=(link=pdfUrl)=>`<meta name="ArticleTitle" content="${title}"><meta name="PubDate" content="2025-07-29 10:20"><div id="detailCont"><div class="TRS_Editor">${title}</div></div><ul class="myzj_xl_list"><li><a href="${link}">政策附件.pdf</a></li></ul>`;
+ const pdf=Buffer.from('%PDF-synthetic-notice-only'),text='--- Page 1 ---\n合成远洋渔业资金政策全文。\n--- Page 2 ---\n完整末页，不证明补贴开放或政策现行有效。';
+ const parsePdf=async(bytes:Buffer)=>({status:'parsed' as const,rawSha256:createHash('sha256').update(bytes).digest('hex'),parser:'synthetic-notice/v1',pages:2,text});
+ return {url,pdfUrl,title,listing,landing,pdf,text,parsePdf};
+}
 export const unknownDate = { precision: "unknown" as const, value: null };
 // Public NPFC robots.txt inspected 2026-10-22. A changed policy must stop new captures.
 export const npfcRobotsFixture=Buffer.from(`#
