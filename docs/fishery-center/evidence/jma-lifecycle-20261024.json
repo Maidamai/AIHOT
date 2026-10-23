@@ -1,0 +1,917 @@
+{
+  "schema": "jma-lifecycle-validation/1",
+  "implementationCommit": "80501ba6a92b8df4ae17a3dcdfab1a17f44d719a",
+  "baseline": "605ac218a44a724bbcbd2c616706b331191c4ca5",
+  "preservedJmaHead": "e384bdbd5b11bc81570fd0ecb7f9bdc5ffdcd3c6",
+  "mode": "real_HTTP_bytes_then_offline_comparison",
+  "liveRequestCount": 6,
+  "liveResponseBodyBytes": 739948,
+  "materials": [
+    {
+      "requestedUrl": "https://xml.kishou.go.jp/jmaxml_20260129_dictionary.xlsx",
+      "finalUrl": "https://xml.kishou.go.jp/jmaxml_20260129_dictionary.xlsx",
+      "status": 200,
+      "capturedAt": "2026-10-23T16:18:22.489Z",
+      "bytes": 278111,
+      "sha256": "752164f07086f5bbfa8d40d1535bf1213ec0c8ddf8189b5c62cf7efcfc4226c3",
+      "etag": "\"43e5f-65989a4784140\"",
+      "lastModified": "Fri, 21 Aug 2026 07:32:45 GMT"
+    },
+    {
+      "requestedUrl": "https://xml.kishou.go.jp/jmaxml_20261019_code.xlsx",
+      "finalUrl": "https://xml.kishou.go.jp/jmaxml_20261019_code.xlsx",
+      "status": 200,
+      "capturedAt": "2026-10-23T16:19:17.226Z",
+      "bytes": 99463,
+      "sha256": "6d9a8a4d2ecef87761f0e0dfc2c47c131e0dd7ae8cd9dea798a50918d08bc8d0",
+      "etag": "\"18487-65dd6d0e02940\"",
+      "lastModified": "Thu, 15 Oct 2026 01:17:49 GMT"
+    }
+  ],
+  "feed": {
+    "requestedUrl": "https://www.data.jma.go.jp/developer/xml/feed/other_l.xml",
+    "finalUrl": "https://www.data.jma.go.jp/developer/xml/feed/other_l.xml",
+    "status": 200,
+    "capturedAt": "2026-10-23T16:23:21.178Z",
+    "etag": "\"b2116ed337ce91117bed0ee8f5c99a0e\"",
+    "lastModified": "Fri, 23 Oct 2026 14:35:48 GMT",
+    "sha256": "0b4a52dc0f9320df5fd42a22648df2536cf2040b47840eddb013f7c90f41d3b2",
+    "bytes": 294005,
+    "acquisition": "download"
+  },
+  "samples": [
+    {
+      "receipt": {
+        "title": "全般海上警報（定時）（Ｒ０８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "updated": "2026-10-22T20:15:52Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:09.549602+00:00",
+        "bytes": 48200,
+        "sha256": "fd3de86f29342efdecb79f3e6a1e87e7783036034a623d15b5e3535198a3ebbf",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:09 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:16:52 GMT",
+          "ETag": "\"f7dece110b2cbb5d6e06ba26ac4c5c54\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9050",
+            "name": "オホーツク海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "緯度経度領域",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T05:20:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9050",
+            "name": "オホーツク海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "緯度経度領域",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "title": "全般海上警報（定時）（Ｈ２９）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "updated": "2026-10-22T20:15:52Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:10.250797+00:00",
+        "bytes": 24777,
+        "sha256": "20dce3c83b420bff993b60c9f55a0e39d350ee6ba05d505c8f68f53bce2197af",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:10 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:16:10 GMT",
+          "ETag": "\"2330e3af7442f97ee41e38a3b1e779c8\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9050",
+            "name": "オホーツク海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "緯度経度領域",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T05:20:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9050",
+            "name": "オホーツク海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "緯度経度領域",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "title": "全般海上警報（臨時）（Ｈ２９）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "updated": "2026-10-22T23:15:48Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:10.748821+00:00",
+        "bytes": 8050,
+        "sha256": "5111ed6fe7b2c0795ec3a533cf12141884a2a6f046f3db824c183c5e80d2169e",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:10 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 23:16:15 GMT",
+          "ETag": "\"8920baa6221df7a517bf45ded278e764\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T08:20:00+09:00",
+        "validUntil": "2026-10-24T06:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "updated": "2026-10-22T23:35:00Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:11:11.284007+00:00",
+        "bytes": 6163,
+        "sha256": "2b3e61c0155a6d084f804739a9f2a6c1f7aea86799cec628bb593fc00c099d9e",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:11:11 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 23:35:24 GMT",
+          "ETag": "\"01a0030ba9602c955255963d3bf2add5\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "6030",
+            "name": "沖縄南方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6010",
+            "name": "東シナ海南部",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6020",
+            "name": "沖縄東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T08:35:00+09:00",
+        "validUntil": "2026-10-24T06:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "6030",
+            "name": "沖縄南方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6010",
+            "name": "東シナ海南部",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6020",
+            "name": "沖縄東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "updated": "2026-10-22T20:35:02Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:14:12.776046+00:00",
+        "bytes": 10372,
+        "sha256": "ecd2e36a419d5bc4f069226438ad641ce0f0c9d89df82868fe77cd1735271e06",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:14:12 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:35:23 GMT",
+          "ETag": "\"82e6ffdd76e82ce698106490ef518d7f\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "1010",
+            "name": "サハリン東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1020",
+            "name": "サハリン西方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1030",
+            "name": "網走沖",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1040",
+            "name": "宗谷海峡",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1050",
+            "name": "北海道西方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T05:35:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "1010",
+            "name": "サハリン東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1020",
+            "name": "サハリン西方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1030",
+            "name": "網走沖",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1040",
+            "name": "宗谷海峡",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1050",
+            "name": "北海道西方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "updated": "2026-10-22T20:35:02Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:14:13.343877+00:00",
+        "bytes": 5050,
+        "sha256": "610a31dfd0e8757cf3d518c35d011c5608c83f0e70c2a146ce65621fc4971023",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:14:13 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:35:23 GMT",
+          "ETag": "\"c9b6ad0c37a0e8a76c5ea3fb14e18f36\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "1110",
+            "name": "北海道東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1120",
+            "name": "釧路沖",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T05:35:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "1110",
+            "name": "北海道東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "1120",
+            "name": "釧路沖",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "title": "地方海上警報（Ｈ２８）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "updated": "2026-10-22T20:35:04Z",
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T01:14:13.857580+00:00",
+        "bytes": 4666,
+        "sha256": "883b3098b6ca0f13b6e9a63e3a2033599db09889ddb7572a37c34b03cf9fb9f6",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 01:14:13 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 20:35:23 GMT",
+          "ETag": "\"d736214d4febc6386050dce44503b46e\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "4010",
+            "name": "瀬戸内海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "4020",
+            "name": "四国沖北部",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T05:35:00+09:00",
+        "validUntil": "2026-10-24T03:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "4010",
+            "name": "瀬戸内海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "4020",
+            "name": "四国沖北部",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261023143506_0_VPCU51_471000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261023143506_0_VPCU51_471000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T16:23:58.223Z",
+        "etag": "\"a76ed93d8e2a21a28f665e2b31bea2a6\"",
+        "lastModified": "Fri, 23 Oct 2026 14:35:41 GMT",
+        "sha256": "eede0d5539c37bd7877d36f622e24b49c9881c5d915a0726d92e066a053a5fca",
+        "bytes": 6879,
+        "acquisition": "download"
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "6010",
+            "name": "東シナ海南部",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6030",
+            "name": "沖縄南方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6020",
+            "name": "沖縄東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T23:35:00+09:00",
+        "validUntil": "2026-10-24T21:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "6010",
+            "name": "東シナ海南部",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6030",
+            "name": "沖縄南方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "6020",
+            "name": "沖縄東方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261023142534_0_VPZU54_010000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261023142534_0_VPZU54_010000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T16:23:58.501Z",
+        "etag": "\"d05edafaaa5bf50e0f82337addac600f\"",
+        "lastModified": "Fri, 23 Oct 2026 14:26:28 GMT",
+        "sha256": "d1637652d40680c7c0ccaf392126ef0b0c56942f3dcf824eb0dce3ff47eebe2d",
+        "bytes": 55113,
+        "acquisition": "download"
+      },
+      "before": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "緯度経度領域",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9050",
+            "name": "オホーツク海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9010",
+            "name": "日本海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T23:30:00+09:00",
+        "validUntil": "2026-10-24T21:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "熱帯低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "低気圧",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": null,
+            "name": "緯度経度領域",
+            "scope": "original_dynamic_geometry_not_evaluated"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9050",
+            "name": "オホーツク海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "全般海上海域名",
+            "code": "9010",
+            "name": "日本海",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    },
+    {
+      "receipt": {
+        "requestedUrl": "https://www.data.jma.go.jp/developer/xml/data/20261023143505_0_VPCU51_420000.xml",
+        "finalUrl": "https://www.data.jma.go.jp/developer/xml/data/20261023143505_0_VPCU51_420000.xml",
+        "status": 200,
+        "capturedAt": "2026-10-23T16:23:58.869Z",
+        "etag": "\"462a35fe673cabc4712fb52b9c0fc0a5\"",
+        "lastModified": "Fri, 23 Oct 2026 14:35:41 GMT",
+        "sha256": "edac3514ffe1d4f8154d848d485664352ddbb88882e6c0211aafa26b830d063c",
+        "bytes": 6377,
+        "acquisition": "download"
+      },
+      "before": {
+        "accepted": false,
+        "error": "Local headline/body warning-area mismatch"
+      },
+      "after": {
+        "accepted": true,
+        "notice": "official_warning_reference",
+        "infoType": "発表",
+        "status": "通常",
+        "publishedAt": "2026-10-23T23:35:00+09:00",
+        "validUntil": "2026-10-24T21:00:00+09:00",
+        "areas": [
+          {
+            "codeType": "地方海上予報区",
+            "code": "5100",
+            "name": "九州西方海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "5130",
+            "name": "女島南西海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "5110",
+            "name": "済州島西海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          },
+          {
+            "codeType": "地方海上予報区",
+            "code": "5120",
+            "name": "長崎西海上",
+            "scope": "official_named_zone_geometry_not_resolved"
+          }
+        ]
+      },
+      "originalBytesPreserved": true
+    }
+  ],
+  "comparison": {
+    "total": 10,
+    "previouslyAccepted": 9,
+    "nowAccepted": 10,
+    "changedAcceptance": 1,
+    "reason": "Nagasaki headline5100 equals the complete official body subdivision set5110/5120/5130; raw boundaries and values preserved"
+  },
+  "snapshot": {
+    "evaluatedAt": "2026-10-23T16:23:58.869Z",
+    "candidateCount": 391,
+    "unresolvedCount": 381,
+    "sourceBlockers": [
+      "unresolved_feed_bulletins"
+    ],
+    "eligibleForReview": 0,
+    "latestKnown": [
+      {
+        "groupKey": "[\"全般海上警報（定時）（Ｈ２９）\",\"気象庁本庁\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "first_observed",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml#sha256=20dce3c83b420bff993b60c9f55a0e39d350ee6ba05d505c8f68f53bce2197af",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU52_010000.xml",
+          "sha256": "20dce3c83b420bff993b60c9f55a0e39d350ee6ba05d505c8f68f53bce2197af",
+          "bytes": 24777
+        },
+        "supersedes": [],
+        "officialValidUntil": "2026-10-24T03:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"全般海上警報（定時）（Ｒ０８）\",\"気象庁本庁\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "update",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261023142534_0_VPZU54_010000.xml#sha256=d1637652d40680c7c0ccaf392126ef0b0c56942f3dcf824eb0dce3ff47eebe2d",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261023142534_0_VPZU54_010000.xml",
+          "sha256": "d1637652d40680c7c0ccaf392126ef0b0c56942f3dcf824eb0dce3ff47eebe2d",
+          "bytes": 55113
+        },
+        "supersedes": [
+          {
+            "id": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml#sha256=fd3de86f29342efdecb79f3e6a1e87e7783036034a623d15b5e3535198a3ebbf",
+            "url": "https://www.data.jma.go.jp/developer/xml/data/20261022201553_0_VPZU54_010000.xml",
+            "sha256": "fd3de86f29342efdecb79f3e6a1e87e7783036034a623d15b5e3535198a3ebbf",
+            "bytes": 48200
+          }
+        ],
+        "officialValidUntil": "2026-10-24T21:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"全般海上警報（臨時）（Ｈ２９）\",\"気象庁本庁\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "first_observed",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml#sha256=5111ed6fe7b2c0795ec3a533cf12141884a2a6f046f3db824c183c5e80d2169e",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261022231548_0_VPZU53_010000.xml",
+          "sha256": "5111ed6fe7b2c0795ec3a533cf12141884a2a6f046f3db824c183c5e80d2169e",
+          "bytes": 8050
+        },
+        "supersedes": [],
+        "officialValidUntil": "2026-10-24T06:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"函館地方気象台\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "first_observed",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml#sha256=610a31dfd0e8757cf3d518c35d011c5608c83f0e70c2a146ce65621fc4971023",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_017000.xml",
+          "sha256": "610a31dfd0e8757cf3d518c35d011c5608c83f0e70c2a146ce65621fc4971023",
+          "bytes": 5050
+        },
+        "supersedes": [],
+        "officialValidUntil": "2026-10-24T03:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"札幌管区気象台\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "first_observed",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml#sha256=ecd2e36a419d5bc4f069226438ad641ce0f0c9d89df82868fe77cd1735271e06",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203502_0_VPCU51_016000.xml",
+          "sha256": "ecd2e36a419d5bc4f069226438ad641ce0f0c9d89df82868fe77cd1735271e06",
+          "bytes": 10372
+        },
+        "supersedes": [],
+        "officialValidUntil": "2026-10-24T03:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"沖縄気象台\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "update",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261023143506_0_VPCU51_471000.xml#sha256=eede0d5539c37bd7877d36f622e24b49c9881c5d915a0726d92e066a053a5fca",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261023143506_0_VPCU51_471000.xml",
+          "sha256": "eede0d5539c37bd7877d36f622e24b49c9881c5d915a0726d92e066a053a5fca",
+          "bytes": 6879
+        },
+        "supersedes": [
+          {
+            "id": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml#sha256=2b3e61c0155a6d084f804739a9f2a6c1f7aea86799cec628bb593fc00c099d9e",
+            "url": "https://www.data.jma.go.jp/developer/xml/data/20261022233500_0_VPCU51_471000.xml",
+            "sha256": "2b3e61c0155a6d084f804739a9f2a6c1f7aea86799cec628bb593fc00c099d9e",
+            "bytes": 6163
+          }
+        ],
+        "officialValidUntil": "2026-10-24T21:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"神戸地方気象台\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "first_observed",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml#sha256=883b3098b6ca0f13b6e9a63e3a2033599db09889ddb7572a37c34b03cf9fb9f6",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261022203504_0_VPCU51_280000.xml",
+          "sha256": "883b3098b6ca0f13b6e9a63e3a2033599db09889ddb7572a37c34b03cf9fb9f6",
+          "bytes": 4666
+        },
+        "supersedes": [],
+        "officialValidUntil": "2026-10-24T03:00:00+09:00"
+      },
+      {
+        "groupKey": "[\"地方海上警報（Ｈ２８）\",\"長崎地方気象台\",\"通常\",null]",
+        "lifecycle": "warning_reference",
+        "transition": "first_observed",
+        "evidence": {
+          "id": "https://www.data.jma.go.jp/developer/xml/data/20261023143505_0_VPCU51_420000.xml#sha256=edac3514ffe1d4f8154d848d485664352ddbb88882e6c0211aafa26b830d063c",
+          "url": "https://www.data.jma.go.jp/developer/xml/data/20261023143505_0_VPCU51_420000.xml",
+          "sha256": "edac3514ffe1d4f8154d848d485664352ddbb88882e6c0211aafa26b830d063c",
+          "bytes": 6377
+        },
+        "supersedes": [],
+        "officialValidUntil": "2026-10-24T21:00:00+09:00"
+      }
+    ]
+  },
+  "liveCorrections": 0,
+  "liveCancellations": 0,
+  "liveReleases": 0,
+  "liveNoWarning": 0,
+  "liveNonOperational": 0,
+  "syntheticCoverageOnly": [
+    "correction",
+    "cancellation_unverified",
+    "release",
+    "no_warning",
+    "training/test",
+    "malformed/unknown edition",
+    "future/expiry clock boundaries",
+    "pending discovery roll-off",
+    "same-time conflict"
+  ],
+  "noProductionWrites": true,
+  "noPaidModelCalls": true
+}

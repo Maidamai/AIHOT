@@ -1,0 +1,354 @@
+{
+  "acquisitionMode": "live_capture_then_offline_replay",
+  "feeds": [
+    {
+      "url": "https://www.data.jma.go.jp/developer/xml/feed/regular_l.xml",
+      "status": 200,
+      "bytes": 4648731,
+      "sha256": "43d37e62e7cd9d95f0436fea385e157e3abcd2ce43fac33089ac87d3694cc1d3",
+      "archiveMtime": "2026-10-23T00:55:10.341Z",
+      "serverDate": "Fri, 23 Oct 2026 00:55:10 GMT",
+      "etag": "\"5d4a0321f9b07d0284b3bcc92c3c38ce\"",
+      "lastModified": "Fri, 23 Oct 2026 00:51:47 GMT",
+      "cacheControl": "max-age=60",
+      "updatedAt": "2026-10-23T09:51:28+09:00",
+      "entries": 9510,
+      "uniqueUrls": 9510,
+      "oldestEntryUpdatedAt": "2026-10-16T01:01:10Z",
+      "newestEntryUpdatedAt": "2026-10-23T00:50:56Z",
+      "maritimeTitleEntries": 28,
+      "recovery": "bootstrap_coverage_unknown"
+    },
+    {
+      "url": "https://www.data.jma.go.jp/developer/xml/feed/extra_l.xml",
+      "status": 200,
+      "bytes": 3428447,
+      "sha256": "195e2dee177e121b9af2c74a50d00449150be2e8971c285f820246c4d04bfd73",
+      "archiveMtime": "2026-10-23T00:55:13.236Z",
+      "serverDate": "Fri, 23 Oct 2026 00:55:11 GMT",
+      "etag": "\"bbb7af89b755d467bea2c2ed194473ac\"",
+      "lastModified": "Fri, 23 Oct 2026 00:54:50 GMT",
+      "cacheControl": "max-age=60",
+      "updatedAt": "2026-10-23T09:54:33+09:00",
+      "entries": 5733,
+      "uniqueUrls": 5733,
+      "oldestEntryUpdatedAt": "2026-10-16T01:06:14Z",
+      "newestEntryUpdatedAt": "2026-10-23T00:54:16Z",
+      "maritimeTitleEntries": 0,
+      "recovery": "bootstrap_coverage_unknown"
+    }
+  ],
+  "samples": [
+    {
+      "receipt": {
+        "feed": "regular_l.xml",
+        "title": "アジア太平洋海上悪天４８時間予想図",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022185800_0_VZSF61_010000.xml",
+        "updated": "2026-10-22T18:57:18Z",
+        "status": 200,
+        "capturedAt": "2026-10-23T00:56:05.056519+00:00",
+        "bytes": 352187,
+        "sha256": "7701b8e9ae8c0a43096496e876ffce61b831fca95dceec451bcbce1f6c7c4b41",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 00:56:04 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 18:58:41 GMT",
+          "ETag": "\"323c713e2002c53d9cacc7846ad9c536\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022185800_0_VZSF61_010000.xml",
+        "sha256": "7701b8e9ae8c0a43096496e876ffce61b831fca95dceec451bcbce1f6c7c4b41",
+        "title": "アジア太平洋海上悪天４８時間予想図",
+        "headlineTitle": "アジア太平洋海上悪天４８時間予想図",
+        "editorialOffice": "気象庁本庁",
+        "publishingOffice": "気象庁",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "天気図情報",
+        "infoKindVersion": "1.1_1",
+        "sentAt": "2026-10-22T18:57:18Z",
+        "publishedAt": "2026-10-23T03:57:18+09:00",
+        "targetAt": "2026-10-22T21:00:00+09:00",
+        "validUntil": null,
+        "groupKey": "[\"アジア太平洋海上悪天４８時間予想図\",\"気象庁本庁\",\"通常\",null]",
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "areaCount": 1,
+      "areaPreview": [
+        {
+          "name": "強風域",
+          "code": null,
+          "codeType": null,
+          "type": "悪天情報"
+        }
+      ],
+      "codeTypes": [
+        null
+      ],
+      "reviewStateAtCapture": "review_candidate",
+      "reviewExpiresAt": "2026-10-23T00:57:18.000Z",
+      "expiryBasis": "local_review_ttl_only"
+    },
+    {
+      "receipt": {
+        "feed": "regular_l.xml",
+        "title": "地上４８時間予想図",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022185800_0_VZSF51_010000.xml",
+        "updated": "2026-10-22T18:57:18Z",
+        "status": 200,
+        "capturedAt": "2026-10-23T00:56:05.802357+00:00",
+        "bytes": 147357,
+        "sha256": "111bc4b2d2ab76883d90c6d677bf3292c7740fd08fc732c64b13f7fcec54135d",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 00:56:05 GMT",
+          "Last-Modified": "Thu, 22 Oct 2026 18:58:41 GMT",
+          "ETag": "\"ef873ee8b6fb33968346ef8fa8b11640\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261022185800_0_VZSF51_010000.xml",
+        "sha256": "111bc4b2d2ab76883d90c6d677bf3292c7740fd08fc732c64b13f7fcec54135d",
+        "title": "地上４８時間予想図",
+        "headlineTitle": "地上４８時間予想図",
+        "editorialOffice": "気象庁本庁",
+        "publishingOffice": "気象庁",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "天気図情報",
+        "infoKindVersion": "1.1_1",
+        "sentAt": "2026-10-22T18:57:18Z",
+        "publishedAt": "2026-10-23T03:57:18+09:00",
+        "targetAt": "2026-10-22T21:00:00+09:00",
+        "validUntil": null,
+        "groupKey": "[\"地上４８時間予想図\",\"気象庁本庁\",\"通常\",null]",
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "areaCount": 0,
+      "areaPreview": [],
+      "codeTypes": [],
+      "reviewStateAtCapture": "review_candidate",
+      "reviewExpiresAt": "2026-10-23T00:57:18.000Z",
+      "expiryBasis": "local_review_ttl_only"
+    },
+    {
+      "receipt": {
+        "feed": "extra_l.xml",
+        "title": "台風解析・予報情報（５日予報）（Ｈ３０）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261023004042_0_VPTW60_010000.xml",
+        "updated": "2026-10-23T00:40:41Z",
+        "status": 200,
+        "capturedAt": "2026-10-23T00:56:06.430237+00:00",
+        "bytes": 56429,
+        "sha256": "7684deaf9425b949f6fa1757a51690fc074f872357aeff7026cd7f40cbe016a8",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 00:56:06 GMT",
+          "Last-Modified": "Fri, 23 Oct 2026 00:41:11 GMT",
+          "ETag": "\"ed932b6b0d74c99c377a83f69b8e33bb\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261023004042_0_VPTW60_010000.xml",
+        "sha256": "7684deaf9425b949f6fa1757a51690fc074f872357aeff7026cd7f40cbe016a8",
+        "title": "台風解析・予報情報（５日予報）（Ｈ３０）",
+        "headlineTitle": "台風解析・予報情報",
+        "editorialOffice": "気象庁本庁",
+        "publishingOffice": "気象庁",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": "TC2636",
+        "serial": "81",
+        "infoKind": "台風解析・予報情報（５日予報）",
+        "infoKindVersion": "1.0_2",
+        "sentAt": "2026-10-23T00:40:41Z",
+        "publishedAt": "2026-10-23T09:45:00+09:00",
+        "targetAt": "2026-10-23T09:00:00+09:00",
+        "validUntil": null,
+        "groupKey": "[\"台風解析・予報情報（５日予報）（Ｈ３０）\",\"気象庁本庁\",\"通常\",\"TC2636\"]",
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "areaCount": 1,
+      "areaPreview": [
+        {
+          "name": "熱帯低気圧",
+          "code": null,
+          "codeType": null,
+          "type": "台風情報"
+        }
+      ],
+      "codeTypes": [
+        null
+      ],
+      "reviewStateAtCapture": "review_candidate",
+      "reviewExpiresAt": "2026-10-23T06:45:00.000Z",
+      "expiryBasis": "local_review_ttl_only"
+    },
+    {
+      "receipt": {
+        "feed": "extra_l.xml",
+        "title": "気象警報・注意報（Ｈ２７）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261023005417_0_VPWW54_150000.xml",
+        "updated": "2026-10-23T00:54:16Z",
+        "status": 200,
+        "capturedAt": "2026-10-23T00:56:06.990419+00:00",
+        "bytes": 25598,
+        "sha256": "b0e4e129142ace8cbb5a37240a2e8dfe3756c6c3db1cc9b44a1a32b8447aeb77",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 00:56:06 GMT",
+          "Last-Modified": "Fri, 23 Oct 2026 00:54:46 GMT",
+          "ETag": "\"a1182e0e515dfa515d1b85815659f7f4\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261023005417_0_VPWW54_150000.xml",
+        "sha256": "b0e4e129142ace8cbb5a37240a2e8dfe3756c6c3db1cc9b44a1a32b8447aeb77",
+        "title": "気象警報・注意報（Ｈ２７）",
+        "headlineTitle": "新潟県気象警報・注意報",
+        "editorialOffice": "新潟地方気象台",
+        "publishingOffice": "新潟地方気象台",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "気象警報・注意報",
+        "infoKindVersion": "1.2_2",
+        "sentAt": "2026-10-23T00:54:16Z",
+        "publishedAt": "2026-10-23T09:54:00+09:00",
+        "targetAt": "2026-10-23T09:54:00+09:00",
+        "validUntil": null,
+        "groupKey": "[\"気象警報・注意報（Ｈ２７）\",\"新潟地方気象台\",\"通常\",null]",
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "areaCount": 94,
+      "areaPreview": [
+        {
+          "name": "新潟県",
+          "code": "150000",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（府県予報区等）"
+        },
+        {
+          "name": "下越",
+          "code": "150010",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（一次細分区域等）"
+        },
+        {
+          "name": "中越",
+          "code": "150020",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（一次細分区域等）"
+        },
+        {
+          "name": "上越",
+          "code": "150030",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（一次細分区域等）"
+        }
+      ],
+      "codeTypes": [
+        "気象情報／府県予報区・細分区域等",
+        "気象・地震・火山情報／市町村等",
+        null
+      ],
+      "reviewStateAtCapture": "review_candidate",
+      "reviewExpiresAt": "2026-10-23T06:54:00.000Z",
+      "expiryBasis": "local_review_ttl_only"
+    },
+    {
+      "receipt": {
+        "feed": "extra_l.xml",
+        "title": "気象警報・注意報（Ｒ０６）（波浪）",
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261023004920_0_VPWW59_280000.xml",
+        "updated": "2026-10-23T00:49:19Z",
+        "status": 200,
+        "capturedAt": "2026-10-23T00:59:54.711072+00:00",
+        "bytes": 28262,
+        "sha256": "be95afc12b829dc0bc4f29c877a4e0a77398d4ab8908663e2638bc54cb9a2171",
+        "headers": {
+          "Content-Type": "text/xml",
+          "Date": "Fri, 23 Oct 2026 00:59:54 GMT",
+          "Last-Modified": "Fri, 23 Oct 2026 00:50:08 GMT",
+          "ETag": "\"c6b93646bb977a4717274f204802b1fc\"",
+          "Cache-Control": "max-age=86400"
+        }
+      },
+      "metadata": {
+        "url": "https://www.data.jma.go.jp/developer/xml/data/20261023004920_0_VPWW59_280000.xml",
+        "sha256": "be95afc12b829dc0bc4f29c877a4e0a77398d4ab8908663e2638bc54cb9a2171",
+        "title": "気象警報・注意報（Ｒ０６）（波浪）",
+        "headlineTitle": "兵庫県波浪警報・注意報",
+        "editorialOffice": "神戸地方気象台",
+        "publishingOffice": "神戸地方気象台",
+        "status": "通常",
+        "infoType": "発表",
+        "eventId": null,
+        "serial": null,
+        "infoKind": "気象警報・注意報",
+        "infoKindVersion": "1.5_0",
+        "sentAt": "2026-10-23T00:49:19Z",
+        "publishedAt": "2026-10-23T09:49:00+09:00",
+        "targetAt": "2026-10-23T09:49:00+09:00",
+        "validUntil": null,
+        "groupKey": "[\"気象警報・注意報（Ｒ０６）（波浪）\",\"神戸地方気象台\",\"通常\",null]",
+        "intendedUse": "internal_metadata_review",
+        "navigationWarningComplete": false
+      },
+      "areaCount": 87,
+      "areaPreview": [
+        {
+          "name": "兵庫県",
+          "code": "280000",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（府県予報区等）"
+        },
+        {
+          "name": "南部",
+          "code": "280010",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（一次細分区域等）"
+        },
+        {
+          "name": "阪神",
+          "code": "280011",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（市町村等をまとめた地域等）"
+        },
+        {
+          "name": "播磨南東部",
+          "code": "280014",
+          "codeType": "気象情報／府県予報区・細分区域等",
+          "type": "気象警報・注意報（市町村等をまとめた地域等）"
+        }
+      ],
+      "codeTypes": [
+        "気象情報／府県予報区・細分区域等",
+        "気象・地震・火山情報／市町村等",
+        null
+      ],
+      "reviewStateAtCapture": "review_candidate",
+      "reviewExpiresAt": "2026-10-23T06:49:00.000Z",
+      "expiryBasis": "local_review_ttl_only"
+    }
+  ],
+  "totalResponseBodyBytes": 8687011,
+  "liveCorrectionsObserved": 0,
+  "liveCancellationsObserved": 0,
+  "geometryAndMarineZoneMapping": "not_implemented",
+  "navigationWarningComplete": false
+}
