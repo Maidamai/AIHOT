@@ -28,6 +28,11 @@ test("publication, issue, forecast and expiry clocks remain distinct; area codes
   assert.deepEqual(r.areas, [{ name: "海区A", code: "001", codeType: "海域表", type: null }, { name: "県A", code: "001", codeType: null, type: "陸域" }]);
   assert.equal(r.navigationWarningComplete, false);
 });
+test("binary input retains the original byte hash including BOM, and rejects invalid UTF-8", () => {
+  const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(xml())]);
+  assert.equal(parseJmaBulletin(bytes, url).sha256, jmaHash(bytes));
+  assert.throws(() => parseJmaBulletin(Buffer.from([0xff, 0xff]), url));
+});
 test("correction replaces latest by Control.DateTime, never serial or delivery order", () => {
   const first = report({ serial: "999" });
   const corrected = report({ info: "訂正", sent: "2026-10-23T00:10:00Z", serial: "1" });

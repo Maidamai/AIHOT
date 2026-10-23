@@ -50,9 +50,11 @@ export function parseJmaFeed(xml: string) {
 }
 
 export type JmaBulletin = ReturnType<typeof parseJmaBulletin>;
-export function parseJmaBulletin(xml: string, url: string) {
+export function parseJmaBulletin(input: string | Uint8Array, url: string) {
   jmaUrl(url);
   if (jmaFeeds.includes(url as typeof jmaFeeds[number])) throw new Error("Expected bulletin URL");
+  if (typeof input !== "string" && input.byteLength > 2_000_000) throw new Error("Oversized XML");
+  const xml = typeof input === "string" ? input : new TextDecoder("utf-8", { fatal: true }).decode(input);
   const r = parse(xml, 2_000_000).Report;
   const c = r?.Control, h = r?.Head;
   if (r?.["@_xmlns"] !== base || h?.["@_xmlns"] !== `${base}informationBasis1/` || !c) throw new Error("Unsupported JMAXML envelope");
@@ -75,7 +77,7 @@ export function parseJmaBulletin(xml: string, url: string) {
   };
   walk(h); walk(r.Body);
   return {
-    url, sha256: jmaHash(xml), title, headlineTitle: required(h.Title, "Head.Title"), editorialOffice,
+    url, sha256: jmaHash(input), title, headlineTitle: required(h.Title, "Head.Title"), editorialOffice,
     publishingOffice: required(c.PublishingOffice, "PublishingOffice"), status, infoType,
     eventId: text(h.EventID) || null, serial: text(h.Serial) || null,
     infoKind: required(h.InfoKind, "InfoKind"), infoKindVersion: required(h.InfoKindVersion, "InfoKindVersion"),
