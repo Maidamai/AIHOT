@@ -18,6 +18,7 @@ const batches: BatchListEntry[] = [
   { id: "synthetic-unreadable-batch", status: "unreadable", error: "Synthetic unreadable archive record" },
 ];
 let status: ArchiveStatus | undefined = initial;
+let sourceStatuses:ArchiveStatus[]|undefined;
 let browser: Browser;
 let web: WebServer;
 const reads: Array<{ path: string; method: string; cookie: string }> = [];
@@ -37,7 +38,7 @@ const api = fakeApi(async(url, response, request) => {
   if (!cookie.includes("admin_session=synthetic-archive")) { response.statusCode = 401; return { code: "unauthorized" }; }
   if (url.pathname === "/api/admin/me") return { name: "Synthetic admin", csrf: "synthetic-csrf", dev: false };
   if (url.pathname === "/api/admin/nav-counts") return {};
-  if (url.pathname === "/api/admin/fishery/batches") return { rows: batches, archiveStatus: status, progress: [], rounds: [] };
+  if (url.pathname === "/api/admin/fishery/batches") return { rows: batches, archiveStatus: status, archiveSources:sourceStatuses, progress: [], rounds: [] };
   if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/detail')return selectionMaterial;
   if(url.pathname==='/api/admin/fishery/documents/synthetic-selection-material/flows'){
    if(request.method==='GET')return {rows:[]};
@@ -122,6 +123,12 @@ test("collection status uses the original admin authentication redirect and neve
   assert.ok(response.headers.get("Location")?.startsWith("/api/auth/login?"));
   assert.equal(response.headers.get("Cache-Control"), "private, no-store");
   assert.ok(!(await response.text()).includes("synthetic-authorization"));
+});
+test("existing health page separates NPFC failures and six-hour cadence from healthy MARA",async()=>{
+ sourceStatuses=[{...initial,sourceId:'fishery-column-moa',sourceName:'MARA'},{...initial,sourceId:'fishery-column-npfc',sourceName:'NPFC',mode:'six_hourly',maxArticles:1,enabled:false,lastError:'Synthetic NPFC unavailable',consecutiveFailures:3,pausedReason:'Inspect NPFC before resuming',coverage:'current_page_only'}];
+ const {context,page}=await authorizedPage(390);
+ try{await visit(page,web.origin+'/admin/fishery/collect');const m=page.getByRole('region',{name:'MARA 受控归档状态'}),n=page.getByRole('region',{name:'NPFC 受控归档状态'});await expect(m.getByText('已启用',{exact:true})).toBeVisible();await expect(n.getByText('已暂停',{exact:true})).toBeVisible();await expect(n.getByText('每 6 小时',{exact:true})).toBeVisible();await expect(n.getByText('Synthetic NPFC unavailable',{exact:true})).toBeVisible();await expect(n.getByText('仅本页（current_page_only）',{exact:true})).toBeVisible();await expect(n.getByRole('link',{name:'核心信源'})).toHaveAttribute('href','/admin/sources/fishery-column-npfc');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}
+ finally{sourceStatuses=undefined;await context.close();}
 });
 
 test('single-task selection is opt-in, persists only the explicit choice and never starts model processing on creation',async()=>{

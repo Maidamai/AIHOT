@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { prepareOfficial, sha256, type ArchiveReceipt } from "../backend/source-adapters.ts";
 import { assertCaptureExportable } from "../backend/export.ts";
 import { canExportSummary, dateSchema, effectiveState, linkSchema, observationSchema, sourceSchema } from "../contracts.ts";
-import { observationFixture, sourceFixture, unknownDate,npfcRobotsFixture } from "./fixtures.ts";
+import { observationFixture, sourceFixture, unknownDate,npfcRobotsFixture,pdfFixture } from "./fixtures.ts";
 import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
 import { readFile, access, chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -210,7 +210,6 @@ test('selection refuses an overlong complete source before any model request',as
 });
 import {reviewFisheryDraft,buildFisheryReviewRequest,assertFisheryPairFits} from "../backend/ai-review.ts";
 import {buildEvidenceCatalog,evidenceBinding,assertEvidenceBinding,assertSavedEvidenceArtifact} from "../backend/evidence.ts";
-import { createHash } from "node:crypto";
 import { discoverIotc, iotcAttachment, prepareIotc } from "../backend/iotc-columns.ts";
 import {discoverColumnPagination} from "../backend/official-columns.ts";
 import {collectColumnRound,listColumnProgress,listColumnRounds} from "../backend/column-progress.ts";
@@ -800,34 +799,6 @@ test("observation and export gates refuse pending-as-effective or failed capture
 });
 
 // Generated PDF 1.4 fixtures: no third-party documents or persisted passwords.
-function pdfFixture(blank = false, encrypted = false, text = "Synthetic fishery evidence"): Buffer {
-  const md5 = (b: Buffer) => createHash("md5").update(b).digest();
-  const rc4 = (key: Buffer, input: Buffer) => {
-    const s = Array.from({ length: 256 }, (_, i) => i); let j = 0;
-    for (let i = 0; i < 256; i++) { j = (j + s[i]! + key[i % key.length]!) % 256; [s[i], s[j]] = [s[j]!, s[i]!]; }
-    let i = 0; j = 0;
-    return Buffer.from(input.map(v => { i = (i + 1) % 256; j = (j + s[i]!) % 256; [s[i], s[j]] = [s[j]!, s[i]!]; return v ^ s[(s[i]! + s[j]!) % 256]!; }));
-  };
-  const padding = Buffer.from("28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a", "hex");
-  const pad = (s: string) => Buffer.concat([Buffer.from(s), padding]).subarray(0, 32);
-  const id = md5(Buffer.from("synthetic-fishery-test")), p = Buffer.alloc(4); p.writeInt32LE(-4);
-  const owner = rc4(md5(pad("fixture-owner")).subarray(0, 5), pad("fixture-user"));
-  const key = md5(Buffer.concat([pad("fixture-user"), owner, p, id])).subarray(0, 5);
-  let content = Buffer.from(blank ? "" : `BT /F1 12 Tf 40 100 Td (${text}) Tj ET`);
-  if (encrypted) content = rc4(md5(Buffer.concat([key, Buffer.from([5, 0, 0, 0, 0])])).subarray(0, 10), content);
-  const objects = [
-    Buffer.from("<< /Type /Catalog /Pages 2 0 R >>"),
-    Buffer.from("<< /Type /Pages /Kids [4 0 R] /Count 1 >>"),
-    Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-    Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>"),
-    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`), content, Buffer.from("\nendstream")]),
-  ];
-  if (encrypted) objects.push(Buffer.from(`<< /Filter /Standard /V 1 /R 2 /Length 40 /O <${owner.toString("hex")}> /U <${rc4(key, padding).toString("hex")}> /P -4 >>`));
-  const chunks = [Buffer.from("%PDF-1.4\n")], offsets = [0]; let size = chunks[0]!.length;
-  objects.forEach((body, i) => { offsets.push(size); const chunk = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), body, Buffer.from("\nendobj\n")]); chunks.push(chunk); size += chunk.length; });
-  chunks.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${encrypted ? ` /Encrypt 6 0 R /ID [<${id.toString("hex")}><${id.toString("hex")}>]` : ""} >>\nstartxref\n${size}\n%%EOF\n`));
-  return Buffer.concat(chunks);
-}
 
 test("PDF commands read a private snapshot and retain byte hash and page evidence", async () => {
   const original = pdfFixture(); const expected = Buffer.from(original); let snapshot = "";

@@ -68,7 +68,7 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   const error=source.error??(unresolvedOld.length?"Pending identities disappeared from the observed list; inspect without declaring withdrawal":null);
   let coverage:z.infer<typeof healthSchema>["coverage"]="blocked";
   if(!error&&!failed.length&&source.pagination) {
-    if(next.pendingUrls.length) coverage="more_pages";
+    if(next.pendingUrls.length) coverage=source.pagination.scope==='verified_pagination'?"more_pages":source.pagination.scope;
     else if(source.pagination.nextUrl) {next.cursorUrl=source.pagination.nextUrl;coverage="more_pages";}
     else {
       coverage=source.pagination.scope==="verified_pagination"?"cycle_complete":source.pagination.scope;
@@ -97,6 +97,33 @@ async function readRound(file:string,id:string):Promise<ColumnRound> {
   return r;
 }
 
+// Preserve legacy evidence while isolating new DB single-source coordinators. Unknown ownership
+// is never guessed from a PID, elapsed time or round-name prefix.
+export async function columnProgressCoordinator(dataDir:string,columns:ColumnId[],storage:'file'|'db',id:string,resume=false,allowMissingOriginal=false){
+  const directory=root(dataDir),sourceDir=(column:ColumnId)=>path.join(directory,'sources',column);
+  const target=storage==='db'&&columns.length===1?sourceDir(columns[0]):directory;
+  if(storage==='file')return {directory:target,lock:path.join(target,'lock'),activeFile:path.join(target,'active-round.json')};
+  const locations=[directory,...columns.map(sourceDir)],chosen=new Set<string>();
+  for(const location of locations){
+    const refs=[path.join(location,'lock','owner.json'),path.join(location,'active-round.json')];
+    if(await exists(path.join(location,'lock'))&&!await exists(refs[0]))throw new Error('Archive lock ownership missing; preserve unknown evidence');
+    for(const reference of refs){
+      if(!await exists(reference))continue;
+      if((await stat(reference)).size>16*1024)throw new Error('Archive coordinator metadata exceeds bound');
+      const owner=z.object({roundId:batchIdSchema}).parse(JSON.parse(await readFile(reference,'utf8'))),file=path.join(directory,'rounds',owner.roundId,'manifest.json');
+      if(!await exists(file)){
+        if(resume&&allowMissingOriginal&&owner.roundId===id){chosen.add(location);continue;}
+        throw new Error(`Unknown archive coordinator ${owner.roundId}; preserve evidence for explicit reconciliation`);
+      }
+      const prior=await readRound(file,owner.roundId);
+      if(resume&&prior.id===id){if(serial(prior.columns)!==serial(columns))throw new Error('Preserved round source options differ');chosen.add(location);continue;}
+      if(prior.status!=='finished'&&prior.columns.some(c=>columns.includes(c)))throw new Error(`Unfinished round ${prior.id}; reconcile its original identity before this source`);
+    }
+  }
+  if(chosen.size>1)throw new Error('Original round has conflicting archive coordinators');
+  const selected=[...chosen][0]??target;return {directory:selected,lock:path.join(selected,'lock'),activeFile:path.join(selected,'active-round.json')};
+}
+
 export async function collectColumnRound(options:{id:string;dataDir:string;columns:ColumnId[];limit:number;maxPages:number;storage?:"file"|"db";store?:ColumnProgressStore;resume?:{acknowledgeStopped:true;reason:string};fetch?:ColumnFetcher;wait?:(ms:number)=>Promise<unknown>;checkpoint?:(stage:"child-persisted"|"before-source-commit"|"after-source-commit"|"before-journal-rename")=>Promise<void>}):Promise<ColumnRound> {
   if(options.storage==="db"&&options.columns.some(column=>!currentColumnLease(column)))return withColumnLeases(options.columns,()=>collectColumnRound(options));
   const guard=options.storage==="db"?assertColumnLeases:async()=>{};
@@ -104,17 +131,25 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
   const limit=z.int().min(1).max(5).parse(options.limit),maxPages=z.int().min(1).max(3).parse(options.maxPages);
   if(!columns.length) throw new Error("At least one column is required");
   const load=(column:ColumnId)=>options.store?options.store.load(column):loadState(options.dataDir,column);
-  const directory=root(options.dataDir),roundDir=path.join(directory,"rounds",id),file=path.join(roundDir,"manifest.json"),lock=path.join(directory,"lock"),activeFile=path.join(directory,"active-round.json");
+  const directory=root(options.dataDir),roundDir=path.join(directory,"rounds",id),file=path.join(roundDir,"manifest.json");
   await mkdir(path.join(directory,"rounds"),{recursive:true,mode:0o700});
   const previous=await exists(file)?await readRound(file,id):null;
   if((options.storage==="db")!==!!options.store) throw new Error("DB storage requires explicit DB store; no fallback");
   if(previous&&(previous.storage??"file")!==(options.storage??"file")) throw new Error("Round storage backend mismatch");
   if(previous&&!options.resume) throw new Error("Round exists; use explicit stopped-runner reconciliation, never overwrite it");
   if(!previous&&options.resume) throw new Error("No original round to resume");
+  if(options.resume)z.string().trim().min(12).max(1000).parse(options.resume.reason);
   if(previous&&(serial(previous.columns)!==serial(columns)||previous.limit!==limit||previous.maxPages!==maxPages)) throw new Error("Resume options must match the preserved round");
-  if(previous?.status==="finished") return previous; // Read-only idempotent replay, even if a newer round exists.
+  if(previous?.status==="finished"&&!options.resume) return previous; // Ordinary finished replays remain read-only.
+  const coordinator=await columnProgressCoordinator(options.dataDir,columns,options.storage??'file',id,!!options.resume),{lock,activeFile}=coordinator;
+  await mkdir(coordinator.directory,{recursive:true,mode:0o700});
+  if(previous?.status==='finished'){
+    // Explicit stopped-runner reconciliation can finish cleanup after a committed journal.
+    if(await exists(lock)){const owner=JSON.parse(await readFile(path.join(lock,'owner.json'),'utf8'));if(owner.roundId!==id)throw new Error('Another round owns collection');await guard();await rm(lock,{recursive:true});}
+    if(await exists(activeFile)){const active=JSON.parse(await readFile(activeFile,'utf8'));if(active.roundId===id){await guard();await rm(activeFile);}}
+    return previous;
+  }
   if(options.resume) {
-    z.string().trim().min(12).max(1000).parse(options.resume.reason);
     if(await exists(lock)) {
       const owner=JSON.parse(await readFile(path.join(lock,"owner.json"),"utf8"));
       if(owner.roundId!==id) throw new Error("Another round owns collection; stop and reconcile its actual identity");

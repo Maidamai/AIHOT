@@ -136,13 +136,15 @@ node modules/fishery/scripts/automatic-flows.ts --enable --after 2026-10-21T07:1
 
 导入重新核验原始列表身份、措施页标题、PDF文号/年份与声明日期；冲突、附件缺失和解析失败不进入待审正文。URL可能沿用旧年份，身份以列表、页面及PDF一致的文号为准。版本文号、声明日期保存在 `sourceCapture.regulatoryListing`；其适用海区和当前生效状态明确为unknown，原文发布、通过及生效日期也不从URL、文号年份或收录时间补造。列表标为current不等于适用于某公司、船旗、鱼种或作业地点。
 
-成功归档可经既有批次导入登记为未审核素材，转载权未知，不生成评分、摘要、审批或发布；普通读者不会因采集而看到新材料。NPFC后续明确的DB增量轮使用相同 `sources.cursor`、`fetch_runs`、独占来源租约和失败退避；同源正文变化使旧审核失效，失败不推进成功游标。源被隔离时禁止继续导入/采集。初版没有启用NPFC长期定时，农业农村部现有小时计划保持原样。
+成功归档可经既有批次导入登记为未审核素材，转载权未知，不生成评分、摘要、审批或发布；普通读者不会因采集而看到新材料。NPFC的DB增量轮使用相同 `sources.cursor`、`fetch_runs`、独占来源租约和失败退避；同源正文变化使旧审核失效，失败不推进成功游标。源被隔离时禁止继续导入/采集。持续归档需下述显式授权，默认不随代码安装启用，农业农村部现有小时计划保持原样。
+
+NPFC PDF保存可信ETag/Last-Modified后，后续回看发送条件GET。304必须绑定相同URL、原200完整PDF/收据及原已完成批次hash；新批次固化这些原件、来源manifest快照及本轮真实304，不伪造下载时间或200。每批重验独立于可丢缓存索引。缓存缺失/损坏、没有validator或不可信304至多额外一次无条件GET，失败不推进成功游标，旧证据保留。缓存写失败不否定已完整归档，失锁/取消仍阻断提交。
 
 福建通知公告的资金政策主要在附件，当前只完成页面和附件入口核验，尚未启用该新栏目；不能把公示、预算分配或已截止通知当作开放申报。JMA仍未启用，尚须验证载荷、订正/撤销和使用限制。
 
-### 单 Moa 无付费归档 worker
+### 按来源隔离的无付费归档 worker
 
-原 worker 默认 `WORKER_PROFILE=full` 不变。明确选择模块声明的 `WORKER_PROFILE=fishery-archive` 时，入口在任何核心内容、翻译、事件、报告、通知、恢复和模块付费消费者之前分流；要求 `MODEL_CALLS_ENABLED=false`、`COLLECT_ENABLED=false`。该模式只注册 `fishery.archive.moa.tick` 与 `fishery.archive.moa`，使用原 pg-boss；启动前读取全部既有 schedules，遇其他名称保留原表并拒绝启动，不调用会清理其他 cron 的原 `registerSchedules`。全局 supervise 关闭，仅监督这两个非付费队列以释放过期 active tick，均 retryLimit=0。
+原 worker 默认 `WORKER_PROFILE=full` 不变。明确选择模块声明的 `WORKER_PROFILE=fishery-archive` 时，入口在任何核心内容、翻译、事件、报告、通知、恢复和模块付费消费者之前分流；要求 `MODEL_CALLS_ENABLED=false`、`COLLECT_ENABLED=false`。该模式只允许 `fishery.archive.moa.tick` / `fishery.archive.npfc.tick` 及各自归档队列，使用原 pg-boss；只注册已显式授权的来源，启动前读取全部既有 schedules，遇其他名称保留原表并拒绝启动，不调用会清理其他 cron 的原 `registerSchedules`。全局 supervise 关闭，仅监督已授权的这些非付费队列，均 retryLimit=0。单源配置或执行错误分别记录，不停掉另一源；全局平台/白名单错误仍安全停止。
 
 操作员在原私有数据库/目录下显式设置（脚本不加载额外凭据）：
 
@@ -153,12 +155,21 @@ node modules/fishery/scripts/moa-archive.ts --status
 # 两轮完成后切正常间隔；旧短周期任务绑定旧 revision，不能继续GET。
 node modules/fishery/scripts/moa-archive.ts --enable --mode hourly --run-id <new-unique-run-id>
 node modules/fishery/scripts/moa-archive.ts --disable --mode hourly --run-id <current-run-id>
+# NPFC独立授权，验证同样最多两轮；正常节奏固定6小时，每轮最多一个措施全文。
+node modules/fishery/scripts/moa-archive.ts --column npfc --enable --mode validation --run-id <unique-npfc-validation> --interval-seconds 60
+node modules/fishery/scripts/moa-archive.ts --column npfc --status
+node modules/fishery/scripts/moa-archive.ts --column npfc --enable --mode six_hourly --run-id <unique-npfc-normal>
+node modules/fishery/scripts/moa-archive.ts --column npfc --disable --mode six_hourly --run-id <current-npfc-run-id>
 ```
 
-只有既有、`external/enabled=false` 的 `fishery-column-moa` 可运行；独立授权存原 settings 的 `fishery.archive.moa`，不启用核心信源采集。每分钟仅做一次 pg-boss 轻量 due tick，正常实际请求从上一轮完成后至少间隔3600秒，不会因小时 cron 边界秒差跳成两小时。每轮固定1个列表页、最多5篇正文（另有robots检查），pending 与分页/cycle游标复用原实现；未知分页不宣称全站遍历。失败尊重核心退避，连续3次失败暂停。状态直接复用原来源健康、job_runs 和既有管理员批次接口 `archiveStatus`，不新增运维页面。
+只有既有、`external/enabled=false` 且未隔离的 `fishery-column-moa` / `fishery-column-npfc` 可运行；独立授权存原 settings 的 `fishery.archive.<column>`，不启用核心信源采集。各源每分钟轻量 due tick；正常实际请求从上一轮完成后至少间隔Moa3600秒/NPFC21600秒，切换模式也不早于最近获取加该间隔。每轮固定1个列表页，Moa最多5篇、NPFC最多1份措施全文（另有robots检查），pending 与分页/cycle游标复用原实现；NPFC只检查当前可见一页，不宣称历史库覆盖。失败尊重核心退避，连续3次失败暂停。状态复用原来源健康、job_runs 和既有管理员批次页，逐源显示心跳、下次执行、范围和失败；配置损坏显示不可用，不自动重置。
 
 短周期验证在 GET 前持久化同 runId 的最多2次 claim；重复相同配置返回同 revision/claim，历史 validation runId 不可重新授予预算。进程重启、重复投递与切回 hourly 都不能绕过上限。状态切换由正在运行的专用 worker 在下一次心跳更新它自己的 schedule data；旧 revision 作业一律无请求跳过。hourly 切换的 nextAt 不早于最近获取后1小时，不立即产生第三轮请求。
 
 所有 DB `collectColumnRound`（包括原 CLI）与官方批次导入共用每源 PostgreSQL advisory 租约，使用专属 retained session；事务在该 session 内显式 BEGIN/COMMIT 并在写前/提交前核对 PID 与锁，权威游标、fetch_runs、素材观察提交不借共享池。连接丢失永久取消旧 owner、abort 在途HTTP；等待后、GET前后、归档和journal rename前均检查租约。新 owner 遇未决原轮次停止，不能自动偷锁或恢复未知请求；无关的付费流程租约/回执从不触碰。
+
+新DB单来源轮次的文件协调器分至 `fishery-column-progress/sources/<column>/`，原round/batch证据路径不变。启动仍检查旧全局协调器及所选来源协调器：能从原manifest证明异源的未完成轮不互阻，同源/重叠多源轮必须按原ID对账，缺manifest/未知锁不可猜测归属。原ID显式恢复继续用原协调器；已完成但未清理的协调文件只在合法停止说明与租约下清理，重放不再GET或重复入账。
+
+队列行在派发事务提交后可能先于 retained session 释放锁被消费者看到；消费者只对尚未取得初始来源租约的同一作业最多等待5秒，不重新认领轮次，不重发任何已经开始的GET。超过等待上限即失败并保留原current供显式对账；请求开始后的任何错误仍不自动重试。健康tick遇来源正被占用只记录跳过，不将正常归档误报为失败。
 
 正常完成的每个归档批次在同来源租约内调用既有 `importBatch`，只登记素材文书/观察和获取证据，默认待审；不建 core 待分析文章，不排 analyze/translate/report/paid flow，不审核、不发布。导入中断保留 current=importing，可显式对账复用相同原件与版本身份。停用保留 current/claim/证据且使旧作业失效；需继续原未决身份时先用相同 runId 重启原预算，再 `--resume --acknowledge-stopped --reason '<已证实原执行者停止的依据>'`。原 journal 存在就只按原身份 resume；不存在时仅在无 fetch_run 意图、无 child 归档且目录无证据的情况下，记录审计后从同一已授权 roundId 开始。未知意图/归档不能换新ID掩盖。running child 原件保持不变并明确保留，父轮以失败结束、不导入 running batch；对账同时准确结束该 roundId 的未结 job_runs。

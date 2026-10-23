@@ -161,7 +161,7 @@ import { buildApp } from "../../../apps/api/src/app.ts";
 import fishery from "../server.ts";
 import { exportMaterial, materialMarkdown } from "../backend/export.ts";
 import { createDocument, documentHistory, hash, importCapturedMaterial, observe, registerSource, review, sourceHealth, withdraw } from "../backend/store.ts";
-import { sourceFixture, observationFixture } from "./fixtures.ts";
+import { sourceFixture, observationFixture, npfcRobotsFixture, pdfFixture } from "./fixtures.ts";
 import { materialDetail } from "../backend/workbench.ts";
 import { sha256 } from "../backend/source-adapters.ts";
 import { workbench } from "../backend/workbench.ts";
@@ -1318,7 +1318,7 @@ test("cumulative amount budget uses validated received usage and reserves every 
 
 // The bounded archive adapter uses the original source/fetch ledger, without importing materials.
 import { columnDbProgress, COLUMN_CURSOR_KEY } from '../backend/column-db-progress.ts';
-import { collectColumnRound, initialColumnProgress } from '../backend/column-progress.ts';
+import { collectColumnRound, initialColumnProgress, columnProgressCoordinator } from '../backend/column-progress.ts';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -1432,11 +1432,15 @@ test('source bridge DB progress API reads core state rather than offline cursor'
     assert.equal(response.statusCode,200,response.body);assert.equal(response.headers['cache-control'],'no-store');
     const body=response.json();assert.equal(body.storage,'db');assert.equal(body.progress.find((row:{column:string})=>row.column==='moa').state.revision,0);assert.equal(body.sourceState.find((row:{id:string})=>row.id===bridgeSource).enabled,false);
     const offline=await app.inject({method:'GET',url:'/api/admin/fishery/batches?storage=file'});assert.equal(offline.json().storage,'file');assert.equal(offline.json().progress.find((row:{column:string})=>row.column==='moa').state.revision,99);
+    const [saved]=await sql`SELECT value FROM settings WHERE key='fishery.archive.moa'`;
+    await sql`INSERT INTO settings(key,value) VALUES('fishery.archive.moa','{"synthetic_invalid":true}') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
+    try{const broken=await app.inject('/api/admin/fishery/batches');assert.equal(broken.statusCode,200,broken.body);const states=broken.json().archiveSources;assert.equal(states.length,2);assert.match(states.find((s:{sourceId:string})=>s.sourceId===bridgeSource).pausedReason,/configuration unavailable/);assert.equal(states.find((s:{sourceId:string})=>s.sourceId==='fishery-column-npfc').sourceId,'fishery-column-npfc');}
+    finally{if(saved)await sql`UPDATE settings SET value=${sql.json(saved.value)} WHERE key='fishery.archive.moa'`;else await sql`DELETE FROM settings WHERE key='fishery.archive.moa'`;}
   } finally {config.devAdmin=null;await rm(file,{force:true});}
 });
 
 import {PgBoss} from 'pg-boss';
-import {ARCHIVE_KEY,ARCHIVE_TICK,ARCHIVE_QUEUE,archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker,assertArchiveSchedules} from '../backend/archive-worker.ts';
+import {ARCHIVE_KEY,ARCHIVE_TICK,ARCHIVE_QUEUE,archiveStatus,configureArchive,archiveTick,runArchiveJob,reconcileArchive,registerArchiveWorker,assertArchiveSchedules,npfcArchive,archiveSourceStatuses} from '../backend/archive-worker.ts';
 import {acquireColumnLease,withColumnLease} from '../backend/column-lease.ts';
 test('NPFC reuses source leases, core health and version invalidation without activating paid processing',async()=>{
  const id='fishery-column-npfc',url='https://www.npfc.int/cmm-2026-01-synthetic-integration';
@@ -1460,6 +1464,90 @@ test('NPFC reuses source leases, core health and version invalidation without ac
 const archiveUrl=(n:number)=>`https://yyj.moa.gov.cn/gzdt/202610/t20261021_${97000+n}.htm`;
 const archiveListing=(ids:number[])=>Buffer.from(`<ul class="sj_e_tonzhi_list">${ids.map(n=>`<li><a href="${archiveUrl(n)}">远洋渔业隔离归档${n}</a></li>`).join('')}</ul>`);
 const archiveBody=(n:number)=>Buffer.from(`<meta name="ArticleTitle" content="远洋渔业隔离归档${n}"><meta name="PubDate" content="2026-10-21"><div class="sj_arc_body"><div class="TRS_Editor"><p>ISOLATED TEST FIXTURE ${n} ${'远洋渔业公海履约完整合成上下文。'.repeat(12)}</p></div></div>`);
+test('NPFC and MARA archive jobs use independent coordinators, health and schedules without paid side effects',async()=>{
+ await archiveFixture();const b=await testArchiveBoss();let release!:()=>void;
+ const arrived=new Promise<void>(r=>release=r),key=npfcArchive.key,id='fishery-column-npfc';
+ const before=await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications`;
+ try{
+  await sql`DELETE FROM settings WHERE key=${key}`;
+  await sql`INSERT INTO sources(id,name,kind,enabled,cursor) VALUES(${id},'Synthetic NPFC archive','external',false,'{}') ON CONFLICT(id) DO UPDATE SET enabled=false,kind='external',participation_mode='editorial',cursor='{}',fail_count=0,last_error=NULL,last_fetch_at=NULL,last_ok_at=NULL,next_fetch_at=NULL`;
+  await sql`DELETE FROM fetch_runs WHERE source_id=${id} AND detail ? 'fisheryColumnRound'`;
+  await b.createQueue(npfcArchive.queue,{policy:'short',retryLimit:0});
+  const m=await configureArchive({enabled:true,mode:'validation',runId:'isolated-mara',intervalSeconds:10});
+  const n=await npfcArchive.configureArchive({enabled:true,mode:'validation',runId:'isolated-npfc',intervalSeconds:10});
+  await b.createQueue(ARCHIVE_TICK);await b.createQueue(npfcArchive.tick);
+  await b.schedule(ARCHIVE_TICK,'* * * * *');await b.schedule(npfcArchive.tick,'0 */6 * * *');await assertArchiveSchedules(b);
+  const mj=await claimArchive(b,m.revision),nj=await npfcArchive.archiveTick(b,n.revision);assert.ok('roundId' in nj);
+  await b.fetch(npfcArchive.queue);await b.complete(npfcArchive.queue,(nj as {jobId:string}).jobId);
+  const failed=npfcArchive.runArchiveJob({revision:n.revision,roundId:(nj as {roundId:string}).roundId},{wait:async()=>{},fetch:async()=>{release();return {url:'https://www.npfc.int/robots.txt',status:403,headers:{get:()=> 'text/plain'},body:Buffer.from('Synthetic blocked source')};}});
+  await arrived;
+  const success=runArchiveJob(mj,{wait:async()=>{},fetch:async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([88]):archiveBody(88)})});
+  assert.equal((await failed).outcome,'failure');assert.equal((await success).outcome,'success');
+  const states=await archiveSourceStatuses(),ms=states.find(s=>s.sourceId===bridgeSource)!,ns=states.find(s=>s.sourceId===id)!;
+  assert.equal(ms.consecutiveFailures,0);assert.ok(ms.lastSuccessAt);assert.equal(ns.consecutiveFailures,1);assert.equal(ns.lastSuccessAt,null);assert.equal(ns.maxArticles,1);assert.equal(ms.maxArticles,5);
+  assert.equal((await materialDetail((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${archiveUrl(88)}`)[0].id)).state,'pending');
+  assert.deepEqual(await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications`,before);
+  await npfcArchive.configureArchive({enabled:false,mode:'validation',runId:n.runId});
+  await sql`UPDATE sources SET last_error=NULL,fail_count=0,last_fetch_at=now(),next_fetch_at=NULL WHERE id=${id}`;
+  await assert.rejects(npfcArchive.configureArchive({enabled:true,mode:'hourly',runId:'wrong-cadence'}),/does not match/);
+  const normal=await npfcArchive.configureArchive({enabled:true,mode:'six_hourly',runId:'npfc-six-hour'});assert.equal(normal.intervalSeconds,21600);assert.ok(Date.parse(normal.nextAt!)>Date.now()+21500_000);
+  await sql`UPDATE sources SET participation_mode='isolated' WHERE id=${id}`;assert.equal((await npfcArchive.archiveStatus()).enabled,false);assert.match((await npfcArchive.archiveStatus()).pausedReason!,/isolated/);
+ }finally{await sql`DELETE FROM settings WHERE key=${key}`;await b.unschedule(ARCHIVE_TICK);await b.unschedule(npfcArchive.tick);await b.stop({graceful:false});}
+});
+test('source coordinators retain legacy unfinished and unknown evidence without blocking a proven unrelated source',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'source-coordinator-')),root=path.join(dir,'fishery-column-progress'),id='legacy-npfc-original';
+ await mkdir(path.join(root,'rounds',id),{recursive:true});await mkdir(path.join(root,'lock'));
+ const manifest=path.join(root,'rounds',id,'manifest.json');
+ await writeFile(manifest,JSON.stringify({storage:'db',version:'fishery-column-round/1',id,columns:['npfc'],limit:1,maxPages:1,startedAt:new Date().toISOString(),finishedAt:null,status:'running',outcome:null,sources:[],recoveries:[]}));
+ await writeFile(path.join(root,'lock','owner.json'),JSON.stringify({roundId:id}));await writeFile(path.join(root,'active-round.json'),JSON.stringify({roundId:id}));
+ const m=await columnProgressCoordinator(dir,['moa'],'db','new-mara');assert.equal(m.directory,path.join(root,'sources','moa'));
+ await assert.rejects(columnProgressCoordinator(dir,['npfc'],'db','new-npfc'),/Unfinished round/);
+ await assert.rejects(columnProgressCoordinator(dir,['moa','npfc'],'db','new-both'),/Unfinished round/);
+ assert.equal((await columnProgressCoordinator(dir,['npfc'],'db',id,true)).directory,root);
+ await rm(manifest);await assert.rejects(columnProgressCoordinator(dir,['moa'],'db','new-mara'),/Unknown archive coordinator/);
+ assert.equal((await columnProgressCoordinator(dir,['npfc'],'db',id,true,true)).directory,root);
+ const completed={storage:'db',version:'fishery-column-round/1',id,columns:['npfc'],limit:1,maxPages:1,startedAt:new Date().toISOString(),finishedAt:new Date().toISOString(),status:'finished',outcome:'success',sources:[],recoveries:[]};
+ await writeFile(manifest,JSON.stringify(completed));const owner=await readFile(path.join(root,'lock','owner.json'),'utf8');
+ await assert.rejects(collectColumnRound({id,dataDir:dir,columns:['npfc'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,resume:{acknowledgeStopped:true,reason:'x'},fetch:async()=>{throw new Error('no GET');}}));
+ assert.equal(await readFile(path.join(root,'lock','owner.json'),'utf8'),owner);
+ const replay=await collectColumnRound({id,dataDir:dir,columns:['npfc'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,resume:{acknowledgeStopped:true,reason:'Synthetic stopped runner after completed journal'},fetch:async()=>{throw new Error('no GET');}});assert.equal(replay.status,'finished');await assert.rejects(readFile(path.join(root,'lock','owner.json')),{code:'ENOENT'});await assert.rejects(readFile(path.join(root,'active-round.json')),{code:'ENOENT'});
+ await rm(dir,{recursive:true});
+});
+test('real scheduled NPFC validation rechecks the same PDF with 304 and never creates duplicate observations or paid work',{timeout:240000},async()=>{
+ await archiveFixture();const id='fishery-column-npfc',url='https://www.npfc.int/cmm-2026-01-scheduled-fixture',pdfUrl='https://www.npfc.int/system/files/2026-04/scheduled-fixture.pdf',title='CMM 2026-01 Synthetic scheduled fixture',pdf=pdfFixture(false,false,'CMM 2026-01 Synthetic scheduled fixture.');
+ await sql`DELETE FROM settings WHERE key=${npfcArchive.key}`;
+ await sql`INSERT INTO sources(id,name,kind,enabled,cursor) VALUES(${id},'Synthetic scheduled NPFC','external',false,'{}') ON CONFLICT(id) DO UPDATE SET kind='external',enabled=false,participation_mode='editorial',cursor='{}',fail_count=0,last_error=NULL,last_fetch_at=NULL,last_ok_at=NULL,next_fetch_at=NULL`;
+ await sql`DELETE FROM fetch_runs WHERE source_id=${id} AND detail ? 'fisheryColumnRound'`;
+ const listing=Buffer.from(`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`),landing=Buffer.from(`<div class="region-content"><h1>${title}</h1><div class="field--name-field-file"><span class="file-link"><a href="${pdfUrl}">PDF</a></span></div></div>`);
+ const before=await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications`;
+ const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'npfc_real_tick',schedule:true,supervise:false,cronMonitorIntervalSeconds:1}),statuses:number[]=[];b.on('error',()=>{});
+ try{
+  const c=await npfcArchive.configureArchive({enabled:true,mode:'validation',runId:'npfc-real-scheduler',intervalSeconds:10});
+  await b.start();await npfcArchive.registerArchiveWorker(b,{cron:'* * * * * *',pollingIntervalSeconds:0.5,wait:async()=>{},fetch:async(input,options)=>{
+   const status=input===pdfUrl&&options?.headers?.['if-none-match']?304:200;if(input===pdfUrl)statuses.push(status);
+   return {url:input,status,headers:{get:name=>name==='etag'&&input===pdfUrl?'"synthetic-scheduled-v1"':null},body:status===304?Buffer.alloc(0):input.endsWith('/robots.txt')?npfcRobotsFixture:input===COLUMNS.npfc.url?listing:input===url?landing:pdf};
+  }});
+  // pg-boss intentionally throttles each cron identity to one occurrence per minute, even
+  // with a seconds field; allow two real slots plus the complete PDF reparse/import.
+  try{await untilArchive(async()=>{const s=await npfcArchive.archiveStatus();return s.validationClaimed===2&&s.currentRound===null&&!!s.pausedReason;},210000);}
+  catch(error){throw new Error(JSON.stringify({message:String(error),statuses,status:await npfcArchive.archiveStatus(),jobs:await sql`SELECT name,state,output FROM npfc_real_tick.job`,runs:await sql`SELECT status,error,detail FROM job_runs WHERE job=${npfcArchive.queue}`}),{cause:error});}
+  assert.deepEqual(statuses,[200,304]);const [d]=await sql`SELECT id FROM fishery_documents WHERE canonical_url=${url}`;assert.ok(d);
+  const detail=await materialDetail(d.id);assert.equal(detail.state,'pending');assert.ok(detail.latest);assert.equal(detail.latest.revision,1);assert.equal(detail.observations.length,1);assert.equal(detail.reviews.length,0);
+  assert.deepEqual(await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows,(SELECT count(*) FROM publications) AS publications`,before);
+  const again=await npfcArchive.configureArchive({enabled:true,mode:'validation',runId:c.runId,intervalSeconds:10});assert.equal(again.claimed,2);assert.equal(again.revision,c.revision);assert.ok('skipped' in await npfcArchive.archiveTick(b,c.revision));assert.deepEqual(statuses,[200,304]);
+ }finally{await b.stop({graceful:false});await sql`DELETE FROM settings WHERE key=${npfcArchive.key}`;}
+});
+test('archive consumer waits for dispatch lease release without claiming again or retrying any started GET',async()=>{
+ await archiveFixture();const c=await configureArchive({enabled:true,mode:'validation',runId:'dispatch-lease-race',intervalSeconds:10});
+ await sql`UPDATE settings SET value=jsonb_set(value,'{nextAt}',${sql.json('2099-01-01T00:00:00Z')}) WHERE key=${ARCHIVE_KEY}`;
+ const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'archive_dispatch_race',schedule:false,supervise:false});b.on('error',()=>{});let gets=0;
+ try{
+  await b.start();await registerArchiveWorker(b,{pollingIntervalSeconds:0.5,wait:async()=>{},fetch:async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([89]):archiveBody(89)};}});
+  let roundId='';await withColumnLease('moa',async()=>{await dueArchive();const job=await archiveTick(b,c.revision);assert.ok('roundId' in job);roundId=(job as {roundId:string}).roundId;await new Promise(r=>setTimeout(r,1200));assert.equal(gets,0,'consumer cannot GET while dispatcher still owns the source lease');});
+  await untilArchive(async()=>(await archiveStatus()).lastRound===roundId);assert.equal(gets,3);assert.equal((await archiveStatus()).validationClaimed,1);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM archive_dispatch_race.job WHERE name=${ARCHIVE_QUEUE}`)[0].n,1);
+ }finally{await b.stop({graceful:false});}
+});
 let archivePreviousDataDir:string|undefined;
 afterEach(()=>{if(archivePreviousDataDir){config.dataDir=archivePreviousDataDir;archivePreviousDataDir=undefined;}});
 async function archiveFixture(){
@@ -1538,6 +1626,7 @@ test('explicit recovery handles queued and pre-manifest stopped rounds; disable 
     const same=await configureArchive({enabled:true,mode:'validation',runId:`recover-${stage}`,intervalSeconds:10});assert.equal(same.revision,c.revision);assert.equal(same.claimed,1);
     const disabled=await configureArchive({enabled:false,mode:'validation',runId:`recover-${stage}`});assert.equal(disabled.current!.id,job.roundId);assert.equal(disabled.claimed,1);assert.equal((await archiveStatus()).enabled,false);
     await configureArchive({enabled:true,mode:'validation',runId:`recover-${stage}`,intervalSeconds:10});
+    const coordinator=path.join(config.dataDir,'fishery-column-progress',...(stage==='queued'?['sources','moa']:[]));await mkdir(coordinator,{recursive:true});await writeFile(path.join(coordinator,'active-round.json'),JSON.stringify({roundId:job.roundId}));
     const result=await reconcileArchive('Synthetic stopped runner before its first journal/GET',{wait:async()=>{},fetch:async url=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=> 'text/html'},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([stage==='queued'?30:31]):archiveBody(30)})});
     assert.equal(result.round.id,job.roundId);assert.equal(result.round.outcome,'success');assert.equal((await archiveStatus()).currentRound,null);assert.equal((await archiveStatus()).validationClaimed,1);assert.equal((await archiveStatus()).pausedReason,null);
   }}finally{await b.stop({graceful:false});}
@@ -1557,6 +1646,7 @@ test('interrupted child remains unchanged while explicit reconciliation closes f
 import {spawn} from 'node:child_process';
 test('actual worker main archive profile starts and restarts without full consumers or foreign cron cleanup',async()=>{
   await archiveFixture();const c=await configureArchive({enabled:true,mode:'hourly',runId:'entry-profile-test'});
+  await sql`INSERT INTO settings(key,value) VALUES(${npfcArchive.key},'{"synthetic_invalid":true}') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
   await sql`UPDATE settings SET value=jsonb_set(value,'{nextAt}',${sql.json('2099-01-01T00:00:00.000Z')}) WHERE key=${ARCHIVE_KEY}`;
   const b=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'pgboss',schedule:false,supervise:false});b.on('error',()=>{});await b.start();
   const names=['content.analyze','content.translate','reports.compose','cron.ops.recover'];const ids:string[]=[];
@@ -1573,7 +1663,8 @@ test('actual worker main archive profile starts and restarts without full consum
       await untilArchive(async()=>(await b.getSchedules()).some(s=>(s.data as {revision?:string}).revision===switched.revision),20000);
       child.kill('SIGTERM');await new Promise<void>((resolve,reject)=>{child.once('exit',code=>code===0?resolve():reject(new Error('archive child exit '+code)));});}}
     assert.equal((await archiveStatus()).validationClaimed,null);assert.equal((await archiveStatus()).runId,'entry-profile-switched');
-  }finally{for(const child of children)child.kill('SIGKILL');await b.stop({graceful:false});}
+    assert.ok((await sql`SELECT id FROM job_runs WHERE job=${npfcArchive.queue+'.worker'} AND status='failed'`).length,'NPFC configuration failure is visible without preventing MARA startup/restart');
+  }finally{for(const child of children)child.kill('SIGKILL');await sql`DELETE FROM settings WHERE key=${npfcArchive.key}`;await b.stop({graceful:false});}
 });
 test('queued archive rechecks core source changes and failure pause before GET; disable remains available',async()=>{
   await archiveFixture();const b=await testArchiveBoss();try{const c=await configureArchive({enabled:true,mode:'validation',runId:'handler-source-guard',intervalSeconds:10}),job=await claimArchive(b,c.revision);
@@ -1592,7 +1683,7 @@ test('lease loss after journal temporary write blocks rename and preserves expli
   await assert.rejects(withColumnLease('moa',async lease=>collectColumnRound({id,dataDir:config.dataDir,columns:['moa'],limit:1,maxPages:1,storage:'db',store:columnDbProgress,checkpoint:async stage=>{if(stage==='before-journal-rename')await sql`SELECT pg_terminate_backend(${lease.backendPid})`;},fetch:async()=>{gets++;throw new Error('no GET');}})),/lease|connection/i);
   assert.equal(gets,0);await assert.rejects(readFile(path.join(config.dataDir,'fishery-column-progress','rounds',id,'manifest.json'),'utf8'),{code:'ENOENT'});
   const [s]=await sql`SELECT cursor,fail_count FROM sources WHERE id=${bridgeSource}`;assert.deepEqual(s.cursor,{});assert.equal(s.fail_count,0);
-  assert.ok(JSON.parse(await readFile(path.join(config.dataDir,'fishery-column-progress/lock/owner.json'),'utf8')).roundId===id);
+  assert.ok(JSON.parse(await readFile(path.join(config.dataDir,'fishery-column-progress/sources/moa/lock/owner.json'),'utf8')).roundId===id);
 });
 test('child directory without first manifest is retained and settled once without GET or import; next round uses unchanged cursor',async()=>{
   await archiveFixture();const b=await testArchiveBoss();let gets=0;
