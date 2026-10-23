@@ -6,6 +6,7 @@ import { sourceArticleAvailability } from "./source-availability.ts";
 import { publicSourceName } from "@aihot/backend/publication/rules";
 import { effectiveState, canExportSummary, type Observation, type SourceProfile } from "../contracts.ts";
 import { hash, lockDocument, sourceAttributionOf } from "./store.ts";
+import { readSourceBody } from './source-body.ts';
 import type { Blocker } from "../ui-contracts.ts";
 
 /** Read-only explanations and the export command use exactly the same eligibility checks. */
@@ -67,6 +68,10 @@ export async function exportMaterial(id: string, revision: number, actor: string
     if (blocked) throw new Conflict(`${errors[blocked.code]}：${blocked.message}`);
     const o = observation.payload;
     assertCaptureExportable(o);
+    if(o.sourceCapture?.pdfBlankReview){
+      try{if(!await readSourceBody(o.sourceCapture))throw new Error('Complete manual source required');}
+      catch(error){throw new Conflict(`Blank-page source proof no longer current: ${(error as Error).message}`);}
+    }
     const payload = {
       schemaVersion: "fishery-material/0.3", id, revision, state: "approved",
       title: o.title, originalTitle: o.originalTitle, summaryZh: o.summaryZh,

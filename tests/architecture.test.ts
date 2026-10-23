@@ -157,10 +157,12 @@ test("every environment variable the code reads is listed in a template, and eve
     ...tracked("*.service").flatMap((unit) => assigned(unit, /^Environment="?([A-Z][A-Z0-9_]+)=/gm)),
   ]);
   const read = envReads(production());
+  // Node injects this test-child marker; it is not a deployment setting or a supported user configuration knob.
+  const nodeRuntime = new Set(["NODE_TEST_CONTEXT"]);
   const readAnywhere = new Set([...read, ...envReads(sources("scripts")),
     ...[...production(), ...sources("scripts")].flatMap(({ text }) => matches(text, NAMED)),
     ...DEPLOYMENT.flatMap((file) => matches(readFileSync(path.join(ROOT, file), "utf8"), SUBSTITUTED))]);
-  assert.deepEqual([...read].filter((name) => !listed.has(name) && !preset.has(name)), [], "list it in an environment template, or stop reading it");
+  assert.deepEqual([...read].filter((name) => !listed.has(name) && !preset.has(name) && !nodeRuntime.has(name)), [], "list it in an environment template, or stop reading it");
   assert.deepEqual([...listed].filter((name) => !readAnywhere.has(name)), [], "no code reads it: remove it from the template");
 });
 

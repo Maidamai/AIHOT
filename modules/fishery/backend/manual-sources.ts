@@ -140,7 +140,7 @@ export async function listManualSources(dataDir:string) {
 export async function importManualSource(id:string,actor:string) {
   const r=await verifyManualSource(config.dataDir,id).catch(error=>{throw Object.assign(new Error(`Manual archive cannot be imported: ${(error as Error).message}`),{statusCode:400});}),m=r.manifest;
   const row=await importCapturedMaterial({id:`manual-${new URL(m.url).hostname.replace(/\./g,"-")}`,name:m.name,issuer:m.attribution},m.url,{
-    expectedRevision:0,originalTitle:m.title,title:m.title,summaryZh:"人工核验官方归档；尚待普通人工审核。HTTP回执及哈希不是网站签名；正文未包含图片附件的OCR内容。",language:"zh",rawSha256:m.rawSha256,dates:r.dates,policyStatus:"unknown",sourceCapture:r.sourceCapture,
+    expectedRevision:0,originalTitle:m.title,title:m.title,summaryZh:r.sourceCapture.pdfBlankReview?"官方原件归档，指定空白页已有明确审阅记录；尚待素材审核。审阅执行身份见审计，不能据此认定政策现行有效或正在申报；未进行OCR。":"人工核验官方归档；尚待普通人工审核。HTTP回执及哈希不是网站签名；正文未包含图片附件的OCR内容。",language:"zh",rawSha256:m.rawSha256,dates:r.dates,policyStatus:"unknown",sourceCapture:r.sourceCapture,
     scope:{regions:[],species:[],flags:[],activities:[],unknownFields:["regions","species","flags","activities"]},evidence:[{url:m.url,sha256:m.rawSha256,page:null,section:"人工核验公开官方原件；来源归属、日期、适用性和权利待人工复核"}],
   },actor);
   return {archiveId:id,rows:[row],reviewState:"check_current_document",modelCalls:0,published:false};
