@@ -2250,6 +2250,80 @@ test('explicit pristine handover has a read-only dry run and never releases paid
  assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE id=${placeholder.id}`).length,1);
 });
 
+async function supersededHandoverFixture(number:number){
+ const d=await automaticFixture(number),[article]=await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||'{"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id} RETURNING id`;
+ const old=await createFlow(d.id,{identity:`auto-superseded-${number}`,selection:true},'automatic-dispatch');
+ const snapshot={...old.snapshot,executionConfig:'0'.repeat(64)};
+ const decision={decision:'rejected',snapshotHash:hash(snapshot),actor:'automatic-dispatch',at:new Date().toISOString(),note:'Unstarted automatic placeholder superseded by new source evidence; no paid result was rejected.',internalOnly:true};
+ await sql`UPDATE fishery_flow_tasks SET snapshot=${sql.json(snapshot)},status='rejected',human_decision=${sql.json(decision)} WHERE id=${old.id}`;
+ const [proof]=await sql`INSERT INTO audit_log(actor,action,subject,reason,before,after) VALUES('automatic-dispatch','fishery.flow.auto_superseded',${'fishery:'+d.id},${decision.note},NULL,${sql.json({id:old.id,...decision})}) RETURNING id`;
+ const current=await createFlow(d.id,{identity:`auto-current-${number}`,selection:true},'automatic-dispatch');
+ return {...d,articleId:article.id,old,current,decision,snapshot,proofId:proof.id};
+}
+
+test('system-superseded handover requires exact zero-cost provenance and preserves audit, dates and the original ledger',async()=>{
+ await getBoss({schedule:false,supervise:false});
+ const d=await supersededHandoverFixture(969);
+ const ledger={id:TRIAL.id,maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny,entries:Array.from({length:53},(_,i)=>({id:i+1,state:'received',wireBytes:100,reservedMicroCny:TRIAL.reserveMicroCny,usage:{promptTokens:100,completionTokens:10,estimatedMicroCny:280}}))};
+ const [priorLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
+ await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json(ledger)}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
+ const [dates]=await sql`SELECT published_at,discovered_at,backfill FROM articles WHERE id=${d.articleId}`;
+ const [proofBefore]=await sql`SELECT * FROM audit_log WHERE id=${d.proofId}`;
+ const receiptCount=(await sql`SELECT count(*)::int AS n FROM receipts`)[0].n;
+ try{
+  const dry=await migrateOrdinaryDocumentPurpose(d.id,'fixture-operator','Synthetic proven zero-request migration',{dryRun:true});
+  assert.deepEqual(dry.queuedTaskIds,[d.current.id]);assert.deepEqual(dry.systemSuperseded,[{taskId:d.old.id,auditId:Number(d.proofId)}]);
+  assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE document_id=${d.id}`).length,2);
+  assert.equal((await sql`SELECT 1 FROM fishery_document_purposes WHERE document_id=${d.id}`).length,0);
+  assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${'fishery:'+d.id} AND action='fishery.native.handover'`).length,0);
+  const done=await migrateOrdinaryDocumentPurpose(d.id,'fixture-operator','Synthetic proven zero-request migration');
+  assert.equal(done.removedPlaceholders,2);assert.equal(await nativeArticlePermit(d.articleId),true);
+  assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE document_id=${d.id}`).length,0);
+  const [written]=await sql`SELECT before,after FROM audit_log WHERE subject=${'fishery:'+d.id} AND action='fishery.native.handover'`;
+  assert.equal(written.before.tasks.find((t:any)=>t.id===d.old.id).classification,'system_superseded');
+  assert.deepEqual(written.before.tasks.find((t:any)=>t.id===d.old.id).decision,d.decision);
+  assert.equal(written.before.tasks.find((t:any)=>t.id===d.current.id).classification,'pristine_queued');
+  assert.deepEqual(written.after,{purpose:'native',modelCalls:0});
+  assert.deepEqual((await sql`SELECT * FROM audit_log WHERE id=${d.proofId}`)[0],proofBefore);
+  assert.deepEqual((await sql`SELECT published_at,discovered_at,backfill FROM articles WHERE id=${d.articleId}`)[0],dates);
+  assert.deepEqual((await sql`SELECT value FROM settings WHERE key=${authorizationKey}`)[0].value,ledger);
+  assert.equal((await sql`SELECT count(*)::int AS n FROM receipts`)[0].n,receiptCount);
+  assert.equal((await sql`SELECT 1 FROM analyses WHERE article_id=${d.articleId}`).length,0);
+  assert.equal((await sql`SELECT 1 FROM publications WHERE article_id=${d.articleId}`).length,0);
+ }finally{if(priorLedger)await sql`UPDATE settings SET value=${sql.json(priorLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;}
+});
+
+test('system-superseded handover refuses forged markers, missing proof, started or paid work and explicit decisions',async t=>{
+ const variants=['actor-only','internal-only','missing-audit','mismatched-audit','audit-task-mismatch','snapshot-mismatch','source-evidence-mismatch','stale-current-queued','stage-request','structure-result','selection-outcome','document-receipt','article-receipt','manual-rejected','decision-audit','no-current-queued'] as const;
+ for(const [index,variant] of variants.entries())await t.test(variant,async()=>{
+  const d=await supersededHandoverFixture(980+index);
+  if(variant==='actor-only')await sql`UPDATE fishery_flow_tasks SET human_decision=${sql.json({...d.decision,internalOnly:false})} WHERE id=${d.old.id}`;
+  if(variant==='internal-only')await sql`UPDATE fishery_flow_tasks SET human_decision=${sql.json({...d.decision,actor:'fixture-operator'})} WHERE id=${d.old.id}`;
+  if(variant==='missing-audit')await sql`DELETE FROM audit_log WHERE id=${d.proofId}`;
+  if(variant==='mismatched-audit')await sql`UPDATE audit_log SET after=jsonb_set(after,'{snapshotHash}',${sql.json('f'.repeat(64))}) WHERE id=${d.proofId}`;
+  if(variant==='snapshot-mismatch')await sql`UPDATE fishery_flow_tasks SET snapshot=jsonb_set(snapshot,'{bodySha256}',${sql.json('e'.repeat(64))}) WHERE id=${d.old.id}`;
+  if(variant==='audit-task-mismatch')await sql`UPDATE audit_log SET after=jsonb_set(after,'{id}',${sql.json(d.current.id)}) WHERE id=${d.proofId}`;
+  if(variant==='source-evidence-mismatch'){
+   const snapshot={...d.snapshot,observationHash:'f'.repeat(64)},decision={...d.decision,snapshotHash:hash(snapshot)};
+   await sql`UPDATE fishery_flow_tasks SET snapshot=${sql.json(snapshot)},human_decision=${sql.json(decision)} WHERE id=${d.old.id}`;
+   await sql`UPDATE audit_log SET after=${sql.json({id:d.old.id,...decision})} WHERE id=${d.proofId}`;
+  }
+  if(variant==='stale-current-queued')await sql`UPDATE fishery_flow_tasks SET snapshot=jsonb_set(snapshot,'{observationHash}',${sql.json('d'.repeat(64))}) WHERE id=${d.current.id}`;
+  if(variant==='stage-request')await sql`UPDATE fishery_flow_tasks SET stage_requests='{"prefilter:1":{"subject":"synthetic","purpose":"prefilter_article"}}'::jsonb WHERE id=${d.old.id}`;
+  if(variant==='structure-result')await sql`UPDATE fishery_flow_tasks SET selection=jsonb_set(selection,'{structure,result}','{"receiptId":777}'::jsonb) WHERE id=${d.old.id}`;
+  if(variant==='selection-outcome')await sql`UPDATE fishery_flow_tasks SET selection=jsonb_set(selection,'{outcome}','{"label":"SCORED"}'::jsonb) WHERE id=${d.old.id}`;
+  if(variant==='document-receipt'||variant==='article-receipt')await sql`INSERT INTO receipts(logical_key,service,purpose,subject,status) VALUES(${`superseded-${d.id}`},'llm','prefilter_article',${variant==='document-receipt'?'fishery:'+d.id:'article:'+d.articleId+'@1'},'received')`;
+  if(variant==='manual-rejected')await sql`UPDATE fishery_flow_tasks SET human_decision=${sql.json({...d.decision,actor:'authorized-agent:fixture-decision',note:'Explicitly rejected publication; preserve original results'})} WHERE id=${d.old.id}`;
+  if(variant==='manual-rejected'||variant==='decision-audit')await sql`INSERT INTO audit_log(actor,action,subject,reason,after) VALUES('authorized-agent:fixture-decision','fishery.flow.decision',${'fishery:'+d.id},'Synthetic explicit editorial decision',${sql.json({id:d.old.id,...d.decision})})`;
+  if(variant==='no-current-queued')await sql`DELETE FROM fishery_flow_tasks WHERE id=${d.current.id}`;
+  const before=await sql`SELECT id,status,snapshot,human_decision,stage_requests,selection FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY id`;
+  await assert.rejects(migrateOrdinaryDocumentPurpose(d.id,'fixture-operator','Synthetic rejected migration must remain zero-request',{dryRun:true}));
+  assert.deepEqual(await sql`SELECT id,status,snapshot,human_decision,stage_requests,selection FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY id`,before);
+  assert.equal((await sql`SELECT 1 FROM fishery_document_purposes WHERE document_id=${d.id}`).length,0);
+  assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${'fishery:'+d.id} AND action='fishery.native.handover'`).length,0);
+ });
+});
+
 test('specified policy purpose is persisted explicitly without changing historical decisions or receipts',async()=>{
  const d=await automaticFixture(968),[document]=await sql`SELECT * FROM fishery_documents WHERE id=${d.id}`;
  await sql`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES(${reviewOnlyPolicyDocument},${document.source_id},'Synthetic policy purpose',${document.canonical_url+'-review-only'})`;
@@ -2257,5 +2331,6 @@ test('specified policy purpose is persisted explicitly without changing historic
  assert.equal((await initializeReviewOnlyPurpose()).length,1);
  const [purpose]=await sql`SELECT purpose FROM fishery_document_purposes WHERE document_id=${reviewOnlyPolicyDocument}`;assert.equal(purpose.purpose,'review_only');
  await assignNativeDocumentPurpose(reviewOnlyPolicyDocument);assert.equal((await sql`SELECT purpose FROM fishery_document_purposes WHERE document_id=${reviewOnlyPolicyDocument}`)[0].purpose,'review_only');
+ await assert.rejects(migrateOrdinaryDocumentPurpose(reviewOnlyPolicyDocument,'tester','Specified policy cannot be converted to ordinary news',{dryRun:true}),/purpose|review-only/);
  assert.deepEqual((await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows`)[0],before);
 });

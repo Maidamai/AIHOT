@@ -32,7 +32,7 @@ MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts h
 MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts configure --sources='fishery-column-moa,fishery-column-fujian,fishery-column-fujian-notices,fishery-column-jfa-press' --created-after='<已批准的ISO起点>' --enabled=false --actor='<操作者>' --reason='<不少于12字的范围核对原因>'
 ```
 
-零请求预演通过后，先用 `initialize-review-only --execute` 固化指定政策限制，再对完全相同且已核对的ID执行 `handover ... --execute`，保留输出和审计。接管本身不派发模型；显式开启同范围 `configure ... --enabled=true` 后，原生消费者才会扫描接入。`dispatch --documents='<明确UUID>'` 只对已配置范围和当前用途排队，不绕过许可。每次写操作之后重跑 `status`，比较范围revision、旧任务删除数量、用途和账本增量；初始化和接管均应零新增模型请求。
+零请求预演通过后，先用 `initialize-review-only --execute` 固化指定政策限制，再对完全相同且已核对的ID执行 `handover ... --execute`，保留输出和审计。接管只接受当前零请求 pristine queued 占位；同一文档的旧 rejected 占位只有在固定 automatic-dispatch supersede 决定、完整匹配的 auto_superseded 审计及原来源/观察 snapshot 都成立，且没有任何请求、评分、结构结果或付费回执时才可一同迁移。仅 actor 或 internalOnly 不能放行；任一 flow.decision 审计、真实拒发、已付费、仅审、撤回、专项提名、发布绑定或在途状态继续拒绝。dry-run列出两类任务及证明审计ID，execute保留原状态/决定分类审计，不写approved。接管本身不派发模型；显式开启同范围 `configure ... --enabled=true` 后，原生消费者才会扫描接入。`dispatch --documents='<明确UUID>'` 只对已配置范围和当前用途排队，不绕过许可。每次写操作之后重跑 `status`，比较范围revision、旧任务删除数量、用途和账本增量；初始化和接管均应零新增模型请求。
 
 **迁移、清理与启动顺序：**
 
