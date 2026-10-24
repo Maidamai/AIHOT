@@ -118,7 +118,7 @@ export const POLICY = {
 /** 导航（电脑侧栏、手机底栏、“我的”页）。 */
 export const NAV = {
   /** The original home entry may use a site-specific name; omitted sites keep 精选. */
-  homeLabel: "行业动态",
+  homeLabel: "精选",
   /**
    * 不放进导航的引擎入口，目前只支持热点榜（"/hot"）和主题（"/topics"）。页面照样能打开；原来回到它的返回按钮和链接改回精选，
    * 写 "/hot" 时首页也不放当前热点。
@@ -157,8 +157,8 @@ export const ABOUT = {
   steps: {
     collect: "从已配置来源收录资料，保留来源与原文链接。",
     store: "抓到的都存下来，同一件事的报道归到一起，热点榜就是从这里算出来的。",
-    select: `模型先看是不是这个行业的事、有没有实际信息，再写中文标题、摘要和${ITEM_COPY.reasonLabel}；公开展示以发布审核结果为准。`,
-    publish: "按实际发布情况查看日报、周报与月报；没有发布的期次不补造内容。",
+    select: `模型先看是不是这个行业的事、有没有实际信息，再写中文标题、摘要和${ITEM_COPY.reasonLabel}；普通资讯按原生流程进入全部动态，达到门槛且有信息增量的进入精选。`,
+    publish: "按真实内容自动编排日报、周报与月报；专项资料保留各自审核与用途限制，没有发布的期次不补造内容。",
   },
   /**
    * 作者块（选填），null 就不显示。

@@ -28,7 +28,7 @@ export async function loader({ request }: { request: Request }) {
 export function meta({ loaderData }: { loaderData?: { hot: HotResponse } }) {
   return pageMeta({
     title: withSubject("热点榜"),
-    description: !loaderData?.hot.entries.length ? "暂无符合近期热度规则的事件，可阅读行业动态与资料。" : `${subjectAfter("过去 48 小时", "圈")}讨论最多的 10 个事件：热度、走势，以及都有谁在报道。`,
+    description: !loaderData?.hot.entries.length ? "暂无符合近期热度规则的事件，可查看全部动态。" : `${subjectAfter("过去 48 小时", "圈")}讨论最多的 10 个事件：热度、走势，以及都有谁在报道。`,
     path: "/hot",
     image: "/og/pages/hot.png",
   });
@@ -284,7 +284,7 @@ export default function HotPage() {
 
       {!lead ? (
         <div className="card rounded-sheet">
-          <EmptyState title="暂无近期热点">近期已审资讯尚未形成符合热度规则的事件。<Link to="/" className="mt-3 block text-accent">阅读行业动态与资料 →</Link></EmptyState>
+          <EmptyState title="暂无近期热点">近期资讯尚未形成符合热度规则的事件。<Link to="/all" className="mt-3 block text-accent">阅读全部动态 →</Link></EmptyState>
         </div>
       ) : (
         <>

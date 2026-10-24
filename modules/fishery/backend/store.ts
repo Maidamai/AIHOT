@@ -1,10 +1,10 @@
+import {columnPublishedAt} from "./official-columns.ts";
 import {businessDependencyChanged} from './business-capture.ts';
 import { capturedTransaction } from "./column-lease.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { sql, type Db } from "@aihot/backend/db";
 import { upsertMaterial, reviseMaterial, contentHash, decideTimeline, explicitBackfill } from "@aihot/backend/content/materials";
 import { collapseWhitespace } from "@aihot/backend/lib/text";
-import { beijingAt } from "@aihot/contracts/time";
 import { audit, Conflict } from "@aihot/backend/audit";
 import { documentSchema, observationSchema, reviewSchema, sourceSchema, withdrawSchema, canExportSummary, type SourceProfile } from "../contracts.ts";
 
@@ -107,8 +107,11 @@ export async function listSources() {
 }
 export async function listDocuments() {
   const rows = await sql`SELECT d.*, o.revision, o.observed_at, o.actor, o.content_hash, o.payload, o.payload->>'title' AS title,
+    a.discovered_at AS material_discovered_at,a.backfill_reason AS material_backfill_reason,cs.cursor->'fisheryColumnProgress'->'firstSeen'->d.canonical_url->>'at' AS first_seen_at,
     r.decision, r.note, r.reviewed_at, r.actor AS reviewer, r.applicability_reviewed, r.revision AS reviewed_revision, r.source_revision AS reviewed_source_revision, s.revision AS source_revision
     FROM fishery_documents d JOIN fishery_sources s ON s.source_id = d.source_id
+    JOIN sources cs ON cs.id=d.source_id
+    LEFT JOIN LATERAL (SELECT discovered_at,backfill_reason FROM articles WHERE raw->>'fisheryDocumentId'=d.id::text AND raw->>'mode'='verified-news-candidate' ORDER BY created_at LIMIT 1) a ON true
     LEFT JOIN LATERAL (SELECT * FROM fishery_observations WHERE document_id = d.id ORDER BY revision DESC LIMIT 1) o ON true
     LEFT JOIN LATERAL (SELECT * FROM fishery_reviews WHERE document_id = d.id ORDER BY id DESC LIMIT 1) r ON true
     ORDER BY coalesce(o.observed_at, d.created_at) DESC, d.id DESC`;
@@ -149,9 +152,9 @@ async function ensureCaptureSource(column:CaptureColumn,actor:string,tx:Db){
   return {sourceId,enabled:false,rightsGranted:false};
 }
 type CapturedImport={id:string;revision:number;unchanged:boolean};
-export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedRequiredEvidenceOnly?:boolean}):Promise<CapturedImport|null>;
-export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string):Promise<CapturedImport>;
-export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean;changedRequiredEvidenceOnly?:boolean}={}) {
+export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly:true;changedRequiredEvidenceOnly?:boolean;nativeFirstSeenAt?:Date}):Promise<CapturedImport|null>;
+export function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options?:{nativeFirstSeenAt?:Date}):Promise<CapturedImport>;
+export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:string,input:unknown,actor:string,options:{existingOnly?:boolean;changedRequiredEvidenceOnly?:boolean;nativeFirstSeenAt?:Date}={}) {
   const { expectedRevision: _, ...payload } = observationSchema.parse(input);
   const sourceId = `fishery-column-${column.id}`;
   const archiveId=payload.sourceCapture?.archiveId;
@@ -199,6 +202,7 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     }
     await ensureCaptureSource(column,actor,tx);
     let [doc] = await tx`SELECT * FROM fishery_documents WHERE source_id=${sourceId} AND canonical_url=${canonicalUrl} FOR UPDATE`;
+    const newDocument=!doc;
     if (!doc) {
       [doc] = await tx`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES (${randomUUID()},${sourceId},${sourceAttribution},${canonicalUrl}) RETURNING *`;
       await audit(actor,"fishery.document",`fishery:${doc!.id}`,null,null,doc!,{db:tx});
@@ -221,6 +225,14 @@ export async function importCapturedMaterial(column:CaptureColumn,canonicalUrl:s
     const revision = (previous?.revision ?? 0) + 1;
     await tx`INSERT INTO fishery_observations(document_id,revision,actor,content_hash,payload) VALUES (${doc!.id},${revision},${actor},${hash(payload)},${tx.json(payload)})`;
     await audit(actor,"fishery.observe",`fishery:${doc!.id}`,"Manual captured batch; unreviewed",{revision:previous?.revision??0},{revision,contentHash:hash(payload)},{db:tx});
+    if(options.nativeFirstSeenAt&&payload.sourceCapture?.parseStatus==='parsed') {
+      const publicationTime=payload.sourceCapture.publishedAt??(payload.dates.published.precision==='day'?payload.dates.published.value:null);
+      const native=(await tx`SELECT 1 FROM fishery_document_purposes WHERE document_id=${doc!.id} AND purpose='native'`).length>0;
+      if(native||newDocument&&!decideTimeline(columnPublishedAt(column.id,publicationTime),options.nativeFirstSeenAt).backfill) {
+        const {assignNativeDocumentPurpose}=await import('./native-permit.ts');
+        await assignNativeDocumentPurpose(String(doc!.id),tx);
+      }
+    }
     return remember(tx,{ id:doc!.id as string, revision, unchanged:false });
   });
 }
@@ -246,7 +258,7 @@ export async function recordCapturedAcquisition(columnId:string,canonicalUrl:str
 }
 
 /** Verified news candidates enter the core URL/revision/timeline ledger before editorial review. */
-export async function storeCapturedNews(columnId:string,documentId:string,body:string,actor:string) {
+export async function storeCapturedNews(columnId:string,documentId:string,body:string,actor:string,firstSeenAt?:Date) {
   return capturedTransaction(columnId,async tx=>{
     const [source]=await tx`SELECT id,participation_mode FROM sources WHERE id=${`fishery-column-${columnId}`} FOR SHARE`;
     if(source?.participation_mode!=='editorial')throw new Conflict('Source is isolated; news material import disabled');
@@ -258,14 +270,18 @@ export async function storeCapturedNews(columnId:string,documentId:string,body:s
       throw new Conflict("Current verified news body required");
     // Previously published reference identities remain stable; no implicit migration or republishing.
     const [bound]=await tx`SELECT b.article_id FROM fishery_publication_bindings b JOIN articles a ON a.id=b.article_id WHERE b.kind='article' AND b.document_id=${documentId} AND a.raw->>'mode' IS DISTINCT FROM 'verified-news-candidate'`;
-    if(bound)return {articleId:String(bound.article_id),existingPublication:true};
+    if(bound) {
+      const [news]=await tx`SELECT id FROM articles WHERE source_id=${doc.source_id} AND url=${doc.canonical_url}
+        AND raw->>'fisheryDocumentId'=${documentId} AND raw->>'mode'='verified-news-candidate'`;
+      if(!news)return {articleId:String(bound.article_id),existingPublication:true};
+    }
     const publicationTime=capture.publishedAt??(payload.dates.published.precision==='day'?payload.dates.published.value:null);
     const title=collapseWhitespace(payload.originalTitle??payload.title).slice(0,1000)||doc.canonical_url;
-    const publishedAt=publicationTime?publicationTime.length===10?(columnId==='itf-fisheries'||columnId==='fao-tuna'?new Date(publicationTime+'T00:00:00Z'):columnId==='jfa-press'?new Date(publicationTime+'T00:00:00+09:00'):beijingAt(publicationTime,'00:00')):new Date(publicationTime):null;
+    const publishedAt=columnPublishedAt(columnId,publicationTime);
     const material=await upsertMaterial({sourceId:doc.source_id,url:doc.canonical_url,title,
       language:payload.language,bodyText:body,bodyStatus:'ok',publicationTime,
       publishedAt,
-      discoveredAt:new Date(doc.created_at),via:'fishery-news',raw:{fisheryDocumentId:documentId,mode:'verified-news-candidate'}},tx);
+      discoveredAt:firstSeenAt??new Date(doc.created_at),via:'fishery-news',raw:{fisheryDocumentId:documentId,mode:'verified-news-candidate'}},tx);
     const [current]=await tx`SELECT source_id,raw,title,body_text,excerpt,discovered_at,published_at_claim,publication_time,backfill_reason FROM articles WHERE id=${material.articleId} FOR UPDATE`;
     if(current.source_id!==doc.source_id||current.raw?.fisheryDocumentId!==documentId||current.raw?.mode!=='verified-news-candidate')
       throw new Conflict('Captured news identity is owned by another material; reconcile without overwriting it');
@@ -281,6 +297,9 @@ export async function storeCapturedNews(columnId:string,documentId:string,body:s
       if(material.revised)await tx`UPDATE articles SET ${set} WHERE id=${material.articleId}`;
       else await reviseMaterial(tx,material.articleId,{set,hash:contentHash({title,bodyText:body,excerpt:current.excerpt}),title,bodyText:body});
       material.revised=true;material.backfill=time.backfill;
+    }
+    if((await tx`SELECT 1 FROM fishery_document_purposes WHERE document_id=${documentId} AND purpose='native'`).length){
+      const {assignNativeDocumentPurpose}=await import('./native-permit.ts');await assignNativeDocumentPurpose(documentId,tx);
     }
     if(material.created||material.revised)await audit(actor,'fishery.news.material',`fishery:${documentId}`,'Verified body enters core material and timeline rules; no approval or publication',null,material,{db:tx});
     return material;

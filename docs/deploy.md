@@ -1,14 +1,62 @@
 # 部署
 
-### 远洋新闻增量链更新（2026-10-23）
+### 远洋资讯原生流程迁移（2026-10-24）
 
-本次无表结构迁移，不删除历史、审核或账本。部署前排空受控处理器与归档器；保留 `fishery.flow.dispatch` 原设置和旧镜像。用新镜像运行 `node modules/fishery/scripts/automatic-flows.ts --upgrade-source-scope`，显式将唯一旧 `sourceId` 转为同范围 `sourceIds` 数组；此操作幂等、保留授权边界和 revision，不启用新源、不重置费用。完成后再启动新处理器。该单条运行配置升级不放进在线 schema migration。
+此节是发布操作清单，不代表已在生产运行。普通资讯主线切回 core：预筛、双评分、structure、写作、归组、精选、事件综述和日/周/月报使用原生链；材料工作台只保留证据与专项审核。首页恢复上游精选timeline，空精选不再回退到普通文章池；相关低分稿和有效历史参考在 `/all` 按真实日期阅读，不删已有历史。网页以精选、全部动态、热点、主题及三类刊物为阅读入口，保留本站名称、品牌、分类、私有预览鉴权、来源全文许可和外部推送权限。
 
-要接通已授权的福建新闻，先核验官方最新列表和完整正文、正常注册来源，再通过现有 `moa-archive.ts --column fujian|fujian-notices` 启用 `hourly`，并用 `automatic-flows.ts --sources ...` 显式配置共同范围。新控制器默认关闭；NPFC节奏、素材审核、最终发布和累计10元闸门不变。
+**部署前只读检查与副本预演：**
 
-回滚先停止新归档器和处理器，保留期间产生的素材/审计/账本；恢复旧单源派发设置，并撤销新启用的福建运行计划后再启动旧镜像，避免旧版本拒绝新来源计划。不要回退数据库或费用账本。正文修订记录和当前列表检查证据保留。
+1. 固定待发布版本，并取得新的数据库、私有归档及部署配置快照；API、web、原生processor和archive使用相同版本。部署文件不得包含密钥，使用既有私有凭据注入。不要把审查日期的53次/¥0.699208当作上线账本现状。
+2. 停止旧普通新闻自动派发及旧consumer取新任务，等待在途请求落账。逐项导出文书/核心article修订、观察、用途、当前有效binding、flow/job、核心receipt及原累计发送账本；pending/unknown/refused、running与active必须逐项说明。账本连续、未决为0、原10元上限及既有模型/端点/容量全部核对后才考虑启用。不能初始化第二份额度或根据核心receipt数量重建旧账本。
+3. 在恢复的 `_test`/`_ci` 副本先执行迁移并运行只读 `status`。比较 `fishery.native.processing` 的 `sourceIds`、`createdAfter`、`enabled`、revision，以及每源归档授权、真实频率、下次执行、游标和逐篇阻塞。适配器登记不等于采集、模型或公开范围授权。原四源为 MARA、福建省局动态、福建通知公告、JFA；ITF/FAO/MPA后续单独扩围，NPFC保持专项范围，JMA独立事项，IOTC停用。
+4. 用明确文书ID预演旧任务接管，核对只有未付费、无产物、无人工决定的普通自动占位可转原生。先保存预演结果，再执行明确的接管命令；已付费结果不伪装成原生analysis，仍需逐条验证兼容性。有效13条历史参考及当前证据绑定保留；拒绝、撤回、隔离和仅审核不释放。指定政策 `5f67141e-47ee-4521-bd66-7e842936c02f` 只审不发；MPA `292f8e02-dcde-4bb6-9839-df372a1e142a` 保留真实历史日期。
+5. 执行下方隔离验证，确认低分相关稿进全部动态、高分增量稿按真实评分进入精选，多源事件、综述、日期和刊期边界正确，所有公开出口同资格。采集与模型只连本地假服务，推送一直关闭。周/月边界使用固定时钟演练，并与真实出刊区别记录。
 
-福建公告正文修复使用 `#detailCont` 全文容器和 v3 解析标记，旧 v2 不得直接用于模型输入；重新采集保留旧证据并使当前材料修订。部署前确认公告游标尚未建立；若已有游标，先核对来源配置变更，不重置进度。完整取得但尚不支持解析的 Office 附件记为 `needs_review`，后台可见、正文为空，不进入模型或发布，也不作为网络故障阻塞发现。缺失附件、扫描件和解析异常仍保留失败状态。回滚到不认识该状态的版本时先停公告调度，保留新归档；无需回退其他来源计划、数据库或费用账本。
+```bash
+MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts status
+npm run typecheck
+DATABASE_URL=postgres://127.0.0.1:5432/fishery_native_test MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false npm test
+npm run build -w @aihot/web
+node --test apps/web/tests/*.test.ts
+node scripts/smoke.ts --base http://localhost:3000
+```
+
+`status` 为只读，不发送模型请求。`handover` 与 `initialize-review-only` 默认dry-run，只读展示目标检查；`--execute` 才写。`configure` 是显式写操作，先保持 `--enabled=false` 记录已批准的来源/时间范围。不要用未审核的全库脚本代替逐项接管。`fishery.native.processing` 缺失或关闭时不会隐式启用普通处理。后台 `/admin/fishery/collect` 与只读 `/api/admin/fishery/native-processing` 展示实际范围、账本和最近处理状态，完整失败记录查看 `/admin/runs` 与内容诊断。
+
+先在副本核对下列命令的目标与输出，再将相同范围用于发布。`<...>` 必须替换成核对后的真实值；本手册不授予扩大处理范围的权限。
+
+```bash
+MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts initialize-review-only
+MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts retire-legacy --actor='<操作者>' --reason='<不少于12字的旧任务核对原因>'
+MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts handover --documents='<明确的1至20个文书UUID>' --actor='<操作者>' --reason='<逐项核对后的接管原因>'
+MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node scripts/fishery-native.ts configure --sources='fishery-column-moa,fishery-column-fujian,fishery-column-fujian-notices,fishery-column-jfa-press' --created-after='<已批准的ISO起点>' --enabled=false --actor='<操作者>' --reason='<不少于12字的范围核对原因>'
+```
+
+零请求预演通过后，先用 `initialize-review-only --execute` 固化指定政策限制，再对完全相同且已核对的ID执行 `handover ... --execute`，保留输出和审计。接管本身不派发模型；显式开启同范围 `configure ... --enabled=true` 后，原生消费者才会扫描接入。`dispatch --documents='<明确UUID>'` 只对已配置范围和当前用途排队，不绕过许可。每次写操作之后重跑 `status`，比较范围revision、旧任务删除数量、用途和账本增量；初始化和接管均应零新增模型请求。
+
+**迁移、清理与启动顺序：**
+
+停止旧消费者后，按 `node scripts/migrate.ts` 执行新增迁移；迁移完整文件名记账，不改已发布文件。新增schema迁移 `0108_fishery_document_purposes.sql` 仅建立用途表；指定政策通过上方显式初始化写入review_only，须在开启消费者前完成。`fishery.flow.dispatch` 保留现役专项提名范围，只撤掉其普通新闻分支，不能整key删除。旧 `fishery.news` 队列先停消费者并核对active/未决请求，再用 `retire-legacy` 默认dry-run列出旧队列与普通占位；`--execute` 在同一处理租约内仅取消未开始的created/retry旧news任务，完成及历史任务保留，不由worker启动偷偷删除。旧普通占位只有经显式接管才删除，审计保存原ID与状态。`fishery.flow`、业务指南、证据核查、历史回执及专项发布绑定仍在使用，不删表。运行前核对迁移清单，若接管删除占位会改变现有数据，先保留快照与预演记录。
+
+采集语义profile现只包含URL、列表与正文获取配置。已有旧profile先停止同源归档并读取原hash，逐源显式迁移，不能删除游标重新初始化：
+
+```bash
+MODEL_CALLS_ENABLED=false COLLECT_ENABLED=false node modules/fishery/scripts/migrate-column-progress.ts --column '<已核对栏目ID>' --expected-profile-hash '<当前持久profile哈希>' --reason '<不少于12字的采集配置核对证据>'
+```
+
+这是零GET、零导入、零模型的游标写操作。若需恢复旧partial已完成进度，另加 `--recover-round '<确切最新已结束roundID>'`，只在原before/sourceBinding与列表回执均能核对时恢复；未完成轮先按原ID显式resume，不能清零或跳过未知结果。保留历史、失败记录、首次发现时间及article原日期。新partial在列表成功时保存成功身份、firstSeen及逐篇待补证；`lastListingSuccessAt`、`lastBodySuccessAt`和`bodyFailures`分别显示，只有真实列表失败累计源退避与暂停，单篇正文失败不冻结同源新稿。
+
+新的原生消费者使用 `WORKER_PROFILE=fishery-native`；示例叠加配置在 `modules/fishery/deploy/native-processing.yaml`。它使用既有数据库、私有凭据、data卷和累计账本，默认模型关闭；同一处理租约内还消费专项flow和非付费发布，不启动通用采集、向量服务或任何对外推送。专用采集仍由独立 `fishery-archive` 负责，每源只有一个采集器。full、native、manual三类处理进程互斥，共用独占处理租约；scope启用时full拒绝注册消费者。切换先停止旧执行者取新任务并排空在途，再释放租约启动新进程；专项单次操作也须遵守同一租约，archive另有每源租约独立运行。
+
+原生常驻进程采用单副本 `restart: unless-stopped`，正常停机给515秒排空。故障重启仍须重新取得独占处理租约并核对同一持久账本，pending/unknown/refused保留原预留并阻止新请求；恢复已有回执不能自动重付未知请求。上线前在本地假服务中验证请求前中断、响应后中断和进程重启，不以容器重新运行当作费用已经核清。旧manual-processing的 `restart: no` 仅适用于专项人工操作。
+
+保持模型开关关闭，先核对API/web私有预览、来源/范围、任务、账本和受限对象。启用scope会取得同一处理租约，因此必须先停止full/native/manual执行者取新任务并排空在途、释放租约，再执行 `configure ... --enabled=true`；不要在已运行的native进程旁修改启用范围。随后用模型关闭的native进程检查注册与状态，核对后正常停止，最后只为新processor明确启用模型并启动。模型边界也覆盖 `translate_body`，但当前来源保持summary-only，受控native不注册 `content.translate`，没有启用或验证全文翻译调度。未来仅在来源明确授予 `site_fulltext`、另行核对处理范围及2048-token分段验证后才接入，不能把边界覆盖说成能力已经开放。所有当前原生付费步骤仍在发送前检查原授权和金额预留，沿用累计10元账本；原生写作/周月总述请求受原2048输出token及96,000字节包络限制，不因原函数请求较高输出而扩大额度。超限、截断或失败须保留可见停因，不算成功；如需扩大容量须另列发布授权。飞书、邮件、IndexNow、全文及公开上线配置逐项独立核对。
+
+运行后先观察原四源至少48小时并跨过两个日报边界：逐篇候选应有处理结果或明确阻塞，同源坏附件不冻结新稿，重启不重复付费，日报真实出刊，指定仅审核仍不可读。之后才评估ITF/FAO/MPA扩围；没有真实生产记录时只报告本地验证通过。
+
+**回退：**
+
+发现用途误放行、证据错配、重复计费或账本不连续，先关闭对应自动动作并正常停止取新任务，等待在途落账；保留全部新增文书、原件、审计、回执和费用。关闭原生scope后使用预先验证、能识别新用途和现有任务的兼容镜像恢复API/web/必要消费者，不盲启旧普通flow，也不恢复旧数据库抹掉已发生的费用。若旧镜像不认识新用途或新任务阶段，不能直接回退执行者；保持模型关闭并采用兼容修复版本。私有鉴权与来源权限保持原配置。
 
 ## 用 Docker（推荐）
 
@@ -305,20 +353,6 @@ cd apps/web && NODE_ENV=production node --env-file=../../.env server.ts   # 网�
 开发时用带热更新的方式：`npm run dev:api`、`npm run dev:worker`、`npm run dev:web`。开发时想免登录进后台，在 `.env` 里设 `DEV_AUTH_ROLE=admin`（生产环境会拒绝启动）。
 
 
-### 远洋资讯结构化事实升级（2026-10-23）
+### 远洋旧处理器升级说明
 
-模块迁移 `0105`–`0107` 仅为既有 `fishery_flow_tasks.stage` 增加 `structure`，按单语句分文件释放旧约束、添加并验证新约束。按正常备份、停止消费者、迁移、启动顺序执行；不删除文章、旧任务、证据或回执，也不回填旧任务。新处理器增加 `fishery.news`（自动重试0），保持现有单处理租约和累计10元账本，勿开启原完整worker作为替代。
-
-成刊检查附在既有消费者维护循环，只有到期的合格真实输入才执行；三类刊物均复用已审文案，不调用综述模型。无候选时维持空状态。回滚旧镜像可保留宽化后的约束和全部历史；若已经有新 `structure` 阶段或 `fishery.news` 活动任务，先正常停止并核对回执，旧消费者不能继续新阶段，不能回滚费用账本或删除任务。
-
-
-### 远洋资讯阅读与受控运行一致性（2026-10-23）
-
-本次无数据迁移、不重写历史审核或预算。部署API、web、受控archive与manual processor相同版本；沿用既有私有预览与管理员鉴权。旧/fishery入口鉴权后跳转主站，信源页读取真实专用调度；没有新环境变量或凭据。保留原镜像及部署配置可回滚，数据库与费用账本不回滚。受控processor新增非收费热度排名/采样维护，仍只在现有租约内运行；无已审近期输入时保持空态，刊物不生成空期刊。字段缺值新状态仅供显式编审，旧unknown保持未核实，无批量迁移。恢复旧镜像前如已保存新状态指南须先审核兼容性，不可让旧程序默默采用新断言。
-
-
-### 有界业务审核与最新采集额度（2026-10-23）
-
-本次无数据库迁移，不删除历史资料或回填旧 unknown。当前列表新 URL 与已知 URL 修订检查共用每源上限、分开选取；旧补采游标移入保留的 history，暂停深翻档案。业务审核提名存入既有审计，绑定当前证据及审核版本，自动派发和付费发送前都复核；日期与历史展示保持。来源页已收录/适配/启用/正常周期验证读取服务端实际状态。
-
-日本水产厅适配器默认关闭。部署相同 API/web/archive/processor 版本后，核验官方用途许可、登记 external 来源（核心 enabled=false）并显式配置专用 hourly 调度，才会持续采集；自动派发来源范围需单独明确增加，不能把仅写入配置目录称为上线。保留旧镜像、部署配置、数据库和私有归档备份。若回滚到不认识 jfa-press 的版本，先停止归档处理器，禁用日本水产厅计划并移除其 pg-boss 调度，再恢复旧处理器；保留材料、审计、游标和预算账本。回滚不得清除累计费用或将历史材料标为新资讯。
+2026-10-23的普通新闻 `fishery.flow` → `fishery.news` → 维护循环成刊路径已由上方原生迁移替换，不再按旧说明启用或恢复。`0105`–`0107` 已发布的阶段迁移保持原样，历史任务及专项核查仍需识别这些阶段；已有回执和累计账本不回滚。既有日期、机构角色、附件、私有预览和业务指南证据约束继续保留，旧验收记录只代表其记录日期的运行结果。

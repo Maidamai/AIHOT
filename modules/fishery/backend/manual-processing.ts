@@ -1,4 +1,3 @@
-import { newsQueue, composeApprovedReports, refreshApprovedHot, type NewsJob } from "./news-editorial.ts";
 import { publicationQueue, type PublicationJob } from "./publication-queue.ts";
 // Approved flows and their core publication/event continuations share one serial consumer.
 import type { PgBoss } from "pg-boss";
@@ -42,7 +41,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     // Stop fetching first and let any already-sent response settle before releasing ownership.
     // stopBoss/shutdownSignal is called by the entry point only after this drain completes.
     await publicationMaintenance;
-    try {await Promise.all([boss.offWork(newsQueue.name,{wait:true}),boss.offWork(flowQueue.name,{wait:true}),boss.offWork(publicationQueue.name,{wait:true}),boss.offWork(QUEUES.republishSource,{wait:true})]);} finally {await lease.release();}
+    try {await Promise.all([boss.offWork(flowQueue.name,{wait:true}),boss.offWork(publicationQueue.name,{wait:true}),boss.offWork(QUEUES.republishSource,{wait:true})]);} finally {await lease.release();}
   };
   try {
     await ensureQueue(flowQueue.name,flowQueue.options);
@@ -64,13 +63,6 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
       if(stopping) throw new Error("Fishery processor stopped; no publication task may be claimed");
       return serialRun(async()=>{await lease.assertHeld();return runPublication(jobs.map(job=>job.data));});
     });
-    await ensureQueue(newsQueue.name,newsQueue.options);
-    const news=await boss.getQueue(newsQueue.name);
-    if(!news||news.retryLimit!==0)throw new Error('fishery.news must not automatically retry paid calls');
-    await boss.work<NewsJob>(newsQueue.name,{batchSize:1,localConcurrency:1},async jobs=>{
-      if(stopping)throw new Error('Fishery processor stopped');
-      return serialRun(async()=>{await lease.assertHeld();return newsQueue.run(jobs.map(j=>j.data));});
-    });
     // Admin source edits use the core projection job; reuse it without enabling general paid workers.
     await work(boss,QUEUES.republishSource,{batchSize:1,localConcurrency:1,pollingIntervalSeconds:2},async data=>{
       if(stopping) throw new Error("Fishery processor stopped; no source projection may be claimed");
@@ -79,7 +71,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     let maintaining=false;
     const maintain=async()=>{
       if(stopping) return;if(maintaining) return publicationMaintenance;maintaining=true;
-      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await boss.supervise(newsQueue.name);await boss.supervise(QUEUES.republishSource);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});await serialRun(async()=>{await refreshApprovedHot();await composeApprovedReports();});}
+      try {await lease.assertHeld();await boss.supervise(publicationQueue.name);await boss.supervise(QUEUES.republishSource);await dispatchAutomaticDocuments(undefined,{assertHeld:lease.assertHeld});}
       catch {if(!stopping) console.error(JSON.stringify({level:"error",msg:"fishery publication queue maintenance failed",queue:publicationQueue.name}));}
       finally {maintaining=false;}
     };
@@ -89,7 +81,7 @@ export async function registerManualFlowConsumer(boss:PgBoss,run=flowQueue.run,o
     stopWatch=lease.watch(error=>{
       stopping=true;stopHeartbeat();stopPublicationMaintenance();
       console.error(JSON.stringify({level:"error",msg:"fishery processing lease lost",instanceId:lease.instanceId,pid:process.pid,leaseBackendPid:lease.backendPid,taskId:currentTask,noAutomaticRetry:true}));
-      void Promise.all([boss.offWork(newsQueue.name,{wait:false}),boss.offWork(flowQueue.name,{wait:false}),boss.offWork(publicationQueue.name,{wait:false}),boss.offWork(QUEUES.republishSource,{wait:false})]).catch(()=>{});
+      void Promise.all([boss.offWork(flowQueue.name,{wait:false}),boss.offWork(publicationQueue.name,{wait:false}),boss.offWork(QUEUES.republishSource,{wait:false})]).catch(()=>{});
       options.onLeaseLost?.(error);
     },options.watchIntervalMs);
     return release;

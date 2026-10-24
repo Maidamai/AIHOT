@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Link } from "react-router";
 import { adminGet } from "@aihot/web/lib/admin.server";
 import { useAdminAction } from "@aihot/web/features/admin/action";
-import { AdminPage, Badge, Button, Card, Empty, Time } from "@aihot/web/features/admin/ui";
+import { AdminPage, Badge, Button, Card, Empty, KV, Time } from "@aihot/web/features/admin/ui";
 import type { ComponentProps, LoaderArgs } from "@aihot/web/lib/route-types";
 import type { ArchiveStatus } from "../backend/archive-worker.ts";
 import type { BatchListEntry } from "../backend/column-batches.ts";
@@ -11,10 +11,35 @@ import { noStore, useFreshMaterial } from "./shared.tsx";
 import {noticeDeadlineState} from '../contracts.ts';
 import {beijingDate} from '@aihot/contracts/time';
 import { SourceStages } from "@aihot/web/features/admin/source-runtime";
+import type { nativeProcessingStatus } from "../backend/native-processing.ts";
 
 export const headers = noStore;
-export async function loader({request}:LoaderArgs) { return adminGet<{rows:BatchListEntry[];archiveStatus?:ArchiveStatus;archiveSources?:ArchiveStatus[];progress?:Awaited<ReturnType<typeof listColumnProgress>>;rounds?:Awaited<ReturnType<typeof listColumnRounds>>}>(request,"/api/admin/fishery/batches"); }
+type NativeStatus=Awaited<ReturnType<typeof nativeProcessingStatus>>;
+export async function loader({request}:LoaderArgs) {
+  const [batches,native]=await Promise.allSettled([
+    adminGet<{rows:BatchListEntry[];archiveStatus?:ArchiveStatus;archiveSources?:ArchiveStatus[];progress?:Awaited<ReturnType<typeof listColumnProgress>>;rounds?:Awaited<ReturnType<typeof listColumnRounds>>}>(request,"/api/admin/fishery/batches"),
+    adminGet<NativeStatus>(request,"/api/admin/fishery/native-processing"),
+  ]);
+  if(batches.status==="rejected")throw batches.reason;
+  if(native.status==="rejected"&&native.reason instanceof Response)throw native.reason;
+  return {...batches.value,native:native.status==="fulfilled"?native.value:null,nativeError:native.status==="rejected"?String(native.reason?.data?.message??native.reason?.message??"原生处理状态不可读取；请查看运行记录"):null};
+}
 const COVERAGE: Record<string, string> = { more_pages: "尚有后续页", cycle_complete: "本轮页循环完成（非全站覆盖）", pagination_unverified: "分页待核验", current_page_only: "仅本页", blocked: "范围受阻" };
+const NATIVE_BLOCKERS:Record<string,string>={scope_disabled:"原生处理范围尚未启用",article_missing:"核心文章不存在",source_out_of_scope:"来源不在已授权处理范围",historical:"历史资料，不属于普通近期资讯处理",before_created_after:"首次发现时间早于授权起点",purpose_or_evidence_restricted:"用途、当前证据、来源或人工限制不允许原生处理"};
+
+function NativeProcessing({status,error}:{status:NativeStatus|null;error:string|null}) {
+  if(!status?.authorization)return <Card title="原生资讯处理"><p role="alert" className="text-[13px] text-hot">{error??"未取得完整处理范围及累计账本状态，不能据此判断处理已开启。"}</p></Card>;
+  const scope=status.config,ledger=status.authorization,unsettled=ledger.states.filter(s=>s!=="received").length;
+  return <Card title="原生资讯处理" right={<Link to="/admin/runs" className="text-accent">运行与确切停因</Link>}>
+    <div className="mb-3 flex flex-wrap gap-2"><Badge tone={scope?.enabled?"ok":"muted"}>{scope?.enabled?"处理范围已启用":"处理范围未启用"}</Badge>{unsettled>0&&<Badge tone="warn">未核清请求 {unsettled} 条</Badge>}</div>
+    <p className="mb-3 text-[13px] text-ink-3">范围内普通资讯直接使用核心预筛、评分、写作、事件和刊物流程，无需材料审批；登记来源、开启归档和授权模型范围是不同操作。本页只读，不开启任务或扩大范围。模型开关、worker实际运行与失败情况还须核对运行记录。</p>
+    <KV items={[["授权来源",scope?.sourceIds.join("、")??"尚未配置"],["首次发现起点",scope?.createdAfter??"尚未配置"],["范围版本",scope?.revision??"尚未配置"],["累计账本请求",`${ledger.entryCount} 次`],["已结算估算 / 占用上限",`¥${(ledger.spentMicroCny/1e6).toFixed(6)} / ¥${(ledger.maxReservedMicroCny/1e6).toFixed(2)}`],["未决预留",`¥${(ledger.unsettledReserveMicroCny/1e6).toFixed(6)}`]]}/>
+    {unsettled>0&&<p role="alert" className="mt-3 text-[13px] text-hot">累计账本存在 pending / unknown / refused 或未结清项；先逐条核账，不通过重启或新任务重发。</p>}
+    <h3 className="mt-5 text-[14px] font-semibold">最近核心内容 · 最多 50 条</h3>
+    <ul className="mt-3 space-y-3 text-[13px]">{status.articles.map(a=><li key={a.id} className="break-words rounded-control bg-bg-sunk p-3"><Link className="text-accent" to={`/admin/content/${a.id}`}>{a.id}</Link> · 用途 {a.purpose??"旧专项/未接管"} · 处理 {a.processingState} · 归组 {a.groupingStatus??"未记录"} · 发布投影 {a.publicationVisibility??"无"}{a.documentId&&<Link className="ml-3 text-accent" to={`/admin/fishery/${a.documentId}`}>原件证据</Link>}{a.blockedReason&&<p role="status" className="mt-1 text-hot">{NATIVE_BLOCKERS[a.blockedReason]??a.blockedReason}（{a.blockedReason}）</p>}{a.processingError&&<p role="status" className="mt-1 whitespace-pre-wrap text-hot">{a.processingError}</p>}</li>)}</ul>
+    {!status.articles.length&&<p className="mt-3 text-[13px] text-ink-3">暂无最近核心内容记录；不代表采集器已开启或全部历史内容已处理。</p>}
+  </Card>;
+}
 
 function ArchiveHealth({ status }: { status: ArchiveStatus | undefined }) {
   const name=status?.sourceName??"Moa";
@@ -29,7 +54,9 @@ function ArchiveHealth({ status }: { status: ArchiveStatus | undefined }) {
       <p className="mb-4 text-[13px] leading-relaxed text-ink-3">已收录、已适配、已启用和正常周期已验证分别表示不同进度。核心通用采集关闭不表示来源暂停；受控归档的实际执行以下次时间和当前轮记录为准。每轮最多 {status.maxPages} 个列表页、{status.maxArticles} 篇文章，不代表全站覆盖。</p>
       <dl className="grid gap-x-6 gap-y-4 text-[13px] sm:grid-cols-2 xl:grid-cols-4">
         <div><dt className="mb-1 text-ink-3">最后心跳</dt><dd><Time at={status.heartbeatAt} /></dd></div>
-        <div><dt className="mb-1 text-ink-3">最近成功</dt><dd><Time at={status.lastSuccessAt} /></dd></div>
+        <div><dt className="mb-1 text-ink-3">最近列表成功</dt><dd><Time at={status.lastListingSuccessAt??status.lastSuccessAt} /></dd></div>
+        <div><dt className="mb-1 text-ink-3">最近正文成功</dt><dd><Time at={status.lastBodySuccessAt??null} /></dd></div>
+        <div><dt className="mb-1 text-ink-3">本轮单篇正文失败</dt><dd>{status.bodyFailures??"未记录"}</dd></div>
         <div><dt className="mb-1 text-ink-3">最近失败</dt><dd><Time at={status.lastFailureAt} /></dd></div>
         <div><dt className="mb-1 text-ink-3">下次执行</dt><dd><Time at={status.nextRunAt} /></dd></div>
         <div><dt className="mb-1 text-ink-3">当前轮</dt><dd className="break-all">{status.currentRound ?? "未记录"}</dd></div>
@@ -37,7 +64,7 @@ function ArchiveHealth({ status }: { status: ArchiveStatus | undefined }) {
         <div><dt className="mb-1 text-ink-3">近期待采</dt><dd>{status.latestPending ?? "未知"}</dd></div>
         <div><dt className="mb-1 text-ink-3">历史延后</dt><dd>{status.historyDeferred ?? "未知"}</dd></div>
         <div><dt className="mb-1 text-ink-3">正文修订复核</dt><dd>{status.revisionChecks ?? "未知"}</dd></div>
-        <div><dt className="mb-1 text-ink-3">连续失败</dt><dd className={status.consecutiveFailures ? "text-hot" : ""}>{status.consecutiveFailures}</dd></div>
+        <div><dt className="mb-1 text-ink-3">列表连续失败</dt><dd className={status.consecutiveFailures ? "text-hot" : ""}>{status.consecutiveFailures}</dd></div>
         <div className="sm:col-span-2"><dt className="mb-1 text-ink-3">列表游标与页范围</dt><dd className="break-all">{status.cursorUrl ?? "未知"}</dd><dd className="mt-1 text-ink-3">{status.coverage ? `${COVERAGE[status.coverage] ?? status.coverage}（${status.coverage}）` : "覆盖范围未知"}</dd></div>
         <div className="sm:col-span-2"><dt className="mb-1 text-ink-3">归档授权批号</dt><dd className="break-all">{status.runId ?? "未记录"}</dd>{status.mode === "validation" && <dd className="mt-1 text-ink-3">验证轮次已认领 {status.validationClaimed ?? "未知"}/{status.validationLimit ?? "未知"}</dd>}</div>
         <div className="sm:col-span-2"><dt className="mb-1 text-ink-3">最近错误</dt><dd className={`break-words ${status.lastError ? "text-hot" : "text-ink-3"}`}>{status.lastError ?? "无已记录错误"}</dd></div>
@@ -54,7 +81,8 @@ export default function Batches({loaderData:data}:ComponentProps<typeof loader>)
     return () => clearInterval(timer);
   }, [fresh]);
   return <AdminPage title="采集批次" subtitle={<Link to="/admin/fishery" className="text-accent">← 返回素材</Link>} actions={<Button busy={fresh.state==="loading"} onClick={()=>fresh.revalidate()}>刷新记录</Button>}>
-    <p className="mb-5 text-[13px] text-ink-3">展示手动与受控定时归档、已有归档重解析记录。每 20 秒在页面可见时刷新状态，也可手动刷新；查看页面不会发起采集。归档不自动进行付费加工、审核或发布；导入会核对原始归档，新材料待审，内容变化使旧审核失效，转载权保持未知。</p>
+    <p className="mb-5 text-[13px] text-ink-3">展示手动与受控定时归档、已有归档重解析记录。每 20 秒在页面可见时刷新状态；查看页面不会发起采集。导入会核对原始归档，范围内普通资讯交核心自动处理，专项材料保留审核用途；内容变化使旧专项审核失效，转载权不因导入而改变。</p>
+    <div className="mb-5"><NativeProcessing status={data.native} error={data.nativeError}/></div>
     {data.archiveSources?.length ? data.archiveSources.map(s=><ArchiveHealth key={s.sourceId} status={s} />) : <ArchiveHealth status={data.archiveStatus} />}
     {!!data.progress?.length&&<Card title="跨轮来源健康"><p className="mb-3 text-[13px] text-ink-3">成功表示本轮计划请求完成，不代表全站覆盖。游标只在归档落地后推进；失败、未知分页与未遍历范围分别保留。</p><ul className="space-y-3 text-[13px]">{data.progress.map(p=><li key={p.column}>{p.column}：{p.status==="unreadable"?<span className="text-hot">进度不可读，禁止自动重置 · {p.error}</span>:<><span>{p.state.health?.outcome??"尚未运行"}</span> · 最近成功 {p.state.health?.lastSuccessAt??"无"} · 待采 {p.state.pendingUrls.length} · 覆盖 {p.state.health?.coverage??"未知"}<p className="break-all text-ink-3">下次列表 {p.state.cursorUrl}</p>{p.state.health?.reason&&<p className="text-hot">{p.state.health.reason}</p>}</>}</li>)}</ul></Card>}
     {!!data.rounds?.length&&<div className="my-5"><Card title="有界跨轮运行"><ul className="space-y-2 text-[13px]">{data.rounds.map(r=><li key={r.id}>{r.id} · {r.status}{r.status==="unreadable"?<span className="text-hot"> · {r.error}</span>:<> · {r.outcome??"尚未结束"} · 每源最多 {r.limit} 文章/{r.maxPages} 列表页{r.status==="running"&&<span className="text-hot"> · 未完成；先确认旧执行者停止再对账</span>}</>}</li>)}</ul></Card></div>}
@@ -62,11 +90,11 @@ export default function Batches({loaderData:data}:ComponentProps<typeof loader>)
       <p className="text-[13px] text-hot">批次记录不可读取（unreadable），无法导入。</p>
       <p className="mt-2 break-words text-[13px] text-ink-3">{b.error}</p>
     </Card>:<Card key={b.id} title={b.id}>
-      <p className="text-[13px] text-ink-3">{b.reparse?<>已有归档重解析 · 新网页请求 {b.reparse.networkRequests} · 重解析 {b.reparsedItems??b.items.length} 条 · 处理时间 {b.startedAt} · {b.status}</>:<>{b.startedAt} · {b.status} · 已尝试 {b.items.length}</>}，待审候选 {b.items.filter(i=>i.state==="ready").length}，附件待人工核验 {b.items.filter(i=>i.state==="needs_review").length}，失败 {b.items.filter(i=>i.state==="failed").length}，不相关 {b.items.filter(i=>i.state==="irrelevant").length}</p>
+      <p className="text-[13px] text-ink-3">{b.reparse?<>已有归档重解析 · 新网页请求 {b.reparse.networkRequests} · 重解析 {b.reparsedItems??b.items.length} 条 · 处理时间 {b.startedAt} · {b.status}</>:<>{b.startedAt} · {b.status} · 已尝试 {b.items.length}</>}，正文可用候选 {b.items.filter(i=>i.state==="ready").length}，附件待人工核验 {b.items.filter(i=>i.state==="needs_review").length}，失败 {b.items.filter(i=>i.state==="failed").length}，不相关 {b.items.filter(i=>i.state==="irrelevant").length}</p>
       {b.reparse&&<p className="mt-2 text-[13px] text-ink-3">处理时间不是原文获取时间；原获取时间保持不变。正文版本变化后需要重新审核。</p>}
       <ul className="my-3 space-y-2 text-[13px]">{b.sources.map(s=><li key={s.id}>{s.id}：{s.outcome??"旧批次未记录健康结论"} · 栏目链接 {s.listed}，标题排除 {s.titleFiltered}，文章请求 {s.attempted}{s.pagination&&<> · 列表页 {s.pagination.pageIndex+1} · {s.pagination.scope} · 本页待采 {s.remaining?.length??"未知"}</>}{s.error&&<span className="text-hot"> · {s.error}</span>}</li>)}</ul>
       <ul className="mb-4 space-y-3 text-[13px]">{b.items.map(i=><li key={i.archiveId}><a href={i.url} target="_blank" rel="noreferrer" className="text-accent">{i.discoveryTitle}</a> · {i.state==="needs_review"?"附件待人工核验":i.state} · 发布 {i.prepared?.dates.published.value??"未知"} · 地域待核{b.reparse&&<> · 原获取 {i.prepared?.sourceCapture.capturedAt??"未记录"}</>}{i.state==="needs_review"&&<p className="text-ink-3">{i.column==='jfa-press'?(i.prepared?.sourceCapture.jfaContext?.attachments.some(a=>a.manualReviewReason)?'公告及附件原件已完整归档，但 PDF 脚注无法唯一对应，正文证据待人工核验；不进入模型或发布。':'已核验公告正文与附件清单，但附件数量超出当前自动处理范围，附件全文未获取；待人工核验，不进入模型或发布。'):'声明附件已完整归档；Office 正文尚不支持解析，未提供完整正文，不进入模型加工或发布。'}</p>}{i.prepared?.sourceCapture.noticeContext&&<p>公告性质待核：{i.prepared.sourceCapture.noticeContext.nature} · 原文截止 {i.prepared.sourceCapture.noticeContext.deadline.value??'未知'} · {noticeDeadlineState(i.prepared.sourceCapture.noticeContext,beijingDate(new Date()))==='closed'?'已截止，仅作历史资料':'不能据此认定可申请'} · 必需附件 {i.prepared.sourceCapture.noticeContext.attachmentCount} 件，完整性不足保持待复核</p>}{i.error&&<p className="break-words text-hot">{i.error}</p>}</li>)}</ul>
-      <Button disabled={busy||b.status!=="complete"||!b.items.length} onClick={()=>run("POST",`/api/admin/fishery/batches/${b.id}/import`,{}, {success:"已记录采集结果；新材料待审，正文变化使旧审核失效，失败不等于撤稿"})}>导入或记录采集结果</Button>
+      <Button disabled={busy||b.status!=="complete"||!b.items.length} onClick={()=>run("POST",`/api/admin/fishery/batches/${b.id}/import`,{}, {success:"已记录采集结果；普通资讯按范围进入核心处理，专项资料待审，失败不等于撤稿"})}>导入或记录采集结果</Button>
     </Card>)}{!data.rows.length&&<Empty>尚无手动采集或归档重解析记录。</Empty>}</div>
   </AdminPage>;
 }

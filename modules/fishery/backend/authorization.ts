@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { withReceiptPolicy } from "@aihot/backend/providers/receipts";
 // One cumulative authorization key in the application's DB. Operators must transfer the existing
 // ledger before enabling a new deployment; this module never initializes or resets an allowance.
@@ -20,6 +21,8 @@ export async function fisheryAuthorizationReport() {
   return {authorization:TRIAL.id,policy:amountOnlyPolicy,maxRequests:null,maxReservedMicroCny:TRIAL.maxReservedMicroCny,entryCount:row.value.entries.length,...trialBudget(row.value.entries),historicalReservedMicroCny:row.value.entries.reduce((sum,e)=>sum+e.reservedMicroCny,0),states:row.value.entries.map(e=>e.state)};
 }
 let active=false;
+const authorizationContext=new AsyncLocalStorage<boolean>();
+export const fisheryAuthorizationActive=()=>authorizationContext.getStore()===true;
 export async function withFisheryAuthorization<T>(run:()=>Promise<T>,options:{receiptAttemptTag?:string;assertAuthorized?:()=>Promise<void>}={}):Promise<T> {
   await assertProcessingLease();
   if(active) throw new Error("Fishery authorization transport already in use; explicit retry required");
@@ -43,7 +46,7 @@ export async function withFisheryAuthorization<T>(run:()=>Promise<T>,options:{re
     entry.state=state;entry.usage=usage;entry.responseModel=responseModel??null;
     await tx`UPDATE settings SET value=${tx.json(row.value)},updated_at=now() WHERE key=${authorizationKey}`;
   })});
-  try{return await withReceiptPolicy({retryFailed:false,attemptTag:options.receiptAttemptTag,assertAuthorized:options.assertAuthorized},run);}finally{restore();active=false;}
+  try{return await authorizationContext.run(true,()=>withReceiptPolicy({retryFailed:false,authorization:authorizationKey,attemptTag:options.receiptAttemptTag,assertAuthorized:options.assertAuthorized},run));}finally{restore();active=false;}
 }
 
 // Explicit operator action only: preserve every original entry and audit the prior snapshot.

@@ -113,17 +113,16 @@ export function publicMatchCondition(terms: string[]) {
 }
 
 /** The listed items under the filters, up to the pages the pool offers. */
-async function listedCount(f: TimelineFilters & { includeBackfill?: boolean }, now: Date): Promise<number> {
+async function listedCount(f: TimelineFilters, now: Date): Promise<number> {
   return Number(one(await sql<{ n: number }[]>`
     SELECT count(*) AS n FROM (SELECT 1 FROM publications p WHERE ${(await listedCondition(now)).condition}
-      ${channelCondition(f.channel)} ${categoryCondition(f.category)} ${tagCondition(f.tag)} ${f.includeBackfill===false?sql`AND NOT p.backfill`:sql``} LIMIT ${POOL_MAX_PAGES * POOL_PAGE_SIZE}) t`).n);
+      ${channelCondition(f.channel)} ${categoryCondition(f.category)} ${tagCondition(f.tag)} LIMIT ${POOL_MAX_PAGES * POOL_PAGE_SIZE}) t`).n);
 }
 
 /** Without a search the total only sets the page count: it is reused for 30 seconds per filter. */
 const poolTotal = cachedByKey((f: TimelineFilters) => JSON.stringify([f.channel, f.category, f.tag]), (f) => listedCount(f, new Date()), { freshMs: 30_000, maxStaleMs: 30_000, maxKeys: 200 });
 
 export interface PoolQuery extends TimelineFilters {
-  includeBackfill?: boolean;
   q?: string | null;
   tab?: "time" | "relevance";
   page?: number;
@@ -132,7 +131,7 @@ export interface PoolQuery extends TimelineFilters {
 
 // Identical searches share their read before taking search capacity.
 const searchPool = sharedSearch(
-  (q: PoolQuery) => JSON.stringify([q.channel, q.category, q.tag, q.q, q.tab, q.page, q.includeBackfill]),
+  (q: PoolQuery) => JSON.stringify([q.channel, q.category, q.tag, q.q, q.tab, q.page]),
   queryPool, (q) => !!q.q?.trim(),
 );
 
@@ -146,7 +145,7 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
   const tab = q && query.tab === "relevance" ? "relevance" : "time";
   const terms = q ? searchTerms(q) : [];
   const entityTag = q ? queryEntityTag(q) : null;
-  const filters = sql`${channelCondition(query.channel)} ${categoryCondition(query.category)} ${tagCondition(query.tag)} ${query.includeBackfill===false?sql`AND NOT p.backfill`:sql``}`;
+  const filters = sql`${channelCondition(query.channel)} ${categoryCondition(query.category)} ${tagCondition(query.tag)}`;
   const offset = (page - 1) * POOL_PAGE_SIZE;
   const cap = POOL_MAX_PAGES * POOL_PAGE_SIZE;
 
@@ -164,7 +163,7 @@ async function queryPool(query: PoolQuery, now: Date): Promise<PoolResponse> {
         SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE p.article_id IN (SELECT article_id FROM page)
         ORDER BY p.timeline_at DESC, p.article_id DESC`;
       // A fixed clock (tests, replays) never shares cached totals.
-      return { rows, total: query.now || query.includeBackfill===false || hasPublicationReadGuard() ? await listedCount(query, now) : await poolTotal(query) };
+      return { rows, total: query.now || hasPublicationReadGuard() ? await listedCount(query, now) : await poolTotal(query) };
     }
     if (tab === "relevance") {
       // Rank narrow rows first: no article bodies or translations enter the sort/count. The public

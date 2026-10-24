@@ -1,8 +1,7 @@
 import { fisheryReaderTarget } from "./backend/publication-bridge.ts";
 import {processingEligibility,nominateProcessing,revokeProcessing} from './backend/processing-eligibility.ts';
-import { newsQueue, retryNewsEditorial } from "./backend/news-editorial.ts";
-import { publicationQueue } from "./backend/publication-queue.ts";
-import { fisheryPublicationCondition, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata } from "./backend/publication-bridge.ts";
+import { startNativeProfile, requiredNativeWorkerProfile, acquireFullWorkerLease, allowNativeAutomaticRecovery, nativeProcessingPermit, nativeProcessingStatus, prepareNativeModelRequest, sendNativeModelRequest } from "./backend/native-processing.ts";
+import { fisheryPublicationCondition, fisheryPublicationPermit, allowFisheryUndatedArchive, fisheryPublicationItemDetails, fisheryReferenceMetadata } from "./backend/publication-bridge.ts";
 import {archiveSourceStatuses,archiveSourceRuntimes,startArchiveProfile} from "./backend/archive-worker.ts";
 import { defineServerModule } from "@aihot/backend/modules";
 import { adminHandler, type AdminHandler } from "@aihot/api/routes/admin-auth";
@@ -20,7 +19,7 @@ import { importBatch } from "./backend/import-batch.ts";
 import { installManualSourceRoutes } from "./backend/manual-sources.ts";
 import { registerBusinessGuideRoutes } from "./backend/business-routes.ts";
 
-import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow, flowQueue } from "./backend/flow.ts";
+import { reconcileFlow, revisionContext, createHumanRevision, createFlow, flowDetail, listFlows, enqueueFlow, retryFlow, decideFlow } from "./backend/flow.ts";
 
 import { readerPage, readerItem, READER_CATEGORIES } from "./backend/reader.ts";
 
@@ -34,13 +33,16 @@ const guarded = (handler: AdminHandler) => adminHandler(async (req, reply, admin
 const param = (req: { params: unknown }) => idSchema.parse((req.params as Record<string, string>).id);
 
 export default defineServerModule({
-  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile}, sourceHealth, sourceRuntime:archiveSourceRuntimes, queues:[flowQueue,publicationQueue,newsQueue],
-  publication: { referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
+  name: "fishery", workerProfiles:{"fishery-archive":startArchiveProfile,"fishery-native":startNativeProfile}, sourceHealth, sourceRuntime:archiveSourceRuntimes,
+  processing:{permit:nativeProcessingPermit,workerProfile:requiredNativeWorkerProfile,fullWorkerLease:acquireFullWorkerLease},
+  modelRequests:{allowAutomaticRecovery:allowNativeAutomaticRecovery,prepare:prepareNativeModelRequest,send:sendNativeModelRequest},
+  publication: { permit:fisheryPublicationPermit, referenceMetadata: fisheryReferenceMetadata, readCondition: fisheryPublicationCondition, itemDetails: fisheryPublicationItemDetails, allowUndatedArchive: allowFisheryUndatedArchive },
   http(app) {
     app.get("/api/admin/fishery/reader-target/:kind/:id", guarded(async req => {
       const {kind,id}=z.strictObject({kind:z.enum(["article","business_guide"]),id:idSchema}).parse(req.params);
       return fisheryReaderTarget(kind,id);
     }));
+    app.get("/api/admin/fishery/native-processing", guarded(async()=>nativeProcessingStatus()));
     installManualSourceRoutes(app);
     registerBusinessGuideRoutes(app);
     app.get("/api/admin/fishery/reader", guarded(async req=>readerPage(z.strictObject({category:z.enum(Object.keys(READER_CATEGORIES) as [keyof typeof READER_CATEGORIES,...(keyof typeof READER_CATEGORIES)[]]).optional(),page:z.coerce.number().int().positive().max(100000).optional()}).parse(req.query))));
@@ -55,7 +57,6 @@ export default defineServerModule({
     app.post("/api/admin/fishery/flows/:id/revision", guarded(async(req,reply,admin)=>reply.code(201).send(await createHumanRevision(param(req),req.body,admin.name))));
     app.post("/api/admin/fishery/flows/:id/run", guarded(async req=>enqueueFlow(param(req))));
     app.post("/api/admin/fishery/flows/:id/reconcile", guarded(async(req,_reply,admin)=>reconcileFlow(param(req),req.body,admin.name)));
-    app.post("/api/admin/fishery/flows/:id/editorial/retry", guarded(async(req,_reply,admin)=>retryNewsEditorial(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/retry", guarded(async(req,_reply,admin)=>retryFlow(param(req),req.body,admin.name)));
     app.post("/api/admin/fishery/flows/:id/decision", guarded(async(req,_reply,admin)=>decideFlow(param(req),req.body,admin.name)));
     app.get("/api/admin/fishery/workbench", guarded(async req => workbench(z.object({ page:z.coerce.number().int().positive().max(100000).optional(),q:z.string().max(200).optional(),scope:z.enum(["real","test","all"]).optional(),state:z.enum(["pending","failed","unverified","stale","rejected","approved","withdrawn"]).optional().or(z.literal("")) }).parse(req.query))));

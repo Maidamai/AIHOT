@@ -10,8 +10,8 @@ import { extractPdf,mapPdfFootnotes } from "../backend/pdf-text.ts";
 import { readFile, access, chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { COLUMNS, discoverColumn, prepareColumnArticle, relevanceEvidence } from "../backend/official-columns.ts";
-import { batchRoot, collectColumns, listBatches, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
+import { COLUMNS, columnPublishedAt, discoverColumn, prepareColumnArticle, relevanceEvidence } from "../backend/official-columns.ts";
+import { batchRoot, firstSeenForBatchItem, collectColumns, listBatches, readBatch, readCapturedText, verifyBatchItem } from "../backend/column-batches.ts";
 import { importBatch } from "../backend/import-batch.ts";
 import { config } from "@aihot/backend/config";
 import { evidenceIdentity } from "../backend/store.ts";
@@ -387,7 +387,7 @@ test("Office review never absorbs missing, conflicting, unrecognized or incomple
       const parsePdf=async(b:Buffer)=>{if(mode==="pdf-exception")throw new Error("Synthetic PDF parser failure");const p=await f.parsePdf(b);return mode==="scanned-pdf"?{...p,status:"unverified" as const,text:"",error:"Synthetic scanned PDF"}:p;};
       const batch=await collectColumns({id:`office-${mode}`,dataDir:dir,columns:["fujian-notices"],limit:1,fetch,parsePdf,wait:async()=>{}}),item=batch.items[0];
       assert.equal(item.state,mode==="mixed-ready"?"needs_review":"failed",`${mode}: ${item.error}`);
-      assert.equal(batch.sources[0].outcome,mode==="mixed-ready"?"success":"failure");assert.equal(item.prepared!.sourceCapture.bodySha256,null);
+      assert.equal(batch.sources[0].outcome,mode==="mixed-ready"?"success":"partial");assert.equal(item.prepared!.sourceCapture.bodySha256,null);
       if(mode==="pdf-exception"){await assert.rejects(verifyBatchItem(dir,batch,item,{parsePdf}),/Synthetic PDF parser failure/);continue;}
       const prepared=await verifyBatchItem(dir,batch,item,{parsePdf});assert.equal(prepared.body,null);assert.equal(prepared.readyForReview,false);
       if(mode!=="mixed-ready")await assert.rejects(verifyBatchItem(dir,batch,{...item,state:"needs_review"},{parsePdf}),/Manual-review state requires/);
@@ -429,13 +429,13 @@ test("news rounds prioritize new messages, finish the current list and recheck b
 
 test("news completion cache keeps only the current list instead of exhausting its lifetime identity bound",async()=>{
   const dataDir=await mkdtemp(path.join(tmpdir(),"fishery-news-cache-")),directory=path.join(dataDir,"fishery-column-progress");
-  const before={...initialColumnProgress("moa"),completedUrls:Array.from({length:4096},(_,i)=>roundUrl(i+1))};
+  const before={...initialColumnProgress("moa"),completedUrls:Array.from({length:4096},(_,i)=>roundUrl(i+1)),firstSeen:Object.fromEntries(Array.from({length:4096},(_,i)=>[roundUrl(i+1),{at:"2026-10-23T00:00:00Z",batchId:"cache-original"}]))};
   const fetch=async(url:string)=>({url,status:url.endsWith("robots.txt")?404:200,body:url.endsWith("robots.txt")?Buffer.from("missing"):url===COLUMNS.moa.url?Buffer.from(roundListing([5000,1])):roundArticle(5000),headers:{get:()=>"text/html"}});
   try {
     await mkdir(directory);await writeFile(path.join(directory,"moa.json"),JSON.stringify(before));
     const r=await collectColumnRound({id:"news-trim",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
     assert.equal(r.outcome,"success");assert.deepEqual(r.sources[0]!.after!.completedUrls,[roundUrl(1),roundUrl(5000)]);
-    assert.equal(r.sources[0]!.after!.pendingUrls.length,0);
+    assert.equal(r.sources[0]!.after!.pendingUrls.length,0);assert.equal(Object.keys(r.sources[0]!.after!.firstSeen!).length,2);
   } finally {await rm(dataDir,{recursive:true,force:true});}
 });
 
@@ -462,11 +462,44 @@ test("failed articles keep retry evidence while successful captures receive boun
     return {url,status:robots||url===roundUrl(1)&&fail?404:200,body:robots?Buffer.from("missing"):listing?Buffer.from(roundListing([1,2],0,2)):roundArticle(1),headers:{get:()=>"text/html"}};};
   try {
     const a=await collectColumnRound({id:"failure-a",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
-    assert.equal(a.outcome,"partial");assert.equal(a.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.deepEqual(a.sources[0]!.after!.pendingUrls,[roundUrl(1)]);assert.equal(a.sources[0]!.health!.lastSuccessAt,null);
+    assert.equal(a.outcome,"partial");assert.equal(a.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);assert.deepEqual(a.sources[0]!.after!.pendingUrls,[roundUrl(1)]);assert.equal(a.sources[0]!.health!.lastSuccessAt,null);assert.ok(a.sources[0]!.health!.lastBodySuccessAt);
     fail=false;articles.length=0;const b=await collectColumnRound({id:"failure-b",dataDir,columns:["moa"],limit:2,maxPages:1,fetch,wait:async()=>{}});
     assert.deepEqual(articles,[roundUrl(1),roundUrl(2)]);assert.equal(b.sources[0]!.after!.cursorUrl,COLUMNS.moa.url);
     assert.equal((await readBatch(dataDir,"failure-a-moa-p0")).items[0]!.state,"failed","Failed evidence remains unchanged");
   } finally {await rm(dataDir,{recursive:true,force:true});}
+});
+
+test("archived listing first-seen survives deferred acquisition and partial body failures",async t=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-23T12:00:00Z')});
+  const dataDir=await mkdtemp(path.join(tmpdir(),'fishery-first-seen-'));
+  let ids=[1,2];
+  const fetch:ColumnFetcher=async url=>({url,status:url.endsWith('robots.txt')||url===roundUrl(1)?404:200,headers:{get:()=>null},body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?Buffer.from(roundListing(ids)):roundArticle(2)});
+  const run=(id:string)=>collectColumnRound({id,dataDir,columns:['moa'],limit:1,maxPages:1,fetch,wait:async()=>{}});
+  try {
+    const first=await run('first-seen-partial'),progress=first.sources[0].after!;
+    assert.equal(first.outcome,'partial');assert.equal(progress.health!.bodyFailures,1);
+    assert.equal(progress.health!.listingSucceededAt,'2026-10-23T12:00:00.000Z');
+    assert.equal(progress.health!.lastSuccessAt,null);
+    assert.equal(progress.firstSeen![roundUrl(2)].at,'2026-10-23T12:00:00.000Z');
+    t.mock.timers.tick(3*86400000);ids=[3,2,1];
+    const second=await run('first-seen-later'),batch=await readBatch(dataDir,second.sources[0].batches[0]);
+    // Fresh news advances even while one existing URL remains unavailable.
+    assert.equal(batch.items[0].url,roundUrl(3));
+    await run('first-seen-recheck');
+    const fourth=await run('first-seen-pending'),later=await readBatch(dataDir,fourth.sources[0].batches[0]),item=later.items.find(i=>i.url===roundUrl(2))!;
+    assert.ok(item);assert.equal((await firstSeenForBatchItem(dataDir,later,item)).toISOString(),'2026-10-23T12:00:00.000Z');
+    const forged=structuredClone(later);forged.sources[0].firstSeen![item.url].at='2026-10-26T12:00:00.000Z';
+    await assert.rejects(firstSeenForBatchItem(dataDir,forged,item),/First-seen identity\/date/);
+  }finally{await rm(dataDir,{recursive:true,force:true});}
+});
+
+test('source day dates use source timezone for workbench and native material consistently',()=>{
+  assert.equal(columnPublishedAt('jfa-press','2026-10-23')!.toISOString(),'2026-10-22T15:00:00.000Z');
+  assert.equal(columnPublishedAt('moa','2026-10-23')!.toISOString(),'2026-10-22T16:00:00.000Z');
+  assert.equal(columnPublishedAt('mpa-port','2026-10-23')!.toISOString(),'2026-10-22T16:00:00.000Z');
+  assert.equal(columnPublishedAt('fao-tuna','2026-10-23')!.toISOString(),'2026-10-23T00:00:00.000Z');
+  assert.equal(columnPublishedAt('itf-fisheries','2026-10-23')!.toISOString(),'2026-10-23T00:00:00.000Z');
+  assert.equal(columnPublishedAt('jfa-press',null),null);
 });
 
 test("news latest discovery and same-URL revisions bypass paused deep history with separate counts",async()=>{

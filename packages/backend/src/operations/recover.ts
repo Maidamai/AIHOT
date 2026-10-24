@@ -4,6 +4,7 @@
 // turns unknown again waits for an authorized manual release with the actual billing state and a note. A released
 // receipt lets its request call again, and an article that stopped on it goes back to processing.
 // A primary already handed to a backup is retained for billing; only the backup may need recovery.
+import { serverModules } from "../modules.ts";
 import { audit, Conflict } from "../audit.ts";
 import { sql } from "../db.ts";
 import { resumeAfterRelease } from "../jobs/content.ts";
@@ -43,14 +44,16 @@ export async function releaseReceipt(id: number, input: { billed: boolean | null
  * Primaries continued by a backup are not awaiting release: that would revive their old request.
  */
 export async function autoReleaseUnknownReceipts(now = Date.now()) {
-  const rows = await sql<{ id: number }[]>`
-    SELECT r.id FROM receipts r
+  const rows = await sql<{ id: number; purpose:string; subject:string|null; authorization:string|null }[]>`
+    SELECT r.id,r.purpose,r.subject,r.request->>'authorization' AS authorization FROM receipts r
     WHERE ${awaitingRelease(sql`r`)} AND r.updated_at < ${new Date(now - AUTO_RELEASE_AFTER_MS)}
       AND NOT EXISTS (SELECT 1 FROM receipt_attempts a WHERE a.receipt_id = r.id AND a.error LIKE ${AUTO_RELEASE_NOTE + "%"})
     ORDER BY r.id LIMIT 200`;
   let released = 0;
   let requeued = 0;
   for (const r of rows) {
+    let permitted=true;for(const module of serverModules())if(module.modelRequests?.allowAutomaticRecovery&&!await module.modelRequests.allowAutomaticRecovery(r))permitted=false;
+    if(!permitted)continue;
     const done = await release(r.id, AUTO_RELEASE_NOTE, "ops.recover", "结果未知，自动放行一次", null);
     if (done) released += 1;
     if (done?.requeued) requeued += 1;

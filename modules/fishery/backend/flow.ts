@@ -1,3 +1,4 @@
+import {documentPublicationAllowed} from "./native-permit.ts";
 import {businessEvidenceSections} from './business-capture.ts';
 import { runStructure, PROMPT_VERSIONS } from "@aihot/backend/editorial/analyze";
 import { reviewedStructure, structureClaims } from "./news-structure.ts";
@@ -31,7 +32,7 @@ import {newSelection,selectionStages,selectionConfiguration,runFisherySelection,
 import type {AnalyzeInputArticle} from '@aihot/backend/editorial/input';
 
 const identity=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
-const qualification=z.strictObject({decision:z.enum(["qualified","rejected"]),snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),note:z.string().trim().min(1).max(2000)});
+const qualification=z.strictObject({decision:z.enum(["qualified","rejected"]),publication:z.enum(["review_only","publish"]).default("review_only"),snapshotHash:z.string().regex(/^[a-f0-9]{64}$/),note:z.string().trim().min(1).max(2000)});
 export type FisheryInvoke=<S extends z.ZodType>(options:ChatJsonOptions<S>)=>Promise<ChatJsonResult<z.infer<S>>>;
 const isSelectionStage=(stage:string):stage is SelectionStage=>selectionStages.includes(stage as SelectionStage);
 const stageAttempt=(row:Record<string,any>,stage:string)=>isSelectionStage(stage)?row.selection.attempts[stage]:stage==="structure"?row.selection.structure.attempt:stage==="generation"?row.generation_attempt:row.review_attempt;
@@ -89,10 +90,11 @@ async function assertNoQueuedReplacement(documentId:string,db:Db) {
   if(queued) throw new Conflict(`Document task ${queued.id} is queued; explicitly reject it before creating a different candidate`);
 }
 export async function createFlow(documentId:string,raw:unknown,actor:string) {
-  // News candidates use the shared prefilter and scores; legacy references retain their existing task mode.
+  // Specialized review is explicit; an ordinary news identity never silently selects this pipeline.
   const data=z.strictObject({identity,selection:z.boolean().default(false)}).parse(raw),current=await snapshot(documentId);
-  const [news]=await sql`SELECT id FROM articles WHERE raw->>'fisheryDocumentId'=${documentId} AND raw->>'mode'='verified-news-candidate' LIMIT 1`;
-  if(news)data.selection=true;
+  const [purpose]=await sql`SELECT purpose FROM fishery_document_purposes WHERE document_id=${documentId}`;
+  if(purpose?.purpose==='native')throw new Conflict('Ordinary news is owned by native processing; use the specialized workbench only for separately authorized review');
+  const [news]=data.selection?await sql`SELECT id FROM articles WHERE raw->>'fisheryDocumentId'=${documentId} AND raw->>'mode'='verified-news-candidate' LIMIT 1`:[];
   return sql.begin(async tx=>{
     await lockDocument(tx,documentId);
     await assertDocumentSettled(documentId,tx);
@@ -325,7 +327,7 @@ export async function reconcileFlow(id:string,raw:unknown,actor:string) {
     });
   });}finally{await lease.release();}
 }
-export async function flowDetail(id:string,now=new Date()):Promise<Record<string,any>> {
+export async function flowDetail(id:string,now=new Date(),options:{publicationState?:boolean}={}):Promise<Record<string,any>> {
   const [row]=await sql`SELECT *,updated_at::text AS execution_updated_at FROM fishery_flow_tasks WHERE id=${id}`;if(!row) throw new NotFound("Flow not found");
   let staleReason:string|null=null;
   try {
@@ -345,8 +347,16 @@ export async function flowDetail(id:string,now=new Date()):Promise<Record<string
   const reconciliation=await reconciliationState(row);
   const [editorial]=row.selection?.structure?await sql`SELECT b.article_id AS "articleId",b.material_revision AS revision,b.projection_hash AS "projectionHash",a.grouping_status AS status,a.grouping_error AS error
     FROM fishery_publication_bindings b JOIN articles a ON a.id=b.article_id WHERE b.kind='article' AND b.item_id=${row.document_id}`:[];
-  if(editorial){const [job]=await sql`SELECT id,state,coalesce((data->>'attempt')::int,1) AS attempt FROM pgboss.job WHERE name='fishery.news' AND data->>'articleId'=${editorial.articleId} AND data->>'projectionHash'=${editorial.projectionHash} ORDER BY created_on DESC LIMIT 1`;editorial.job=job??null;}
-  return {...row,editorial:editorial??null,reviewBound:candidateReviewBound(row),authoritative,timeline,materialRejected,materialApproved,reconciliation,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:true,published:false,
+  const [binding]=await sql`SELECT b.article_id,b.updated_at AS published_at,p.visibility FROM fishery_publication_bindings b LEFT JOIN publications p ON p.article_id=b.article_id WHERE b.kind='article' AND b.item_id=${row.document_id}`;
+  const canPublish=await documentPublicationAllowed(row.document_id);
+  const [pendingPublication]=row.human_decision?.publication==='publish'?await sql`SELECT 1 FROM pgboss.job WHERE name='fishery.publication' AND data->>'itemId'=${row.document_id} AND state IN ('created','retry','active') LIMIT 1`:[];
+  let publiclyReadable=false;
+  if(binding&&options.publicationState!==false){
+    const {currentPublicationCondition}=await import('@aihot/backend/publication/scope');
+    publiclyReadable=(await sql`SELECT 1 FROM publications p WHERE p.article_id=${binding.article_id} AND p.visibility='public' AND ${(await currentPublicationCondition(now)).condition}`).length>0;
+  }
+  const publication={intent:row.human_decision?.publication??'legacy',canPublish,queued:!!pendingPublication,executed:!!binding,executedAt:binding?.published_at?new Date(binding.published_at).toISOString():null,readable:publiclyReadable,publishedAt:publiclyReadable&&binding?.published_at?new Date(binding.published_at).toISOString():null,blockedReason:!canPublish?'文档用途、来源摘要许可或撤回限制阻止发布':row.human_decision?.publication==='review_only'?'本次决定仅审核，不会排发布任务':binding&&!publiclyReadable?'当前证据或发布资格已失效':null};
+  return {...row,publication,editorial:editorial??null,reviewBound:candidateReviewBound(row),authoritative,timeline,materialRejected,materialApproved,reconciliation,snapshotHash:hash(row.snapshot),stale:staleReason!==null,staleReason,internalOnly:!publiclyReadable,published:publiclyReadable,
     internalArticle:row.status==="qualified"&&candidateReviewBound(row)&&!staleReason&&authoritative&&materialApproved&&row.draft?.draft.relevance.decision==="relevant"&&row.draft?.draft.summaryZh?.some((item:{sentence:string})=>item.sentence.trim())?{summaryZh:row.draft?.draft.summaryZh??[],sourceDocumentId:row.document_id,qualifiedBy:row.human_decision?.actor,timeline}:null};
 }
 export async function listFlows(documentId:string) {const rows=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${documentId} ORDER BY created_at DESC LIMIT 50`;return Promise.all(rows.map(r=>flowDetail(r.id)));}
@@ -577,9 +587,10 @@ export async function decideFlow(id:string,raw:unknown,actor:string) {
       if(!candidateReviewBound(row)) throw new Conflict("Review is not bound to the current candidate hash");
       if(!["needs_human_review","qualified","rejected"].includes(row.status)||row.quality_review?.status!=="needs_human_review") throw new Conflict("Independent review and deterministic gates must pass before internal qualification");
     }
-    const human={decision:data.decision,note:data.note,actor,snapshotHash:hash(row.snapshot),at:new Date().toISOString(),internalOnly:true};
+    if(data.decision==="qualified"&&data.publication==="publish"&&!await documentPublicationAllowed(row.document_id,tx))throw new Conflict("Document is review-only, withdrawn or lacks current source summary permission; publication is not authorized");
+    const human={decision:data.decision,publication:data.decision==="qualified"?data.publication:"review_only",note:data.note,actor,snapshotHash:hash(row.snapshot),at:new Date().toISOString(),internalOnly:data.decision!=="qualified"||data.publication!=="publish"};
     await tx`UPDATE fishery_flow_tasks SET status=${data.decision},human_decision=${tx.json(human)},updated_at=now() WHERE id=${id}`;
-    if(data.decision==="qualified") await enqueuePublication({kind:"article",itemId:row.document_id,decisionId:id,decisionHash:publicationDecisionHash(human),actor},tx);
+    if(data.decision==="qualified"&&data.publication==="publish") await enqueuePublication({kind:"article",itemId:row.document_id,decisionId:id,decisionHash:publicationDecisionHash(human),actor},tx);
     await audit(actor,"fishery.flow.decision",`fishery:${row.document_id}`,data.note,null,{id,...human},{db:tx});return {id,...human,published:false};
   });
 }

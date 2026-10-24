@@ -239,6 +239,9 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
            body_text, x_post, x_article, grouped_at, grouping_status, selection_adds_value
     FROM articles WHERE id = ${articleId} FOR UPDATE`;
   if (!article) return null;
+  for (const module of serverModules()) {
+    if (module.publication?.permit && !await module.publication.permit(articleId, tx)) return null;
+  }
   // Explicit imports carry an already-public editorial decision, not a new pending judgement.
   if (options.releasedAt && article.grouping_status === "pending") {
     await tx`UPDATE articles SET grouping_status = 'complete', grouped_at = coalesce(grouped_at, ${options.releasedAt}) WHERE id = ${articleId}`;

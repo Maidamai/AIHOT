@@ -1,4 +1,4 @@
-# 渔业素材首期本地模块
+# 渔业素材与原生资讯模块
 
 当前流程以最新资讯为主，政策原文与逐项证据为辅助。最新列表先发现候选、采集完整正文和原始日期，进入原站核心素材身份/修订/时序；复用原预筛与双评分，通过证据生成、核查和终审后，仍由共享 publication 读取层提供读者内容。来源全文许可、预算回执、版本审核和私有访问边界保持。具体运行状态、故障恢复和历史材料边界见 [OPERATIONS.md](OPERATIONS.md)；以下早期手工资料接口仍用于证据维护。
 
@@ -30,7 +30,7 @@
 | POST | `documents/:id/export` | `revision, format: json|markdown`；下载并记录导出hash/权利版本审计 |
 | POST | `documents/:id/withdraw` | `expectedRevision, reason`；即时阻断后续导出 |
 
-先在既有后台登记 source，保持试点 `enabled=false` 避免自动采集，再登记模块许可。生产来源的真实许可不能照抄测试fixture。登录后可通过现有 `GET /api/admin/me` 获取当前CSRF，使用正常会话调用上述API。本期没有新后台页面，操作界面留后续；请求schema以 `contracts.ts` 为准，最小请求样例见 `tests/fixtures.ts`。
+先在既有后台登记 source，保持试点 `enabled=false` 避免自动采集，再登记模块许可。生产来源的真实许可不能照抄测试fixture。登录后可通过现有 `GET /api/admin/me` 获取当前CSRF，使用正常会话调用上述API。正常操作使用现有后台材料工作台；请求schema以 `contracts.ts` 为准，最小请求样例见 `tests/fixtures.ts`。
 
 ## 离线回放
 
@@ -96,19 +96,11 @@ test环境的JSON/Markdown导出都携带“隔离测试审核，不代表人工
 
 按使用者决定，`fishery-column-iotc` 已停止运营采集，`collect-columns.ts --columns iotc` 在任何网络请求或归档创建前拒绝。保留 IOTC 适配器与既有回执供离线核验，不影响农业农村部、福建或其他机构的来源。源停用后应通过正常内容管理把仅依赖该源的条目下架，使原站发布投影与缓存同步；不启动全站付费 worker 来完成此事。
 
-### 现有生成链的自动派发
+### 普通资讯使用原生处理
 
-`fishery.flow.dispatch` 设置缺失时关闭。显式启用后按 `sourceIds` 同时限定已授权的农业农村部、福建省局动态、福建通知公告来源，再按 `createdAfter` 和可选 `documentIds` 限定范围，不回溯全库。导入可以建立零调用的 `auto-` 任务占位；当前观察和信源版本的普通素材审核未通过时，不入付费队列。已有处理进程的维护循环每次最多检查5条，按证据、审核、配置、核心正文修订与规则版本保存检查记录；前5条待审不会使第6条永久遗漏。导入落库到入队之间中断，下一次维护补派；入队与派发审计在同一事务，重放不重复入队。
+普通资讯由 `fishery.native.processing` 的显式来源与首次发现时间范围接入核心 `queueProcessing`，使用原生预筛、双评分、结构化、写作、归组、精选、事件综述和刊物链。无需素材审核或逐篇终审；相关低分稿可进入全部动态，精选仍由原版门槛及信息增量判断。分类标签使用原生 structure，不再从摘要关键词重分类。部署与接管步骤见 [部署](../../docs/deploy.md#远洋资讯原生流程迁移2026-10-24)。
 
-```bash
-node modules/fishery/scripts/automatic-flows.ts --status
-node modules/fishery/scripts/automatic-flows.ts --enable --sources fishery-column-moa --after 2026-10-21T07:13:00Z \
-  --documents <本轮明确核验的文档UUID> --reason '明确授权的现有MARA证据化流水线试运行'
-```
-
-启用不写素材 `approved`，不写最终 `qualified`。队列仍是既有 `fishery.flow`、单消费者、`retryLimit:0`，使用既有阶段回执及累计10元金额闸门。自动任务在消费时、取得金额锁后和发送前重新核对配置、来源隔离、观察及素材审核版本。已收到结果复用；失败、pending/unknown、执行中断须走既有明确对账流程，维护不会自动付费重试。最终审批仍通过正常管理流程，事务派发已有 `fishery.publication` 后才进入原站阅读投影。
-
-停止自动派发使用相同范围的 `--disable --sources ... --after ... --documents ... --reason ...`；它不清空任务、收据、费用、采集游标或归档计划，已发出请求的结果仍正常结算。新采集新闻已复用原版预筛与独立双评分；新采集新闻另在现有任务中抽取事件事实并一同核查；终审后由同一专用处理器消费原版归组、精选与成刊，仍不开放匿名访问。
+`fishery.flow.dispatch` 的普通新闻派发与 `fishery.news` 续处理已退役；该设置保留专项提名用途。`fishery.flow`、证据 ID 核查、业务指南和 `fishery.publication` 仅保留专项用途及历史追溯；不能再用旧任务占位启动第二条普通新闻链。来源登记、采集授权、模型处理范围分别核对，登记适配器不会扩大自动范围。所有原生付费步骤沿用同一累计金额账本、回执和发送前授权，不重置费用。
 
 新闻完成 URL 缓存只覆盖当前最新列表。当前列表完整采集后，下一轮在每源最多5篇的界限内复核正文；新 URL 优先，消失的失败项保留证据。已归档且核验的正文回改（含 A→B→A）和原始日期纠正复用核心修订及 timeline 规则，使旧审核失效；不改变首次发现时间，不将历史内容重新变成今日消息。同文同日期重复不重分析。消费前核对核心正文与审核快照哈希；发布读取仍核对同一绑定。
 
@@ -116,23 +108,18 @@ node modules/fishery/scripts/automatic-flows.ts --enable --sources fishery-colum
 
 `collect-columns.ts --incremental` 默认 `--storage file`，仅用于指定私有目录中的隔离归档验收。明确选择 `--storage db` 才读取既有 `fishery-column-moa/fujian/iotc` 的 `sources.cursor.fisheryColumnProgress`；缺失来源、数据库故障或游标/配置冲突立即停止，不回退文件游标，也不创建或启用来源。每轮仍有每源1–5文章、1–3列表页的上限，没有新增队列消费者或定时任务。
 
-数据库模式在GET前将来源绑定意图写入本轮journal，再使用原 `fetch_runs.detail` 登记相同轮次/来源的幂等意图。GET期间不持数据库事务；结束时锁定来源和运行记录，核对配置、游标及来源绑定，复用原 `recordFetch` 更新健康、失败次数和退避。只有完整成功才合并当前整份来源游标中的模块命名空间；失败/部分完成保留整份成功游标和 `last_ok_at`，待完成证据仅留在运行detail和归档journal，下一轮可保守重复请求。归档候选不是新入库素材，`new_count` 始终为0。进程在数据库提交后中断时，原 `--resume --acknowledge-stopped --reason ...` 可对账，已结束的运行不会再次计数或覆盖较新进度。
+数据库模式在GET前将来源绑定意图写入本轮journal，再使用原 `fetch_runs.detail` 登记相同轮次/来源的幂等意图。GET期间不持数据库事务；结束时锁定来源和运行记录，核对配置、游标及来源绑定，复用原 `recordFetch` 更新健康、失败次数和退避。成功及部分完成轮次都持久保存已完成身份与逐篇待补证进度；来源列表故障与单篇附件/解析失败分开记录，坏文档不阻塞同源新稿。归档候选不是新入库素材，`new_count` 始终为0。进程在数据库提交后中断时，原 `--resume --acknowledge-stopped --reason ...` 可对账，已结束的运行不会再次计数或覆盖较新进度。
 
 `--status --storage db --data-dir <private-dir>` 输出真实来源健康、退避和数据库游标；`--storage file` 明确显示隔离文件进度。既有管理员只读接口 `GET /api/admin/fishery/batches?storage=db` 返回同一数据库进度及 `sourceState`；省略参数读取数据库模式；离线验收须明确指定 `?storage=file`。目录中的不可变批次和journal是证据/恢复输入，不是数据库模式的第二份权威游标。运行仍不导入、审核、发布或调用模型。
 
 
-## 原框架统一发布桥接
+## 统一读取与专项发布
 
-`backend/publication-bridge.ts` 的 `syncFisheryPublications(actor)` 仅把当前合格文章摘要和最终审核通过的业务指南关联到核心 `articles`、`editorial_overrides` 和 `publications`；使用正常素材身份与审计，投影本身不调用模型或创建回执。新采集新闻只在结构化事实也通过当前核查和终审后，把实际预筛、双评分、摘要、事实及回执投影到原 `analyses`，不伪造归组完成或历史公开发布时间。新采集新闻保留已经通过门槛、证据审核及终审的真实双评分均值，并把评分结果纳入当前审核绑定；旧参考和指南仍无评分。只有摘要而无已审结构化事实的历史任务保持 `selected=false`；新任务由原版 `groupArticle` 与 `publishArticle` 依据信息增量确认精选，不强制写 true。指南仍是资料参考，原有结构化字段与短证据锚通过原文章详情的模块部分呈现；私有证据全文不进入核心正文。
+所有网页、搜索、RSS、公开 API、Agent Markdown、MCP、事件和刊物仍通过核心 `publication/` 读取。普通资讯使用原生结果；撤回、来源隔离、人工拒绝及用途限制继续作用于处理和读取。私有预览鉴权、正文转载和外部推送权限不因接回原生链而改变。
 
-`fishery_publication_bindings` 保存稳定身份、审核投影哈希和核心素材修订号，不保存永久合格副本。每次原资料池、搜索、详情、时间线、数量、RSS、MCP 或同步读取，都重用现有文章与业务审核的当前资格计算；来源、观察、正文档案、规则、候选或最终审核失效即隐藏。未关联的模块来源文章也拒绝读取。未知日期保持空值和历史归档标记，已审核参考资料可进入资料池，不借采集时间冒充发布时间。
+专项文章在后台明确选择“仅审核通过”或“批准发布”。仅审核不派发发布；批准发布才建立 `fishery.publication` 非付费任务，后台展示排队、实际执行、当前可读投影发布时间和阻塞原因；该执行时间不是原文发布日期。发布时再次核对当前来源、观察、正文、审核和用途；不凭物理 publication 行数宣布内容可读。指定政策 `5f67141e-47ee-4521-bd66-7e842936c02f` 始终仅审核、不发布。已有有效历史参考及其当前绑定保留，MPA `292f8e02-dcde-4bb6-9839-df372a1e142a` 保留真实历史日期。
 
-原模块的受保护素材与后台仍使用原来源可用性校验；该内部校验先于发布资格，避免递归调用统一发布门控。此桥接不把内部审核解释为公开转载许可。预览的鉴权与 HTTP `private, no-store` 仍由部署入口负责；不能直接据此开放匿名访问。离线测试使用明确合成的审核与模型桩，真实数据展示应区分已保存安全 DTO 回放与重新核验的当前生产状态。
-
-
-正常文章最终合格和指南最终批准会在同一数据库事务中写入 `fishery.publication` 非付费任务；任务单例键包含具体最终决定哈希，新版本不会被仍活动的旧任务吞掉。既有 `consume-flows.ts` 同消费者、同处理租约执行它，每个任务只处理目标材料，并在原审批写锁下重核当前投影和决定；重复执行复用原文章身份，过期决定不覆盖新关联。暂时无法读取的当前批准会失败并留下可追踪任务，不把成功审批后的一次关联失败静默丢掉。
-
-`fishery.publication` 仅有两次重试、五秒延迟、五分钟执行期限。核心后台改源产生的 `publication.republish-source` 也由同一专用消费者接收，复用原发布处理函数及原两次重试策略，使等级、名称和转载权限修改正常反映到发布投影。既有消费者只对这两个非付费发布队列调用 pg-boss 维护以恢复过期任务，停止时等待任务完成再释放处理租约，租约丢失时停止取任务并清理维护定时器。不启用全局调度或监督，不恢复付费 `fishery.flow`，不启动采集或模型。重试耗尽保留失败状态；正常重新审核批准产生新的版本任务。原站 `editorial_overrides.visibility` 是独立控制列，关联任务不写它，后台正常撤下必须由正常可见性操作显式恢复。
+`fishery_publication_bindings` 只服务专项当前资格与稳定身份，不为普通新闻重建审批投影。管理员可在内容诊断查看核心处理和归组状态，材料工作台保留原件证据、专项审核及导出。正常下架仍通过已有可见性操作，不由重新关联偷偷恢复。
 
 ### NPFC 逐措施原件接入
 
@@ -140,7 +127,7 @@ node modules/fishery/scripts/automatic-flows.ts --enable --sources fishery-colum
 
 导入重新核验原始列表身份、措施页标题、PDF文号/年份与声明日期；冲突、附件缺失和解析失败不进入待审正文。URL可能沿用旧年份，身份以列表、页面及PDF一致的文号为准。版本文号、声明日期保存在 `sourceCapture.regulatoryListing`；其适用海区和当前生效状态明确为unknown，原文发布、通过及生效日期也不从URL、文号年份或收录时间补造。列表标为current不等于适用于某公司、船旗、鱼种或作业地点。
 
-成功归档可经既有批次导入登记为未审核素材，转载权未知，不生成评分、摘要、审批或发布；普通读者不会因采集而看到新材料。NPFC的DB增量轮使用相同 `sources.cursor`、`fetch_runs`、独占来源租约和失败退避；同源正文变化使旧审核失效，失败不推进成功游标。源被隔离时禁止继续导入/采集。持续归档需下述显式授权，默认不随代码安装启用，农业农村部现有小时计划保持原样。
+成功归档可经既有批次导入登记为未审核素材，转载权未知，不生成评分、摘要、审批或发布；普通读者不会因采集而看到新材料。NPFC的DB增量轮使用相同 `sources.cursor`、`fetch_runs`、独占来源租约和失败退避；同源正文变化使旧审核失效；列表成功的partial保留已完成进度，正文失败保持逐篇待补证。源被隔离时禁止继续导入/采集。持续归档需下述显式授权，默认不随代码安装启用，农业农村部现有小时计划保持原样。
 
 NPFC PDF保存可信ETag/Last-Modified后，后续回看发送条件GET。304必须绑定相同URL、原200完整PDF/收据及原已完成批次hash；新批次固化这些原件、来源manifest快照及本轮真实304，不伪造下载时间或200。每批重验独立于可丢缓存索引。缓存缺失/损坏、没有validator或不可信304至多额外一次无条件GET，失败不推进成功游标，旧证据保留。缓存写失败不否定已完整归档，失锁/取消仍阻断提交。
 
@@ -148,7 +135,7 @@ NPFC PDF保存可信ETag/Last-Modified后，后续回看发送条件GET。304必
 
 ### 按来源隔离的无付费归档 worker
 
-原 worker 默认 `WORKER_PROFILE=full` 不变。明确选择模块声明的 `WORKER_PROFILE=fishery-archive` 时，入口在任何核心内容、翻译、事件、报告、通知、恢复和模块付费消费者之前分流；要求 `MODEL_CALLS_ENABLED=false`、`COLLECT_ENABLED=false`。该模式只允许 `fishery.archive.moa.tick` / `fishery.archive.npfc.tick` 及各自归档队列，使用原 pg-boss；只注册已显式授权的来源，启动前读取全部既有 schedules，遇其他名称保留原表并拒绝启动，不调用会清理其他 cron 的原 `registerSchedules`。全局 supervise 关闭，仅监督已授权的这些非付费队列，均 retryLimit=0。单源配置或执行错误分别记录，不停掉另一源；全局平台/白名单错误仍安全停止。
+原 worker 默认 `WORKER_PROFILE=full` 不变。明确选择模块声明的 `WORKER_PROFILE=fishery-archive` 时，入口在任何核心内容、翻译、事件、报告、通知、恢复和模块付费消费者之前分流；要求 `MODEL_CALLS_ENABLED=false`、`COLLECT_ENABLED=false`。该模式仅允许 `ARCHIVE_COLUMNS` 声明的专用 `fishery.archive.<column>.tick` 及各自归档队列，使用原 pg-boss；只注册已显式授权的来源，启动前读取全部既有 schedules，遇其他名称保留原表并拒绝启动，不调用会清理其他 cron 的原 `registerSchedules`。全局 supervise 关闭，仅监督已授权的这些非付费队列，均 retryLimit=0。单源配置或执行错误分别记录，不停掉另一源；全局平台/白名单错误仍安全停止。
 
 操作员在原私有数据库/目录下显式设置（脚本不加载额外凭据）：
 
@@ -166,7 +153,7 @@ node modules/fishery/scripts/moa-archive.ts --column npfc --enable --mode six_ho
 node modules/fishery/scripts/moa-archive.ts --column npfc --disable --mode six_hourly --run-id <current-npfc-run-id>
 ```
 
-只有既有、`external/enabled=false` 且未隔离的 `fishery-column-moa` / `fishery-column-npfc` 可运行；独立授权存原 settings 的 `fishery.archive.<column>`，不启用核心信源采集。各源每分钟轻量 due tick；正常实际请求从上一轮完成后至少间隔Moa3600秒/NPFC21600秒，切换模式也不早于最近获取加该间隔。每轮固定1个列表页，Moa最多5篇、NPFC最多1份措施全文（另有robots检查），pending 与分页/cycle游标复用原实现；NPFC只检查当前可见一页，不宣称历史库覆盖。失败尊重核心退避，连续3次失败暂停。状态复用原来源健康、job_runs 和既有管理员批次页，逐源显示心跳、下次执行、范围和失败；配置损坏显示不可用，不自动重置。
+只有既有、`external/enabled=false` 且未隔离、在当前 `ARCHIVE_COLUMNS` 内的 `fishery-column-<column>` 可运行；来源登记与逐源显式启用分开，独立授权存原 settings 的 `fishery.archive.<column>`，不启用核心信源采集。各源每分钟轻量 due tick；正常实际请求从上一轮完成后至少间隔Moa3600秒/NPFC21600秒，切换模式也不早于最近获取加该间隔。每轮固定1个列表页，MARA/福建两栏目/JFA最多5篇，NPFC最多1份措施全文，ITF/FAO/MPA最多1篇（另有robots检查），pending 与分页/cycle游标复用原实现；NPFC只检查当前可见一页，不宣称历史库覆盖。真实列表失败尊重核心退避，连续3次列表失败暂停；单篇正文错误保存逐篇待补证，不累加列表失败。状态复用原来源健康、job_runs 和既有管理员批次页，逐源显示心跳、下次执行、范围和失败；配置损坏显示不可用，不自动重置。
 
 短周期验证在 GET 前持久化同 runId 的最多2次 claim；重复相同配置返回同 revision/claim，历史 validation runId 不可重新授予预算。进程重启、重复投递与切回 hourly 都不能绕过上限。状态切换由正在运行的专用 worker 在下一次心跳更新它自己的 schedule data；旧 revision 作业一律无请求跳过。hourly 切换的 nextAt 不早于最近获取后1小时，不立即产生第三轮请求。
 
@@ -176,7 +163,7 @@ node modules/fishery/scripts/moa-archive.ts --column npfc --disable --mode six_h
 
 队列行在派发事务提交后可能先于 retained session 释放锁被消费者看到；消费者只对尚未取得初始来源租约的同一作业最多等待5秒，不重新认领轮次，不重发任何已经开始的GET。超过等待上限即失败并保留原current供显式对账；请求开始后的任何错误仍不自动重试。健康tick遇来源正被占用只记录跳过，不将正常归档误报为失败。
 
-正常完成的每个归档批次在同来源租约内调用既有 `importBatch`，登记素材文书/观察和获取证据，默认待审；有核实日期及行业正文证据的新资讯还复用核心 `upsertMaterial` 的身份和时序规则。采集不直接排付费任务、不审核或发布；当前素材获准后才由既有有界派发进入筛选流程。导入中断保留 current=importing，可显式对账复用相同原件与版本身份。停用保留 current/claim/证据且使旧作业失效；需继续原未决身份时先用相同 runId 重启原预算，再 `--resume --acknowledge-stopped --reason '<已证实原执行者停止的依据>'`。原 journal 存在就只按原身份 resume；不存在时仅在无 fetch_run 意图、无 child 归档且目录无证据的情况下，记录审计后从同一已授权 roundId 开始。未知意图/归档不能换新ID掩盖。running child 原件保持不变并明确保留，父轮以失败结束、不导入 running batch；对账同时准确结束该 roundId 的未结 job_runs。
+正常完成的每个归档批次在同来源租约内调用既有 `importBatch`，登记素材文书/观察和获取证据，默认待审；有核实日期及行业正文证据的新资讯还复用核心 `upsertMaterial` 的身份和时序规则。归档导入不作素材或发布批准；范围内普通新闻随后进入原生处理，专项资料保留审核用途。导入中断保留 current=importing，可显式对账复用相同原件与版本身份。停用保留 current/claim/证据且使旧作业失效；需继续原未决身份时先用相同 runId 重启原预算，再 `--resume --acknowledge-stopped --reason '<已证实原执行者停止的依据>'`。原 journal 存在就只按原身份 resume；不存在时仅在无 fetch_run 意图、无 child 归档且目录无证据的情况下，记录审计后从同一已授权 roundId 开始。未知意图/归档不能换新ID掩盖。running child 原件保持不变并明确保留，父轮以失败结束、不导入 running batch；对账同时准确结束该 roundId 的未结 job_runs。
 ### 福建通知公告附件（有界手动批次）
 
 PDF 完整性保护也适用于 NPFC 及现有本地解析器：任一物理页没有可提取文字，保留页号并标为未核验；不会把页标记或其他页有字当作该页完整的证明。空白页和扫描页尚不能自动区分。已知 NPFC 附件返回 200 且字节或链接变化时，即使新正文无法解析，也会追加未核验观察使旧审核失效；单独 404/超时不判撤稿。旧归档在进入模型前也须通过逐页非空门禁。
@@ -188,14 +175,8 @@ PDF 完整性保护也适用于 NPFC 及现有本地解析器：任一物理页�
 公示、申报、征求意见、资金下达和政策资料是未审核的检索分类。仅取原文完整日期作为截止线索，缩写或歧义日期保持未知；按北京时间比较已截止状态。未来截止日不等于可申请，公示不等于申报，下达不等于到账，资料汇编不证明现行有效。进入素材后仍须原有来源许可、素材审核、AI 核查与最终决定，不自动批准或发布。
 
 
-## 新闻事件与成刊续处理
+## 原生事件与成刊
 
-新采集新闻在原预筛、双评分、摘要生成之后复用 `runStructure`。新增 `structure` 阶段仍在 `fishery_flow_tasks`，沿用阶段请求、回执、执行令牌、处理租约和恢复 API；不补跑旧参考。结构化事实的主体/动作/对象/日期与每项条件都需要当前正文锚，加入既有隔离核查的 claim 清单。终审核对摘要和事件事实，改变事实结果会使原核查失效。后台展示抽取结果、回执以及后续归组状态。
+普通资讯使用核心 `facts/stories/fact_articles`、热点排名和刊物调度。日报按原规则编排；周报、月报从日报汇编并按原生流程写总述，事件综述通过同一累计预算。当前summary-only来源不注册content.translate，全文翻译没有启用；模型边界覆盖translate_body只表示未来调用也不能绕过预算，不代表已授权全文。平静日、无判读输入、缺刊及失败各自记录，不把零输入当作已出刊。
 
-`fishery.news` 只是已批准文章到核心 `groupArticle` 的续处理队列，事件仍存原 `facts/stories/fact_articles`；只接当前材料修订、正文哈希、来源等级、审批投影均匹配的非历史新闻。`retryLimit=0`，同一专用消费者及租约串行处理；当前文章已归组则直接复用，不重做评分、写作或结构化。归组中的比较和合并核查使用现有 DeepSeek 配置、原核心回执和同一累计10元硬限额；允许核心步骤在既有2048输出上限内取值，不提高金额、输入或输出上限。失败回执不会自动再付费，未知/未决账本仍阻断。
-
-原读层与事件候选/事件根查询都检查当前审批；撤审或核心正文版本改变后，旧事件证据不再参与归组或精选。原刊物保留已撤下标题占位，摘要、原文链接和导读撤下，不改写历史存档。
-
-既有消费者维护循环只对已到刊期且存在真实合格条目的窗口调用原成刊函数。日报沿用原规则；周月报从日报汇编，显式使用 `writeOverview:false`，复用原有无模型综述展示，不再生成未经证据审核的新文案。空输入不调用模型、不造空刊；没有新增外部分发或完整worker调度。事件模型综述未启用，事件页面沿用现有已审报道与事实展示。
-
-恢复先查看后台任务的 `editorial` 状态、原回执和累计账本。已有终审流程的普通重放不会重排终止失败的归组。管理员可向原鉴权边界下的 `POST /api/admin/fishery/flows/:id/editorial/retry` 提交当前 `projectionHash`、`revision`、`mode=resume|regenerate` 和 `reason`：仅终止失败且无活动同版本任务可重排；resume复用原尝试，regenerate另需 `acknowledgeNewCharge=true`，保留旧回执和审计，每版本最多3个明确付费尝试。pending/unknown须先核清，不能靠新任务绕过金额账本。该恢复入口不重新批准内容、改权限或重置预算。
+专项工作台的旧归组结果与回执保留追溯；普通新闻不再由专项消费者的维护循环推导刊期或生成刊物。生产接通和观察结果须另行验收，代码及离线假服务测试不代表真实出刊。

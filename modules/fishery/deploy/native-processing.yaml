@@ -1,0 +1,30 @@
+# Overlay the existing private deployment; reuse its image, database, credentials and data volume.
+# Start with MODEL_CALLS_ENABLED=false in the deployment environment for a zero-call inspection.
+services:
+  fishery-native-processor:
+    image: ${FISHERY_PROCESSOR_IMAGE:?existing application image required}
+    env_file:
+      - path: ${FISHERY_PRIVATE_ENV_FILE:?existing private env_file required}
+        format: raw
+    environment:
+      NODE_ENV: production
+      AIHOT_ENVIRONMENT: production
+      DATABASE_URL: ${FISHERY_PROCESSOR_DATABASE_URL:?existing production database URL required}
+      SITE_URL: ${SITE_URL:?existing site URL required}
+      AIHOT_CREDENTIALS_DIR: /nonexistent-processor-credentials
+      AIHOT_DATA_DIR: /data
+      WORKER_PROFILE: fishery-native
+      MODEL_CALLS_ENABLED: ${MODEL_CALLS_ENABLED:-false}
+      COLLECT_ENABLED: "false"
+      FEISHU_CONTENT_PUSH_ENABLED: "false"
+      FEISHU_INTERNAL_ENABLED: "false"
+      INDEXNOW_SUBMIT_ENABLED: "false"
+    command: ["node", "apps/worker/src/main.ts"]
+    volumes: ["data:/data"]
+    networks: [pilot]
+    restart: unless-stopped
+    stop_grace_period: 515s
+    deploy:
+      replicas: 1
+    mem_limit: 768m
+    cpus: 1

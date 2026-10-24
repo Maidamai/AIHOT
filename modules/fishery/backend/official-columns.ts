@@ -2,7 +2,7 @@
 import * as cheerio from "cheerio";
 import { z } from "zod";
 import { readPublicationDate } from "@aihot/backend/sources/dates";
-import { beijingDate } from "@aihot/contracts/time";
+import { beijingDate, beijingAt } from "@aihot/contracts/time";
 import { captureSchema, dateSchema, linkSchema } from "../contracts.ts";
 import { archiveReceiptSchema, sha256 } from "./source-adapters.ts";
 import { discoverIotc } from "./iotc-columns.ts";
@@ -36,6 +36,14 @@ export const columnIdSchema = z.enum(["moa", "fujian", "iotc", "npfc", "fujian-n
 export type ColumnId = z.infer<typeof columnIdSchema>;
 // News lists and regulatory inventories have different time semantics.
 export const isNewsColumn = (id: ColumnId) => id !== "npfc" && id !== "iotc";
+// A day without a time belongs to the source's calendar, independent of the host timezone.
+export function columnPublishedAt(columnId:string,publicationTime:string|null):Date|null {
+  if(!publicationTime)return null;
+  if(publicationTime.length!==10)return new Date(publicationTime);
+  if(columnId==='itf-fisheries'||columnId==='fao-tuna')return new Date(publicationTime+'T00:00:00Z');
+  if(columnId==='jfa-press')return new Date(publicationTime+'T00:00:00+09:00');
+  return beijingAt(publicationTime,'00:00');
+}
 export interface ColumnPagination { pageUrl:string; pageIndex:number; nextUrl:string|null; totalPages:number|null; scope:"verified_pagination"|"current_page_only"|"pagination_unverified"; }
 export function columnPageIndex(id:ColumnId,input:string) {
   const url=new URL(input),base=new URL(COLUMNS[id].url);

@@ -8,7 +8,7 @@ import { MATERIAL_STATES, type Workbench } from "../ui-contracts.ts";
 import { acquisitionLabel, dateLabel, noStore, StateBadge, TrialNotice, useFreshMaterial } from "./shared.tsx";
 
 export const headers = noStore;
-export const meta: MetaFunction = () => [{ title: `渔业素材 · ${SITE.name} 后台` }];
+export const meta: MetaFunction = () => [{ title: `材料工作台 · ${SITE.name} 后台` }];
 export async function loader({ request }: LoaderArgs) { return adminGet<Workbench>(request, `/api/admin/fishery/workbench${new URL(request.url).search}`); }
 
 export default function Materials({ loaderData: data }: ComponentProps<typeof loader>) {
@@ -16,7 +16,7 @@ export default function Materials({ loaderData: data }: ComponentProps<typeof lo
   const scope = params.get("scope") ?? "real", state = params.get("state") ?? "", rows = data.rows;
   const pageLink = (page: number) => { const p = new URLSearchParams(params); p.set("page",String(page)); return `?${p}`; };
   const sources = data.sources.filter(s => scope === "all" || s.testOnly === (scope === "test"));
-  return <AdminPage title="渔业素材" subtitle="先核对原始证据，再记录审核。导出始终检查最新版本、来源许可与撤回状态。"
+  return <AdminPage title="材料工作台" subtitle="普通资讯由核心自动处理；专项材料在此核对原件、记录审核与批准发布。导出另核对来源许可和当前版本。"
     actions={<><Link to="/admin/fishery/collect" className="text-[13px] text-accent">采集批次</Link><Button busy={refresh.state === "loading"} onClick={() => refresh.revalidate()}>重新核对</Button></>}>
     <TrialNotice />
     <nav aria-label="素材范围" className="mb-5 flex flex-wrap gap-2">

@@ -2,7 +2,7 @@ import { withColumnLease } from "./column-lease.ts";
 import {isBusinessSource} from './business-capture.ts';
 import { config } from "@aihot/backend/config";
 import { COLUMNS, isNewsColumn } from "./official-columns.ts";
-import { readBatch, verifyBatchItem } from "./column-batches.ts";
+import { readBatch, verifyBatchItem, firstSeenForBatchItem } from "./column-batches.ts";
 import { importCapturedMaterial,recordCapturedAcquisition,storeCapturedNews } from "./store.ts";
 import { sha256 } from "./source-adapters.ts";
 
@@ -20,7 +20,7 @@ async function importBatchContents(id: string, actor: string) {
     try {return {item,result:await verifyBatchItem(config.dataDir,batch,item),error:null};}
     catch(error) {if(item.state==="ready"||item.state==="needs_review") throw error;return {item,result:null,error:String((error as Error).message).slice(0,500)};}
   }));
-  const rows = [],evidenceUpdates = [],acquisitions = [],materials = [];
+  const rows = [],evidenceUpdates = [],acquisitions = [],materials = [],newsIds:string[]=[];
   for (const {item,result:r,error} of verified) {
     let confirmedChange=false;
     const capture = r?.sourceCapture;
@@ -39,8 +39,9 @@ async function importBatchContents(id: string, actor: string) {
         evidence:"evidence" in r! ? r!.evidence : [{url:capture!.sourceUrl,sha256:capture!.rawSha256,page:null,section:"官方栏目正文；日期、地域及政策适用性待核"}],
       };
       if(outcome==="ready") {
-        const row=await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,input,actor);rows.push(row);
-        if(isNewsColumn(item.column))materials.push(await storeCapturedNews(item.column,row.id,r!.body!,actor));
+        const firstSeen=isNewsColumn(item.column)?await firstSeenForBatchItem(config.dataDir,batch,item):undefined;
+        const row=await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,input,actor,{nativeFirstSeenAt:firstSeen});rows.push(row);
+        if(isNewsColumn(item.column)){newsIds.push(String(row.id));materials.push(await storeCapturedNews(item.column,row.id,r!.body!,actor,firstSeen));}
       }
       else {
         const update=await importCapturedMaterial({id:item.column,...COLUMNS[item.column]},item.url,input,actor,{existingOnly:true,...(!confirmedBody?{changedRequiredEvidenceOnly:true}:{})});
@@ -55,6 +56,8 @@ async function importBatchContents(id: string, actor: string) {
   }
   // Only ready imports can seed new processing tasks; irrelevant updates merely invalidate old evidence snapshots.
   const {dispatchAutomaticDocuments}=await import('./automatic-flows.ts');
-  const automatic=await dispatchAutomaticDocuments(rows.map(row=>String(row.id)));
-  return { batchId:id,rows,evidenceUpdates,acquisitions,materials,automatic,reviewState:"unreviewed",published:false };
+  const {dispatchNativeDocuments}=await import('./native-processing.ts');
+  const automatic=await dispatchAutomaticDocuments(rows.filter(row=>!newsIds.includes(String(row.id))).map(row=>String(row.id)));
+  const native=await dispatchNativeDocuments(newsIds);
+  return { batchId:id,rows,evidenceUpdates,acquisitions,materials,automatic,native,reviewState:"unreviewed",published:false };
 }

@@ -71,16 +71,15 @@ const api = fakeApi(url => {
 before(async () => { browser = await chromium.launch({ channel: "chromium" }); web = await startWebServer(api); });
 after(async () => { await browser?.close(); await web?.stop(); });
 
-test("original desktop home falls back honestly, filters and searches into core item details", async () => {
+test("original desktop selected home stays distinct from all material and filters into core item details", async () => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   try {
     await visit(page, web.origin + "/");
-    await expect(page.getByRole("heading", { name: "行业动态与资料", exact: true })).toBeVisible();
-    await expect(page.getByText("按实际收录展示，尚未标为精选。", { exact: false })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "精选", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: article.title, exact: true })).toHaveCount(0);
+    await visit(page, web.origin + "/all");
     await expect(page.getByRole("link", { name: article.title, exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "行业文章", exact: true })).toContainText(article.title);
-    await expect(page.getByRole("region", { name: "参考资料", exact: true })).toContainText(guideCard.title);
     await expect(page.getByRole("status", { name: "文载时效" })).toHaveText("已截止（按原文日期）· 仅供历史参考");
     await expect(page.getByText("历史原文 · 原文发布于 2020-01-01", { exact: true })).toBeVisible();
     await expect(page.getByText("参考资料 · 原文发布日期未知 · 适用与截止状态请核对文载证据", { exact: true })).toBeVisible();
@@ -98,7 +97,7 @@ test("original desktop home falls back honestly, filters and searches into core 
     await expect(page).toHaveURL(/\/items\/synthetic-guide$/);
     await expect(page.getByRole("heading", { name: "材料清单", exact: true })).toBeVisible();
     await expect(page.getByText("授权代理审核（声明）", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "文载状态", exact: true }).locator("..")).toContainText("未知，待确认");
+    await expect(page.getByRole("heading", { name: "文载状态", exact: true }).locator("..")).toContainText("未核实（尚无已采纳证据）");
     await page.getByText("查看原文短引与证据（1）", { exact: true }).first().click();
     await expect(page.getByText("合成证据：本测试只用于验证阅读界面。", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("link", { name: "合成测试官方信息入口", exact: false })).toHaveAttribute("href", "https://example.org/synthetic-service");
@@ -147,7 +146,7 @@ test("guide phone opening keeps dates, audience and official source ahead of its
     const page = await context.newPage();
     try {
       await visit(page, web.origin + "/items/synthetic-guide");
-      for (const target of [page.getByRole("status", { name: "文载时效与申请状态" }), page.getByRole("heading", { name: "适用对象", exact: true }).locator(".."), page.getByRole("link", { name: "查看来源原文", exact: false })]) {
+      for (const target of [page.getByRole("status", { name: "文载时效与适用状态" }), page.getByRole("heading", { name: "适用对象", exact: true }).locator(".."), page.getByRole("link", { name: "查看来源原文", exact: false })]) {
         const box = await target.boundingBox();
         assert.ok(box && box.y >= 0 && box.y + box.height < 812, "Key guide facts must be in the first phone viewport");
       }
@@ -194,19 +193,20 @@ test("synthetic guide card crosses Beijing deadline midnight and empty summaries
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   try {
-    await page.clock.install({ time: new Date("2026-11-01T15:59:59Z") });
-    await visit(page, web.origin + "/?tag=synthetic-midnight");
-    await expect(page.getByRole("status", { name: "文载时效" })).toHaveText("可申请状态未知／待核实");
-    await page.clock.runFor(2100);
+    await page.clock.install({ time: new Date("2026-11-01T15:59:00Z") });
+    await page.clock.pauseAt(new Date("2026-11-01T15:59:30Z"));
+    await visit(page, web.origin + "/all?tag=synthetic-midnight");
+    await expect(page.getByRole("status", { name: "文载时效" })).toHaveText("适用状态待核实");
+    await page.clock.runFor(31000);
     await expect(page.getByRole("status", { name: "文载时效" })).toHaveText("已截止（按原文日期）· 仅供历史参考");
     await visit(page, web.origin + "/hot");
-    await expect(page.getByText("热度榜尚未启用", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("暂无近期热点", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("实时热度", { exact: true })).toHaveCount(0);
-    await page.getByRole("link", { name: "阅读行业动态与资料 →", exact: true }).click();
+    await page.getByRole("link", { name: "阅读全部动态 →", exact: true }).click();
     await expect(page.getByRole("link", { name: article.title, exact: true })).toBeVisible();
     await visit(page, web.origin + "/daily");
-    await expect(page.getByText("此汇总入口尚未启用，暂无已发布期刊。", { exact: false })).toBeVisible();
-    await page.getByRole("link", { name: "阅读行业动态与资料 →", exact: true }).click();
+    await expect(page.getByText("暂无已发布期刊；按真实内容与刊期生成。", { exact: false })).toBeVisible();
+    await page.getByRole("link", { name: "阅读全部动态 →", exact: true }).click();
     await expect(page.getByRole("link", { name: guideCard.title, exact: true })).toBeVisible();
   } finally { await context.close(); }
 });

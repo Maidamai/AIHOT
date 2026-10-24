@@ -3,6 +3,7 @@
 // site, an environment variable or the admin's model page picks one of the site's named presets
 // (site/models.ts).
 import type { z } from "zod";
+import { prepareModelRequest, sendModelRequest } from "../modules.ts";
 import type { ModelPreset } from "@aihot/contracts/site-config";
 import { PRESETS } from "@aihot/site/models";
 import { config, credential } from "../config.ts";
@@ -62,6 +63,8 @@ export interface ChatJsonOptions<S extends z.ZodType> {
   maxTokens?: number;
   attemptTag?: string;
   timeoutMs?: number;
+  /** A site with a retained output allowance can require complete responses. */
+  rejectTruncated?: boolean;
   /** false: the model answers in its own text format (no JSON mode); `parse` turns it into the schema's input. */
   json?: boolean;
   parse?: (content: string) => unknown;
@@ -145,6 +148,8 @@ const FAILOVER_TIMEOUT_MS = 30_000;
  * followed by a second paid request.
  */
 export async function chatJson<S extends z.ZodType>(opts: ChatJsonOptions<S>): Promise<ChatJsonResult<z.infer<S>>> {
+  const limits = await prepareModelRequest({ purpose: opts.purpose, subject: opts.subject, model: opts.model, maxTokens: opts.maxTokens ?? 1500 });
+  opts = { ...opts, maxTokens: limits.maxTokens, rejectTruncated: opts.rejectTruncated || limits.rejectTruncated };
   if (!opts.fallbackModel) return chatOnce(opts);
   const backupOpts = { ...opts, model: opts.fallbackModel };
   const fallbackFor = logicalKeyFor(requestFor(opts, MODELS[opts.model]!).request);
@@ -192,12 +197,15 @@ async function chatOnce<S extends z.ZodType>(opts: ChatJsonOptions<S>, circuit =
       let res: Response;
       let text: string;
       try {
-        res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+        const options: RequestInit = {
           method: "POST",
+          redirect: "error",
           headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(timeoutMs),
-        });
+        };
+        res = await sendModelRequest({ purpose: opts.purpose, subject: opts.subject, model: opts.model, maxTokens, url, options }, () => fetch(url, options));
         text = await res.text();
         assertAccepted(spec.service, res.status, text);
       } catch (error) {
@@ -229,6 +237,7 @@ async function chatOnce<S extends z.ZodType>(opts: ChatJsonOptions<S>, circuit =
   const content = response.choices?.[0]?.message?.content ?? "";
   let parsed: z.infer<S>;
   try {
+    if (opts.rejectTruncated && response.choices?.[0]?.finish_reason === "length") throw new Error("Incomplete response under the current output allowance");
     parsed = opts.schema.parse(opts.parse ? opts.parse(content) : extractJson(content));
   } catch (error) {
     // Unusable output: record it and let a later attempt pay for a fresh answer. A reasoning model that

@@ -10,7 +10,10 @@ import { upsertMaterial } from "@aihot/backend/content/materials";
 import { rerun } from "@aihot/backend/admin/content";
 import { processArticle, queueProcessing, registerContentJobs, sweepUnprocessed } from "@aihot/backend/jobs/content";
 import { enqueue, getBoss, QUEUES, stopBoss } from "@aihot/backend/jobs/queue";
-import { recoverStaleWork, releaseReceipt } from "@aihot/backend/operations/recover";
+import { recoverStaleWork, releaseReceipt, autoReleaseUnknownReceipts } from "@aihot/backend/operations/recover";
+import { installModules } from "@aihot/backend/modules";
+import { allowNativeAutomaticRecovery } from "../modules/fishery/backend/native-processing.ts";
+import { authorizationKey } from "../modules/fishery/backend/authorization.ts";
 import { ReceiptUnknownError } from "@aihot/backend/providers/receipts";
 
 const T = tag();
@@ -225,4 +228,20 @@ test("historical analysis queues a free identity confirmation behind live news",
   assert.equal(provider.hits(), hits, "historical grouping calls no model");
   const [a] = await sql`SELECT grouping_status FROM articles WHERE id=${id}`;
   assert.equal(a!.grouping_status, "complete");
+});
+
+
+test("automatic recovery keeps cumulative-authorized unknown receipts while preserving default recovery", async () => {
+  const [native] = await sql`INSERT INTO receipts(logical_key,service,purpose,status,request,updated_at)
+    VALUES(${`native-unknown-${T}`},'llm','score_article','unknown',${sql.json({authorization:authorizationKey})},now()-interval '2 hours') RETURNING id`;
+  const [ordinary] = await sql`INSERT INTO receipts(logical_key,service,purpose,status,updated_at)
+    VALUES(${`ordinary-unknown-${T}`},'llm','other','unknown',now()-interval '2 hours') RETURNING id`;
+  installModules([{name:'cumulative-authorization',modelRequests:{prepare:async()=>({}),send:async(_request,send)=>send(),allowAutomaticRecovery:allowNativeAutomaticRecovery}}]);
+  try {
+    await autoReleaseUnknownReceipts();
+    assert.equal((await sql`SELECT status FROM receipts WHERE id=${native.id}`)[0].status,'unknown');
+    assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${`receipt:${native.id}`} AND action='receipt.release'`).length,0);
+    assert.equal((await sql`SELECT status FROM receipts WHERE id=${ordinary.id}`)[0].status,'failed');
+    assert.equal((await sql`SELECT 1 FROM audit_log WHERE subject=${`receipt:${ordinary.id}`} AND action='receipt.release'`).length,1);
+  } finally { installModules([]); }
 });

@@ -285,7 +285,7 @@ test("private preview back navigation discards saved lists and open groups while
     const before = timelineReads;
     await page.goBack();
     await expect(page.getByRole("link", { name: card.title, exact: true })).toHaveCount(0);
-    await expect(page.getByText("暂无相关资讯与资料", { exact: true })).toBeVisible();
+    await expect(page.getByText("这个筛选下还没有精选内容", { exact: true })).toBeVisible();
     assert.ok(timelineReads > before, "back reads current qualification instead of a visited page");
     await expect(page.getByRole("link", { name: "Private other report", exact: true })).toHaveCount(0);
     const storage = await page.evaluate(() => ({ keys: Object.keys(sessionStorage).filter(key => /^aihot:(list|open-groups):/.test(key)), favorites: localStorage.getItem("aihot-starred-items") }));

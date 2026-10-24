@@ -1,4 +1,5 @@
 // Formal capture bridge: exact archived listing, page and required attachments; no rights grant.
+import {beijingDate} from '@aihot/contracts/time';
 import {parseRss} from '@aihot/backend/sources/rss';
 import {stableJson} from '@aihot/backend/lib/ids';
 import {captureSchema,type businessContextSchema} from '../contracts.ts';
@@ -23,7 +24,7 @@ export function discoverBusinessListing(id:BusinessSourceId,input:unknown,raw:Bu
  const native=id==='mpa-port'?restrictMpaListing(all):all;
  const seen=new Set<string>();
  if(native.some(c=>seen.has(c.url)||!seen.add(c.url)))throw new Error('Duplicate business listing identity');
- return {native,listed:all.length,rejected:all.length-native.length,candidates:native.map(c=>({url:c.url,title:c.title,listDate:c.publicationTime?(id==='mpa-port'&&c.publicationTime.length>10?new Date(Date.parse(c.publicationTime)+8*3600000).toISOString().slice(0,10):c.publicationTime.slice(0,10)):null,priority:'context' as const}))};
+ return {native,listed:all.length,rejected:all.length-native.length,candidates:native.map(c=>({url:c.url,title:c.title,listDate:c.publicationTime?(id==='mpa-port'&&c.publicationTime.length>10?beijingDate(c.publicationTime):c.publicationTime.slice(0,10)):null,priority:'context' as const}))};
 }
 export function businessAttachments(...args:Parameters<typeof prepareBusinessArticle>){
  const p=prepareBusinessArticle(...args),links=p.links.filter(l=>l.role==='required_attachment');

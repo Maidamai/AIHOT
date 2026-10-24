@@ -254,14 +254,16 @@ async function checkBudget(tx: Db, service: string, model?: string | null): Prom
  */
 // A caller with explicit billing reconciliation can forbid retrying failed receipts without
 // replacing the shared receipt store or changing other workers' recovery policy.
-const receiptPolicy = new AsyncLocalStorage<{ retryFailed: boolean; attemptTag?:string; assertAuthorized?: () => Promise<void> }>();
-export function withReceiptPolicy<T>(policy: { retryFailed: boolean; attemptTag?:string; assertAuthorized?: () => Promise<void> }, run: () => Promise<T>): Promise<T> {
+const receiptPolicy = new AsyncLocalStorage<{ retryFailed: boolean; attemptTag?:string; assertAuthorized?: () => Promise<void>; services?: readonly string[]; authorization?: string }>();
+export function withReceiptPolicy<T>(policy: { retryFailed: boolean; attemptTag?:string; assertAuthorized?: () => Promise<void>; services?: readonly string[]; authorization?: string }, run: () => Promise<T>): Promise<T> {
   return receiptPolicy.run(policy, run);
 }
 
 export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallOutcome>, beforeRequest?: (tx: Db) => Promise<void>): Promise<ReceiptResult> {
   const policy = receiptPolicy.getStore();
   await policy?.assertAuthorized?.();
+  if (policy?.services && !policy.services.includes(req.service)) throw new ModelUnavailableError(`Service outside current paid authorization: ${req.service}`);
+  if (policy?.authorization) req = { ...req, requestSummary: { ...req.requestSummary, authorization: policy.authorization } };
   if (policy?.attemptTag) req = {...req, attemptTag: `${policy.attemptTag}:${req.attemptTag ?? "0"}`};
   const logicalKey = logicalKeyFor(req);
 

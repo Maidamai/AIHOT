@@ -1,5 +1,5 @@
 import { loadReport } from "@aihot/backend/publication/reports";
-import { runNewsEditorial, composeApprovedReports, refreshApprovedHot, retryNewsEditorial, newsQueue } from "../backend/news-editorial.ts";
+import {nativeArticlePermit,assignNativeDocumentPurpose,migrateOrdinaryDocumentPurpose,reviewOnlyPolicyDocument,initializeReviewOnlyPurpose} from "../backend/native-permit.ts";
 import { recallFacts } from "@aihot/backend/events/recall";
 import { reportText } from "@aihot/backend/events/relate";
 import { loadPool } from "@aihot/backend/publication/pool";
@@ -81,21 +81,6 @@ test('selection keeps a saved outcome across a generation-request interruption; 
  }}));
  assert.equal(blocked.status,'failed');assert.equal(blocked.stale,true);assert.deepEqual(sent,['prefilter']);
 });
-test('two dispatchers on the same approved snapshot create one task, queue job and dispatch audit',async()=>{
- const d=await automaticFixture(60),boss=await getBoss({schedule:false,supervise:false});
- await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic concurrent identical dispatch verification');
- const [v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
- let arrivals=0,release!:()=>void;const barrier=new Promise<void>(r=>release=r);
- const gate=()=>{let first=true;return async()=>{if(first){first=false;if(++arrivals===2)release();await barrier;}};};
- try{
-  const results=await Promise.all([dispatchAutomaticDocuments(undefined,{assertHeld:gate()}),dispatchAutomaticDocuments(undefined,{assertHeld:gate()})]);
-  assert.equal(results.flatMap(r=>r.rows).filter(r=>r.state==='enqueued').length,1);
-  const tasks=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${d.id}`;assert.equal(tasks.length,1);
-  const jobs=await sql`SELECT id FROM pgboss.job WHERE name='fishery.flow' AND data->>'id'=${tasks[0].id}`;assert.equal(jobs.length,1);
-  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.flow.auto_enqueued' AND subject=${'fishery:'+d.id}`)[0].n,1);
-  await boss.cancel(flowQueue.name,jobs[0].id);
- }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
-});
 function selectionMock(body:string,sends:string[],options:{label?:string;failSecond?:()=>boolean;after?:(stage:string)=>Promise<void>;missingEvidence?:boolean;score?:number}={}){
  return async(q:any)=>{
   const stage=q.purpose==='prefilter_article'?'prefilter':q.purpose==='score_article'?q.subject.includes(':score-1:')?'score-1':'score-2':q.purpose==='fishery_draft'?'generation':q.purpose==='structure_article'?'structure':'review';
@@ -126,7 +111,7 @@ test('selection persists three independent receipts, needs final fact approval a
  assert.notEqual(result.stage_requests['score-1:1'].attemptTag,result.stage_requests['score-2:1'].attemptTag);
  assert.equal(result.selection.outcome.attentionCandidate,true);assert.equal(result.selection.outcome.calibrated,false);assert.equal(result.selection.outcome.factApproval,false);
  assert.equal(result.internalArticle,null);assert.equal(result.timeline.historical,true);assert.equal(await flowRequiredCalls(d.task.id),0);
- await decideFlow(d.task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'Synthetic separate final evidence approval'},'authorized-agent:test');
+ await decideFlow(d.task.id,{decision:'qualified',publication:'publish',snapshotHash:result.snapshotHash,note:'Synthetic separate final evidence approval'},'authorized-agent:test');
  assert.ok((await flowDetail(d.task.id)).internalArticle);
  await assert.rejects(createFlow(d.id,{identity:'not-a-legacy-backfill'},'tester'),/different selection mode/);
 });
@@ -161,11 +146,11 @@ test('selection BLOCK and UNKNOWN stop scores; high score cannot bless a fact wi
   const d=await selectionFixture(n),sends:string[]=[],result=await runFlow(d.task.id,selectionMock(d.body,sends,{label}));
   assert.equal(result.status,'needs_evidence');assert.deepEqual(sends,['prefilter']);assert.equal(result.selection.outcome.label,label);assert.equal(result.internalArticle,null);assert.equal(await flowRequiredCalls(d.task.id),0);
  }
- const low=await selectionFixture(68),lowSends:string[]=[],lowResult=await runFlow(low.task.id,selectionMock(low.body,lowSends,{score:10}));
+ const low=await selectionFixture(969),lowSends:string[]=[],lowResult=await runFlow(low.task.id,selectionMock(low.body,lowSends,{score:10}));
  assert.equal(lowResult.status,'needs_evidence');assert.deepEqual(lowSends,['prefilter','score-1','score-2']);assert.equal(lowResult.draft,null);assert.match(lowResult.error.reason,/BELOW_VALUE_THRESHOLD/);assert.equal(await flowRequiredCalls(low.task.id),0);
  const bad=await selectionFixture(66),paid:string[]=[],result=await runFlow(bad.task.id,selectionMock(bad.body,paid,{missingEvidence:true}));
  assert.equal(result.status,'failed');assert.equal(result.stage,'generation');assert.equal(result.selection.outcome.attentionCandidate,true);assert.equal(result.internalArticle,null);
- await assert.rejects(decideFlow(bad.task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'High scores do not prove facts'},'tester'),/相关性|Review|review/);
+ await assert.rejects(decideFlow(bad.task.id,{decision:'qualified',publication:'publish',snapshotHash:result.snapshotHash,note:'High scores do not prove facts'},'tester'),/相关性|Review|review/);
  const isolated=await selectionFixture(67),sent:string[]=[];
  try{
   const blocked=await runFlow(isolated.task.id,selectionMock(isolated.body,sent,{after:async stage=>{if(stage==='prefilter')await sql`UPDATE sources SET participation_mode='isolated' WHERE id='fishery-column-moa'`;}}));
@@ -176,7 +161,9 @@ test('selection BLOCK and UNKNOWN stop scores; high score cannot bless a fact wi
 import {AUTOMATIC_FLOW_KEY,configureAutomaticFlows,upgradeAutomaticFlowSources,dispatchAutomaticDocuments,automaticFlowPermit} from '../backend/automatic-flows.ts';
 import {nominateProcessing,processingEligibility,revokeProcessing} from '../backend/processing-eligibility.ts';
 import { syncFisheryPublications } from "../backend/publication-bridge.ts";
-import { loadItemDetail } from "@aihot/backend/publication/detail";
+import { loadItemDetail, exportMarkdown } from "@aihot/backend/publication/detail";
+import {v1Items} from "@aihot/backend/publication/v1";
+import {itemFeed} from "@aihot/backend/publication/feeds";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -315,121 +302,14 @@ test('captured news reverts and date corrections remain bound to current evidenc
  const dated=await capture('Synthetic original A。','2020-01-01T00:00:00Z');assert.equal(dated.a.revision,again.a.revision+1);assert.equal(dated.a.publication_time,'2020-01-01T00:00:00Z');assert.equal(dated.a.backfill,true);assert.equal(dated.a.discovered_at.toISOString(),'2026-10-23T12:00:00.000Z');
  assert.deepEqual(await sql`SELECT count(*)::int AS n FROM receipts`,before);
 });
-test('automatic scope covers both authorized news sources and refuses a divergent core body before spending',async()=>{
- const m=await automaticFixture(910),f=await automaticFixture(911,undefined,'fujian');
- try{
-  const initial=await configureAutomaticFlows(autoPolicy([m.id]),'tester','Synthetic pre-upgrade authorized scope');
-  await sql`UPDATE settings SET value=${sql.json({...initial,sourceIds:undefined,sourceId:'fishery-column-moa'})} WHERE key=${AUTOMATIC_FLOW_KEY}`;
-  assert.deepEqual(await upgradeAutomaticFlowSources('tester'),initial);assert.deepEqual(await upgradeAutomaticFlowSources('tester'),initial);
-  await configureAutomaticFlows({...autoPolicy([m.id,f.id]),sourceIds:['fishery-column-moa','fishery-column-fujian']},'tester','Synthetic multiple-source dispatch coverage');
-  const first=await dispatchAutomaticDocuments();assert.equal(first.rows.length,2);assert.ok(first.rows.every(r=>r.reason?.includes('Waiting for current material approval')));
+test('ordinary captures never create the retired review pipeline even when raw material was approved',async()=>{
+ const d=await automaticFixture(910),[source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+ await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic ordinary news must stay on native processing');
+ try {
   assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
-  const [task]=await sql`SELECT id FROM fishery_flow_tasks WHERE document_id=${m.id}`;
-  await sql`UPDATE articles SET body_text='Synthetic different current body' WHERE raw->>'fisheryDocumentId'=${m.id}`;
-  await assert.rejects(automaticFlowPermit(task.id),/Core news body differs/);
-  await assert.rejects(configureAutomaticFlows({...autoPolicy(),sourceIds:['fishery-column-iotc']},'tester','Synthetic excluded source guard'));
- }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
-});
-test('automatic dispatch waits for ordinary material approval, deduplicates queue and consumer, then retains final approval',async()=>{
-  const d=await automaticFixture(1),boss=await getBoss({schedule:false,supervise:false});
-  const keys=['LLM_MODEL','LLM_BASE_URL','LLM_REASONING_TOKENS','LLM_EXTRA_JSON'] as const,old=keys.map(k=>process.env[k]),enabled=config.modelCallsEnabled;
-  const [priorLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
-  let sends=0;
-  const invoke=async(options:any)=>{
-    const e=['p1s1'],u={date:{precision:'unknown',value:null},evidence:[]};
-    const data=options.purpose==='prefilter_article'?{label:'PASS',reason:'Synthetic source'}:options.purpose==='score_article'?{attentionScore:90}:options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic original',evidence:e},summaryZh:[{sentence:d.body,evidence:e}],dates:{published:u,event:u,adopted:u,effective:u,objectionDeadline:u},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic bound original',evidence:e},{field:'relevance',verdict:'supported',reason:'Synthetic relevant original',evidence:e}]};
-    const r=await paidRequest({service:'auto-local-mock',model:'mock',purpose:options.purpose,subject:options.subject,identity:{promptVersion:options.promptVersion,system:options.system,user:options.user},attemptTag:options.attemptTag},async()=>{sends++;return {response:data};});
-    return {data:options.schema.parse(r.response),receiptId:r.receiptId,reused:r.reused,model:'mock',usage:null};
-  };
-  let lease:Awaited<ReturnType<typeof acquireProcessingLease>>|undefined;
-  try{
-    await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic bounded automatic authorization');
-    const pending=await dispatchAutomaticDocuments();assert.equal(pending.rows.length,1);assert.match(pending.rows[0].reason!,/Waiting for current material approval/);
-    const [task]=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id}`;assert.equal(task.status,'queued');assert.equal((await documentHistory(d.id)).reviews.length,0);
-    assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,0);
-    const [version]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,version.revision);
-    const dispatched=await dispatchAutomaticDocuments(),jobId=dispatched.rows[0].jobId!;assert.ok(jobId);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
-    const job=await boss.getJobById<{id:string;automatic:any}>(flowQueue.name,jobId);assert.equal(job!.retryLimit,0);assert.ok(job!.data.automatic);
-    process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL='https://api.deepseek.com';process.env.LLM_REASONING_TOKENS='0';process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';config.modelCallsEnabled=true;
-    await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
-    lease=await acquireProcessingLease();await lease.run(()=>runQueuedFlows([job!.data],invoke));
-    let detail=await flowDetail(task.id);assert.equal(detail.status,'needs_human_review');assert.equal(detail.internalArticle,null);assert.equal(sends,5);
-    await lease.run(()=>runQueuedFlows([job!.data],invoke));assert.equal(sends,5,'Redelivery cannot start a second paid attempt');
-    const [core]=await sql`SELECT id FROM articles WHERE raw->>'fisheryDocumentId'=${d.id}`;
-    await sql`UPDATE articles SET url=${`https://yyj.moa.gov.cn/gzdt/202610/t20261021_auto1.htm`},raw=jsonb_set(raw,'{mode}','"verified-news-candidate"') WHERE id=${core.id}`;
-    await decideFlow(task.id,{decision:'qualified',snapshotHash:detail.snapshotHash,note:'Synthetic explicit final approval'},'authorized-agent:test-final');
-    const linked=(await syncFisheryPublications('synthetic-news-final')).rows.find(r=>r.itemId===d.id)!;
-    assert.equal(linked.articleId,core.id,'Publication must reuse the exact news material identity');
-    const [newsProjection]=await sql`SELECT score,selected,selection_candidate FROM publications WHERE article_id=${core.id}`;
-    assert.equal(Number(newsProjection!.score),90,'Retain the approved independent scores on the same news identity');
-    assert.equal(newsProjection!.selected,false,'An approved summary is not a confirmed event identity');
-    assert.equal(newsProjection!.selection_candidate,false,'Do not fake a core structured analysis or completed grouping');
-    assert.equal((await loadItemDetail(core.id)).kind,'found');
-    await sql`UPDATE publications SET score=91 WHERE article_id=${core.id}`;
-    assert.equal((await loadItemDetail(core.id)).kind,'not_found','A public score must match the approved bound result');
-    await syncFisheryPublications('synthetic-news-score-repair');
-    assert.equal((await loadItemDetail(core.id)).kind,'found');assert.equal(sends,5,'Publication replay never repays scoring');
-    assert.ok((await loadPool({channel:'all',category:null,tag:null,includeBackfill:false})).items.some(i=>i.id===core.id));
-    detail=await flowDetail(task.id);assert.ok(detail.internalArticle);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal(sends,5);
-    await boss.cancel(flowQueue.name,jobId);
-  }finally{
-    await lease?.release();config.modelCallsEnabled=enabled;keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});
-    await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;
-    if(priorLedger)await sql`UPDATE settings SET value=${sql.json(priorLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
-  }
-});
-test('automatic dispatch recovers committed import and task before enqueue without paying or retrying failed tasks',async()=>{
- const d=await automaticFixture(2),boss=await getBoss({schedule:false,supervise:false});
- await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic crash between import and enqueue');
- const [v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
- await sql.unsafe(`CREATE FUNCTION auto_test_enqueue_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.name='fishery.flow' THEN RAISE EXCEPTION 'Synthetic enqueue outage'; END IF; RETURN NEW; END $$`);
- await sql.unsafe(`CREATE TRIGGER auto_test_enqueue_fault BEFORE INSERT ON pgboss.job FOR EACH ROW EXECUTE FUNCTION auto_test_enqueue_fault()`);
- try{
-  await assert.rejects(dispatchAutomaticDocuments(),/Synthetic enqueue outage/);
-  const [t]=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id}`;assert.equal(t.status,'queued');
-  assert.equal((await sql`SELECT count(*)::int AS n FROM audit_log WHERE action='fishery.flow.auto_enqueued' AND subject=${`fishery:${d.id}`}`)[0].n,0);
-  await sql.unsafe('DROP TRIGGER auto_test_enqueue_fault ON pgboss.job');
-  const recovered=await dispatchAutomaticDocuments();assert.equal(recovered.rows[0].taskId,t.id);assert.equal(recovered.rows[0].state,'enqueued');
-  await sql`UPDATE fishery_flow_tasks SET status='failed',error='{"reason":"Synthetic received/persist failure; explicit reconciliation required"}'::jsonb WHERE id=${t.id}`;
-  assert.equal((await dispatchAutomaticDocuments()).rows.length,0);assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.job WHERE name='fishery.flow' AND data->>'id'=${t.id}`)[0].n,1);
-  // A prompt/rule deployment is not permission to repeat an already attempted review.
-  await sql`UPDATE fishery_flow_tasks SET snapshot=jsonb_set(snapshot,'{executionConfig}','"retired-config"') WHERE id=${t.id}`;
-  await sql`DELETE FROM audit_log WHERE action='fishery.flow.auto_checked' AND subject=${`fishery:${d.id}`}`;
-  const guarded=await dispatchAutomaticDocuments();assert.equal(guarded.rows[0].state,'blocked');assert.match(guarded.rows[0].reason!,/no automatic repeat charge/);
-  assert.equal((await sql`SELECT count(*)::int AS n FROM fishery_flow_tasks WHERE document_id=${d.id}`)[0].n,1);
-  await boss.cancel(flowQueue.name,recovered.rows[0].jobId!);
- }finally{await sql.unsafe('DROP TRIGGER IF EXISTS auto_test_enqueue_fault ON pgboss.job');await sql.unsafe('DROP FUNCTION auto_test_enqueue_fault()');await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
-});
-test('automatic dispatch rejects stale body, material rejection and isolated source before model sends; sixth pending document is not starved',async()=>{
- const docs=[];for(let i=10;i<16;i++)docs.push(await automaticFixture(i));
- await configureAutomaticFlows(autoPolicy(docs.map(d=>d.id)),'tester','Synthetic bounded version and source gates');
- const boss=await getBoss({schedule:false,supervise:false});let sends=0;
- try{
-  assert.equal((await dispatchAutomaticDocuments()).rows.length,5);assert.equal((await dispatchAutomaticDocuments()).rows.length,1);assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
-  const d=docs[5],[v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
-  const dispatched=await dispatchAutomaticDocuments(),job=await boss.getJobById<any>(flowQueue.name,dispatched.rows[0].jobId!);
-  await review(d.id,{revision:1,sourceRevision:v.revision,decision:'rejected',applicabilityReviewed:false,note:'Synthetic evidence rejection'},'reviewer');
-  await runQueuedFlows([job!.data],async()=>{sends++;throw new Error('Must not send');});assert.equal(sends,0);
-  await observe(d.id,{...observationFixture,expectedRevision:1,summaryZh:'Synthetic changed version',sourceCapture:{adapter:'moa',sourceUrl:`https://example.org/changed-auto`,capturedAt:'2026-10-21T08:01:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(d.body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
-  await dispatchAutomaticDocuments();const tasks=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY created_at,id`;assert.equal(tasks.length,2);assert.equal(tasks[0].status,'rejected');assert.equal(tasks[1].status,'queued');
-  await assert.rejects(automaticFlowPermit(tasks[1].id),/Waiting for current material approval/);
-  await approve(d.id,2,v.revision);const next=await dispatchAutomaticDocuments();assert.equal(next.rows[0].state,'enqueued');
-  await sql`UPDATE sources SET participation_mode='isolated' WHERE id='fishery-column-moa'`;
-  const newer=await boss.getJobById<any>(flowQueue.name,next.rows[0].jobId!);await runQueuedFlows([newer!.data],async()=>{sends++;throw new Error('Must not send');});assert.equal(sends,0);
-  await assert.rejects(automaticFlowPermit(tasks[1].id),/isolated/);
-  for(const id of [dispatched.rows[0].jobId,next.rows[0].jobId])await boss.cancel(flowQueue.name,id!);
- }finally{await sql`UPDATE sources SET participation_mode='editorial' WHERE id='fishery-column-moa'`;await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
-});
-test('automatic dispatch stale reader cannot reject a newer pristine version',async()=>{
- const d=await automaticFixture(30);
- await configureAutomaticFlows(autoPolicy([d.id]),'tester','Synthetic concurrent dispatch evidence versions');
- try{
-  await dispatchAutomaticDocuments();const [v]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,v.revision);
-  let enter!:()=>void,release!:()=>void,first=true;const entered=new Promise<void>(r=>enter=r),barrier=new Promise<void>(r=>release=r);
-  const older=dispatchAutomaticDocuments(undefined,{assertHeld:async()=>{if(first){first=false;enter();await barrier;}}});await entered;
-  await observe(d.id,{...observationFixture,expectedRevision:1,summaryZh:'Synthetic version two',sourceCapture:{adapter:'moa',sourceUrl:'https://example.org/auto-version-two',capturedAt:'2026-10-21T08:01:00Z',httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:sha256(d.body),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
-  await dispatchAutomaticDocuments();const [newer]=await sql`SELECT id,status FROM fishery_flow_tasks WHERE document_id=${d.id} ORDER BY created_at DESC,id DESC LIMIT 1`;assert.equal(newer.status,'queued');
-  release();await older;assert.equal((await flowDetail(newer.id)).status,'queued');assert.equal((await flowDetail(newer.id)).stale,false);
+  await approve(d.id,1,source.revision);
+  assert.equal((await dispatchAutomaticDocuments()).rows.length,0);
+  assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE document_id=${d.id}`).length,0);
  }finally{await sql`DELETE FROM settings WHERE key=${AUTOMATIC_FLOW_KEY}`;}
 });
 
@@ -561,7 +441,7 @@ test("PDF reacquisition times preserve imported approval and qualified flow whil
     await approve(imported.id);
     const task=await createFlow(imported.id,{identity:`capture-time-${variant}`},"tester"),checked=await runFlow(task.id,invoke);
     assert.equal(checked.status,"needs_human_review");
-    await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic snapshot qualification"},"reviewer");
+    await decideFlow(task.id,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Synthetic snapshot qualification"},"reviewer");
     assert.ok((await flowDetail(task.id)).internalArticle);
     const recaptured={...initial,sourceCapture:{...initial.sourceCapture,capturedAt:"2026-10-21T00:00:00Z",attachmentCapturedAt:"2026-10-21T00:00:01Z"}};
     const duplicate=await importCapturedMaterial(column,url,recaptured,"tester");
@@ -903,31 +783,31 @@ test("persistent fishery flow reuses successful stages, requires human snapshot 
   await assert.rejects(runFlow(id!,invoke),/not queued/);
   await retryFlow(id!,{note:"Explicit reconciled mock failure"},"tester");failReview=false;
   const checked=await runFlow(id!,invoke);assert.equal(checked.status,"needs_human_review");assert.equal(generated,1);assert.equal(reviewed,2);assert.equal(checked.internalArticle,null);
-  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:"a".repeat(64),note:"wrong snapshot"},"reviewer"),/snapshot changed/);
-  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"AI support cannot approve raw material"},"reviewer"),/must be approved/);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",publication:"publish",snapshotHash:"a".repeat(64),note:"wrong snapshot"},"reviewer"),/snapshot changed/);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"AI support cannot approve raw material"},"reviewer"),/must be approved/);
   await approve(checked.document_id,checked.snapshot.observationRevision,checked.snapshot.sourceRevision);
-  await decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic internal decision only"},"reviewer");
+  await decideFlow(id!,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Synthetic internal decision only"},"reviewer");
   const qualified=await flowDetail(id!);assert.equal(qualified.status,"qualified");assert.ok(qualified.internalArticle);assert.equal(qualified.published,false);
   await decideFlow(id!,{decision:"rejected",snapshotHash:checked.snapshotHash,note:"Retract synthetic qualification"},"reviewer");assert.equal((await flowDetail(id!)).internalArticle,null);
-  await decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic review again"},"reviewer");
+  await decideFlow(id!,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Synthetic review again"},"reviewer");
   // A preexisting/newer pending or rejected task is authoritative; never fall back to old qualified.
   await sql`INSERT INTO fishery_flow_tasks(id,document_id,identity,snapshot,status,stage,actor) SELECT 'superseding-'||id,document_id,'superseding-'||identity,snapshot,'queued','generation',actor FROM fishery_flow_tasks WHERE id=${id!}`;
   const historical=await flowDetail(id!);assert.equal(historical.authoritative,false);assert.equal(historical.internalArticle,null);
-  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot revive old article"},"reviewer"),/newer authoritative/);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Cannot revive old article"},"reviewer"),/newer authoritative/);
   const newer=await flowDetail("superseding-"+id!);await decideFlow(newer.id,{decision:"rejected",snapshotHash:newer.snapshotHash,note:"Reject latest task; older qualified must stay hidden"},"reviewer");assert.equal((await flowDetail(id!)).internalArticle,null);
   const document=await documentHistory(checked.document_id),sourceId=document.document.source_id;
   await registerSource(sourceId,{expectedRevision:1,healthNote:"Changed source rights metadata"},"tester");
   const stale=await flowDetail(id!);assert.equal(stale.stale,true);assert.equal(stale.internalArticle,null);
-  await assert.rejects(decideFlow(id!,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Old snapshot"},"reviewer"),/snapshot changed|newer authoritative/);
+  await assert.rejects(decideFlow(id!,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Old snapshot"},"reviewer"),/snapshot changed|newer authoritative/);
   await assert.rejects(createFlow(checked.document_id,{identity:"test"},"tester"),/old evidence/);
   const next=await createFlow(checked.document_id,{identity:"new-version"},"tester");assert.notEqual(next.id,id!);
   const rechecked=await runFlow(next.id,invoke);assert.equal(rechecked.status,"needs_human_review");assert.equal(rechecked.materialApproved,false);
-  await assert.rejects(decideFlow(next.id,{decision:"qualified",snapshotHash:rechecked.snapshotHash,note:"Old source approval cannot approve a new source version"},"reviewer"),/must be approved/);
+  await assert.rejects(decideFlow(next.id,{decision:"qualified",publication:"publish",snapshotHash:rechecked.snapshotHash,note:"Old source approval cannot approve a new source version"},"reviewer"),/must be approved/);
   await approve(checked.document_id,rechecked.snapshot.observationRevision,rechecked.snapshot.sourceRevision);
-  await decideFlow(next.id,{decision:"qualified",snapshotHash:rechecked.snapshotHash,note:"Current source and observation approved"},"reviewer");assert.ok((await flowDetail(next.id)).internalArticle);
+  await decideFlow(next.id,{decision:"qualified",publication:"publish",snapshotHash:rechecked.snapshotHash,note:"Current source and observation approved"},"reviewer");assert.ok((await flowDetail(next.id)).internalArticle);
   await observe(checked.document_id,{...document.observations[0]!.payload,expectedRevision:1,originalTitle:"合成新原标题，未经核查",title:"合成标题变更"},"tester");
   assert.equal((await flowDetail(next.id)).materialApproved,false);assert.equal((await flowDetail(next.id)).internalArticle,null);
-  await assert.rejects(decideFlow(next.id,{decision:"qualified",snapshotHash:rechecked.snapshotHash,note:"Old raw approval cannot approve a new observation title"},"reviewer"),/must be approved/);
+  await assert.rejects(decideFlow(next.id,{decision:"qualified",publication:"publish",snapshotHash:rechecked.snapshotHash,note:"Old raw approval cannot approve a new observation title"},"reviewer"),/must be approved/);
   await withdraw(checked.document_id,{expectedRevision:2,reason:"Synthetic withdrawal"},"tester");assert.equal((await flowDetail(next.id)).stale,true);assert.equal((await flowDetail(id!)).internalArticle,null);
 });
 
@@ -1077,7 +957,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     await boss.updateQueue(flowQueue.name,{retryLimit:0,expireInSeconds:600});
     release=await registerManualFlowConsumer(boss,jobs=>runQueuedFlows(jobs,invoke));
     await assert.rejects(registerManualFlowConsumer(boss),/already running/);
-    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name,newsQueue.name,QUEUES.republishSource].sort());
+    assert.deepEqual(boss.getWipData().map(w=>w.name).sort(),[flowQueue.name,publicationQueue.name,QUEUES.republishSource].sort());
     assert.equal((await sql`SELECT count(*)::int AS n FROM pgboss.schedule`)[0]!.n,0);
     assert.equal(calls,0,"idle startup performs no model calls");
     config.modelCallsEnabled=false;
@@ -1112,7 +992,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     assert.equal(goodTask.timeline.candidateEvent.precision,"unknown");assert.equal(goodTask.timeline.sourceEvent.precision,"unknown");
     assert.ok(goodTask.timeline.generatedAt);assert.ok(goodTask.timeline.checkedAt);assert.equal(goodTask.timeline.sourceCapturedAt,"2026-10-20T00:00:00Z");
     await approve(goodTask.document_id,goodTask.snapshot.observationRevision,goodTask.snapshot.sourceRevision);
-    await decideFlow(good.id,{decision:"qualified",snapshotHash:goodTask.snapshotHash,note:"Synthetic historical internal article"},"reviewer");
+    await decideFlow(good.id,{decision:"qualified",publication:"publish",snapshotHash:goodTask.snapshotHash,note:"Synthetic historical internal article"},"reviewer");
     const article=(await flowDetail(good.id,new Date("2026-10-20T00:00:00Z"))).internalArticle;
     assert.equal(article.timeline.historical,true);assert.equal(article.timeline.originalAgeDays,186);assert.equal(article.timeline.candidateEvent.precision,"unknown");
     const [goodObservation]=await sql`SELECT payload FROM fishery_observations WHERE document_id=${goodTask.document_id} AND revision=2`;
@@ -1142,10 +1022,10 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     const unknown=await task("manual-unknown"),unknownJob=await enqueueOn(flowQueue,{id:unknown.id});
     assert.equal((await settled(unknownJob)).state,"completed");const unknownTask=await flowDetail(unknown.id);assert.equal(unknownTask.status,"needs_evidence");assert.equal(unknownTask.error.code,"FISHERY_ARTICLE_INELIGIBLE");assert.equal(calls,4,"unknown relevance skips paid review");
     await approve(unknownTask.document_id,unknownTask.snapshot.observationRevision,unknownTask.snapshot.sourceRevision);
-    await assert.rejects(decideFlow(unknown.id,{decision:"qualified",snapshotHash:unknownTask.snapshotHash,note:"Unknown cannot qualify"},"reviewer"),/relevant/);
+    await assert.rejects(decideFlow(unknown.id,{decision:"qualified",publication:"publish",snapshotHash:unknownTask.snapshotHash,note:"Unknown cannot qualify"},"reviewer"),/relevant/);
     await sql`UPDATE fishery_flow_tasks SET status='qualified',quality_review=${sql.json({status:"needs_human_review",receiptId:999999,review:{decision:"supported",coverage:"complete_input",findings:[]},missingFields:[]})},human_decision=${sql.json({actor:"legacy-reviewer",decision:"qualified"})} WHERE id=${unknown.id}`;
     assert.equal((await flowDetail(unknown.id)).internalArticle,null,"legacy unknown qualified tasks have no internal article preview even with a formerly passing review");
-    await assert.rejects(decideFlow(unknown.id,{decision:"qualified",snapshotHash:unknownTask.snapshotHash,note:"Legacy passing review cannot qualify unknown relevance"},"reviewer"),/relevant/);
+    await assert.rejects(decideFlow(unknown.id,{decision:"qualified",publication:"publish",snapshotHash:unknownTask.snapshotHash,note:"Legacy passing review cannot qualify unknown relevance"},"reviewer"),/relevant/);
     await sql`UPDATE fishery_flow_tasks SET status='needs_evidence',quality_review=NULL,human_decision=NULL WHERE id=${unknown.id}`;
     ineligible=false;
     await retryFlow(unknown.id,{note:"Explicit regeneration of unknown draft",mode:"regenerate",acknowledgeNewCharge:true},"tester");
@@ -1154,7 +1034,7 @@ test("manual processor only consumes explicit flows, persists blocks and failure
     emptySummary=true;
     const empty=await task("manual-empty"),emptyJob=await enqueueOn(flowQueue,{id:empty.id});assert.equal((await settled(emptyJob)).state,"completed");const emptyTask=await flowDetail(empty.id);assert.equal(emptyTask.status,"needs_evidence");assert.equal(calls,7,"empty summary skips paid review");
     await approve(emptyTask.document_id,emptyTask.snapshot.observationRevision,emptyTask.snapshot.sourceRevision);
-    await assert.rejects(decideFlow(empty.id,{decision:"qualified",snapshotHash:emptyTask.snapshotHash,note:"Empty article cannot qualify"},"reviewer"),/非空/);
+    await assert.rejects(decideFlow(empty.id,{decision:"qualified",publication:"publish",snapshotHash:emptyTask.snapshotHash,note:"Empty article cannot qualify"},"reviewer"),/非空/);
   } finally {
     releaseHold?.();
     await boss.offWork(flowQueue.name);await release?.();
@@ -1173,15 +1053,15 @@ test("private reader projects only the current real qualified set and never expo
   const invoke=async(options:any)=>{calls++;const output=options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"公海远洋政策合成样例",evidence},summaryZh:[{sentence:quote,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},locations:[],organizations:[],eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",uncertainties:[]}: {decision:"supported",coverage:"complete_input",findings:JSON.parse(options.user).claims.map((c:any)=>({field:c.id,verdict:"supported",reason:"Synthetic contract verification only",evidence:c.evidenceIds}))};return {data:options.schema.parse(output),receiptId:999999,model:"mock",reused:false,usage:null};};
   const checked=await runFlow(task.id,invoke);assert.equal(checked.status,"needs_human_review",JSON.stringify(checked.error));
   assert.equal(checked.materialApproved,false);
-  await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Must not bypass raw material approval"},"fixture-admin"),/must be approved/);
+  await assert.rejects(decideFlow(task.id,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Must not bypass raw material approval"},"fixture-admin"),/must be approved/);
   await sql`UPDATE fishery_flow_tasks SET status='qualified',human_decision=${sql.json({actor:"synthetic-legacy",decision:"qualified",snapshotHash:checked.snapshotHash})} WHERE id=${task.id}`;
   assert.equal((await flowDetail(task.id)).internalArticle,null);await assert.rejects(readerItem(f.id,now),/No current/);
   await sql`UPDATE fishery_flow_tasks SET status='needs_human_review',human_decision=NULL WHERE id=${task.id}`;
   await approve(f.id,2,1);assert.equal((await flowDetail(task.id)).materialApproved,true);
-  await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"INTERNAL_AUDIT_SENTINEL_DO_NOT_PROJECT"},"PRIVATE_REVIEWER_SENTINEL");
+  await decideFlow(task.id,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"INTERNAL_AUDIT_SENTINEL_DO_NOT_PROJECT"},"PRIVATE_REVIEWER_SENTINEL");
   const [original]=await sql`SELECT * FROM fishery_flow_tasks WHERE id=${task.id}`;
-  const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"safety");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
-  assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"safety"},now)).rows.some(r=>r.id===f.id));
+  const one=await readerItem(f.id,now),page=await readerPage({},now);assert.equal(page.total,baseline+1);assert.equal(one.category.id,"reference");assert.equal(one.dates.published.value,"2026-04-17");assert.equal(one.age.historical,true);
+  assert.equal(page.categories.reduce((n,c)=>n+c.count,0),page.total);assert.ok(page.categories.every(c=>c.count>0));assert.ok((await readerPage({category:"reference"},now)).rows.some(r=>r.id===f.id));
   assert.equal(one.verification.label,"摘要已完成内部核对");assert.equal(one.title,quote);assert.equal(one.source.originalTitle,"配额增100%（合成未核查原标题）");assert.ok(!one.title.includes("100%"));
   const automatic=await registerManualFlowConsumer(await getBoss({schedule:false,supervise:false}),async()=>{});
   let articleId:string|undefined;
@@ -1215,7 +1095,7 @@ test("private reader projects only the current real qualified set and never expo
   assert.equal((await loadItemDetail(bridged.articleId)).kind,"not_found");
   await assert.rejects(readerItem(f.id,now),/No current/);assert.equal((await readerPage({},now)).total,baseline);
   assert.equal((await readerPage({},now)).categories.reduce((n,c)=>n+c.count,0),baseline);
-  await assert.rejects(decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Cannot bypass current material rejection"},"fixture-admin"),/must be approved/);
+  await assert.rejects(decideFlow(task.id,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Cannot bypass current material rejection"},"fixture-admin"),/must be approved/);
   await review(f.id,{revision:2,sourceRevision:1,decision:"approved",applicabilityReviewed:false,note:"Synthetic latest current review replaces rejection"},"fixture-admin");
   assert.deepEqual((await readerPage({},now)).categories,categoriesBefore);
   // A historic-version rejection is not a rejection of the current observation.
@@ -1292,12 +1172,12 @@ test("human revision preserves received provenance, saves without calls and only
   release();const result=await running;
   assert.equal(calls,1);assert.equal(result.status,"needs_human_review",JSON.stringify(result.error));
   await approve(f.id,2,1);
-  await decideFlow(revised.id,{decision:"qualified",snapshotHash:result.snapshotHash,note:"synthetic qualification"},"fixture-admin");
+  await decideFlow(revised.id,{decision:"qualified",publication:"publish",snapshotHash:result.snapshotHash,note:"synthetic qualification"},"fixture-admin");
   assert.ok((await flowDetail(revised.id)).internalArticle);
   assert.equal((await readerItem(f.id,now)).verification.label,"人工修订候选，经模型辅助核查与人工审核");
   await sql`UPDATE fishery_flow_tasks SET draft=jsonb_set(draft,'{provenance,candidateHash}',${sql.json("0".repeat(64))}) WHERE id=${revised.id}`;
   assert.equal((await flowDetail(revised.id)).internalArticle,null);
-  await assert.rejects(decideFlow(revised.id,{decision:"qualified",snapshotHash:result.snapshotHash,note:"tampered hash"},"fixture-admin"),/candidate hash/);
+  await assert.rejects(decideFlow(revised.id,{decision:"qualified",publication:"publish",snapshotHash:result.snapshotHash,note:"tampered hash"},"fixture-admin"),/candidate hash/);
   await assert.rejects(readerItem(f.id,now),/No current/);
   await sql`UPDATE fishery_flow_tasks SET draft=jsonb_set(draft,'{provenance,candidateHash}',${sql.json(result.draft.provenance.candidateHash)}) WHERE id=${revised.id}`;
   await decideFlow(revised.id,{decision:"rejected",snapshotHash:result.snapshotHash,note:"synthetic follow-up correction"},"fixture-admin");
@@ -1337,8 +1217,8 @@ test("verified body changes invalidate old approval; keyword absence still enter
   await approve(id,1,source!.revision);
   const date={date:{precision:"unknown",value:null},evidence:[]},evidence=["p1s1"];
   const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==="fishery_draft"?{relevance:{decision:"relevant",reason:"Synthetic public-sea source evidence",evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:"unknown",evidence:[]},eventStatus:{value:"unknown",evidence:[]},validityStatus:"unknown",organizations:[],locations:[],uncertainties:[]}:{decision:"supported",coverage:"complete_input",findings:[{field:"summaryZh.0",verdict:"supported",reason:"Synthetic source sentence",evidence},{field:"relevance",verdict:"supported",reason:"Synthetic relevance",evidence}]}),receiptId:999999,model:"mock",reused:false,usage:null});
-  const task=await createFlow(id,{identity:"before-irrelevant-recapture"},"tester"),checked=await runFlow(task.id,async(options:any)=>options.purpose==='prefilter_article'||options.purpose==='score_article'?({data:options.schema.parse(options.purpose==='prefilter_article'?{label:'PASS',reason:'Synthetic relevant original'}:{attentionScore:95}),receiptId:options.subject.includes(':score-2:')?999998:999997,model:'mock',reused:false,usage:null}):invoke(options));
-  assert.equal(checked.status,"needs_human_review");await decideFlow(task.id,{decision:"qualified",snapshotHash:checked.snapshotHash,note:"Synthetic original snapshot approved"},"reviewer");
+  const task=await createFlow(id,{identity:"before-irrelevant-recapture"},"tester"),checked=await runFlow(task.id,invoke);
+  assert.equal(checked.status,"needs_human_review",JSON.stringify(checked.error));await decideFlow(task.id,{decision:"qualified",publication:"publish",snapshotHash:checked.snapshotHash,note:"Synthetic original snapshot approved"},"reviewer");
   await syncFisheryPublications("tester");
   const [coreBefore]=await sql`SELECT id,revision FROM articles WHERE source_id='fishery-column-moa' AND url=${url} AND raw->>'mode'='verified-news-candidate'`;
   assert.equal((await readerItem(id)).id,id);
@@ -1609,7 +1489,7 @@ test("cumulative amount budget uses validated received usage and reserves every 
 });
 
 // The bounded archive adapter uses the original source/fetch ledger, without importing materials.
-import { columnDbProgress, COLUMN_CURSOR_KEY } from '../backend/column-db-progress.ts';
+import { columnDbProgress, migrateColumnDbProgress, COLUMN_CURSOR_KEY } from '../backend/column-db-progress.ts';
 import { collectColumnRound, initialColumnProgress, columnProgressCoordinator } from '../backend/column-progress.ts';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1658,6 +1538,57 @@ test('source bridge failure and partial preserve complete successful cursor and 
     const runs=await sql`SELECT status,found_count,new_count,detail FROM fetch_runs WHERE source_id=${bridgeSource} AND detail->'fisheryColumnRound'->>'roundId'=${id}`;
     assert.equal(runs.length,1);assert.equal(runs[0]!.status,'failed');assert.equal(runs[0]!.new_count,0);assert.equal(runs[0]!.found_count,2);assert.equal(runs[0]!.detail.outcome,outcome);assert.deepEqual(runs[0]!.detail.fisheryColumnRound.after.pendingUrls,after.pendingUrls);
   }
+});
+test('source bridge commits trusted partial progress without turning bad article bodies into source failures',async()=>{
+  await bridgeFixture();let before=initialColumnProgress('moa');
+  for(let i=1;i<=4;i++) {
+    const after={...before,revision:i,completedUrls:[`https://yyj.moa.gov.cn/gzdt/202610/t20261020_${99000+i}.htm`],firstSeen:{'https://yyj.moa.gov.cn/gzdt/202610/t20261020_99001.htm':{at:'2026-10-21T00:00:00Z',batchId:'bridge-proof'}}};
+    after.health={...bridgeAfter('partial').health!,listingSucceededAt:'2026-10-21T00:00:00Z',bodyFailures:1};
+    const id=`bridge-partial-body-${i}`;
+    await columnDbProgress.intent('moa',id,before);await columnDbProgress.finish('moa',id,before,after,[],2);
+    const [source]=await sql`SELECT cursor,fail_count,last_ok_at,last_error,health FROM sources WHERE id=${bridgeSource}`;
+    assert.deepEqual(source.cursor[COLUMN_CURSOR_KEY],after);assert.equal(source.fail_count,0);assert.equal(source.last_error,null);assert.equal(source.health,'ok');
+    const [run]=await sql`SELECT status,detail FROM fetch_runs WHERE detail->'fisheryColumnRound'->>'roundId'=${id}`;
+    assert.equal(run.status,'ok');assert.equal(run.detail.outcome,'partial');assert.equal(run.detail.fisheryColumnRound.after.health.bodyFailures,1);
+    before=after;
+  }
+});
+test('source bridge explicit legacy recovery retains old identities and earliest archived discovery',async()=>{
+  await bridgeFixture();
+  const urls=[991,992].map(n=>`${COLUMNS.moa.url}202610/t20261023_${n}.htm`),id='bridge-recover-legacy',batchId=id+'-moa-p0';
+  const listing=`<ul class="sj_e_tonzhi_list">${urls.map(url=>`<li><a href="${url}">合成归档恢复</a></li>`).join('')}</ul>`;
+  const batch=await collectColumns({id:batchId,dataDir:config.dataDir,columns:['moa'],limit:2,page:{url:COLUMNS.moa.url,completedUrls:[]},wait:async()=>{},fetch:async url=>({url,status:url.endsWith('robots.txt')||url===urls[0]?404:200,headers:{get:()=>null},body:Buffer.from(url.endsWith('robots.txt')?'missing':url===COLUMNS.moa.url?listing:`<meta name="ArticleTitle" content="合成归档恢复"><meta name="PubDate" content="2026-10-23"><div class="sj_arc_body"><div class="TRS_Editor">${'公海远洋渔业的完整合成正文，只用于本地测试。'.repeat(5)}</div></div>`)})});
+  const before={...initialColumnProgress('moa'),profileHash:'b'.repeat(64),pendingUrls:urls,history:{pausedAt:'2026-10-20T00:00:00Z',cursorUrl:COLUMNS.moa.url+'index_1.htm',completedUrls:[],pendingUrls:['https://yyj.moa.gov.cn/gzdt/202001/t20200101_80001.htm']}};
+  await sql`UPDATE sources SET cursor=jsonb_set(cursor,'{fisheryColumnProgress}',${sql.json(before)}),fail_count=3,health='degraded',last_error='legacy body failure' WHERE id=${bridgeSource}`;
+  const binding=JSON.stringify({id:bridgeSource,kind:'external',config:{}});
+  await sql`INSERT INTO fetch_runs(source_id,status,finished_at,detail) VALUES(${bridgeSource},'failed',now(),${sql.json({fisheryColumnRound:{roundId:id,column:'moa',before,after:bridgeAfter('partial'),batches:[batchId],sourceBinding:binding}})})`;
+  const [original]=await sql`SELECT cursor FROM sources WHERE id=${bridgeSource}`;
+  await assert.rejects(migrateColumnDbProgress('moa',{expectedProfileHash:'c'.repeat(64),reason:'Synthetic explicit legacy archive reconciliation',recoverRoundId:id},'tester'),/expected profile differs/);
+  assert.deepEqual((await sql`SELECT cursor FROM sources WHERE id=${bridgeSource}`)[0].cursor,original.cursor);
+  const migrated=await migrateColumnDbProgress('moa',{expectedProfileHash:before.profileHash,reason:'Synthetic explicit legacy archive reconciliation',recoverRoundId:id},'tester');
+  assert.deepEqual(migrated.after.completedUrls,[urls[1]]);assert.deepEqual(migrated.after.pendingUrls,[urls[0]]);
+  assert.deepEqual(migrated.after.history!.pendingUrls,before.history.pendingUrls);
+  assert.equal(migrated.after.firstSeen![urls[0]].at,batch.sources[0].listingSucceededAt);assert.equal(migrated.after.health!.outcome,'partial');
+  const [source]=await sql`SELECT cursor,fail_count,enabled FROM sources WHERE id=${bridgeSource}`;
+  assert.equal(source.fail_count,0);assert.equal(source.enabled,false);assert.equal(source.cursor.unrelated.etag,'keep');
+  assert.equal((await sql`SELECT count(*)::int AS n FROM fishery_documents WHERE canonical_url IN ${sql(urls)}`)[0].n,0,'Migration does not import or dispatch');
+});
+
+test('first archived list time enters articles once even when import waits three days',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-23T12:00:00Z')});
+  const urls=[701,702].map(n=>`${COLUMNS.moa.url}202610/t20261023_${n}.htm`),listing=`<ul class="sj_e_tonzhi_list">${urls.map(url=>`<li><a href="${url}">合成首次发现</a></li>`).join('')}</ul>`;
+  const fetch=async(url:string)=>({url,status:url.endsWith('robots.txt')?404:200,headers:{get:()=>null},body:Buffer.from(url.endsWith('robots.txt')?'missing':url===COLUMNS.moa.url?listing:`<meta name="ArticleTitle" content="合成首次发现"><meta name="PubDate" content="2026-10-23 10:00"><div class="sj_arc_body"><div class="TRS_Editor">${'公海远洋渔业的完整合成正文，只用于本地测试。'.repeat(5)}</div></div>`) });
+  const first=await collectColumns({id:'first-list-before-wait',dataDir:config.dataDir,columns:['moa'],limit:1,page:{url:COLUMNS.moa.url,completedUrls:[]},fetch,wait:async()=>{}});
+  t.mock.timers.tick(3*86400000);
+  const later=await collectColumns({id:'first-list-after-wait',dataDir:config.dataDir,columns:['moa'],limit:1,page:{url:COLUMNS.moa.url,completedUrls:[urls[0]],revision:1,firstSeen:first.sources[0].firstSeen},fetch,wait:async()=>{}});
+  assert.equal(later.items[0].url,urls[1]);
+  const result=await importBatch(later.id,'tester'),documentId=result.rows[0].id;
+  const [article]=await sql`SELECT id,discovered_at,backfill,published_at FROM articles WHERE raw->>'fisheryDocumentId'=${documentId}`;
+  assert.equal(article.discovered_at.toISOString(),'2026-10-23T12:00:00.000Z');assert.equal(article.backfill,false);assert.equal(article.published_at.toISOString(),'2026-10-23T02:00:00.000Z');
+  assert.equal((await sql`SELECT purpose FROM fishery_document_purposes WHERE document_id=${documentId}`)[0].purpose,'native');
+  assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE document_id=${documentId}`).length,0);
+  await importBatch(later.id,'tester');
+  assert.equal((await sql`SELECT discovered_at FROM articles WHERE id=${article.id}`)[0].discovered_at.toISOString(),'2026-10-23T12:00:00.000Z');
 });
 test('source bridge success merges latest unrelated cursor fields and finalized replay never overwrites newer progress',async()=>{
   await bridgeFixture();const before=initialColumnProgress('moa'),after=bridgeAfter('success');
@@ -1900,22 +1831,39 @@ test('continuous news imports five then sixth into core material without approva
     // Simulate a worker restart: another producer instance reads the same persisted state/claim bound.
     await dueArchive();const j2=await claimArchive(b,c.revision);await runArchiveJob(j2,{fetch:mock,wait:async()=>{}});
     s=await archiveStatus();assert.equal(s.validationClaimed,2);assert.match(s.pausedReason!,/two-round/);assert.equal(s.pendingCandidates,0);
-    await dueArchive();assert.ok('skipped' in await archiveTick(b,c.revision));assert.equal(gets,n+3);
+    await dueArchive();assert.ok('skipped' in await archiveTick(b,c.revision));const secondGets=gets;assert.ok(secondGets>=n+3&&secondGets<=n+7,'one new article plus bounded revision checks');
     const docs=await sql`SELECT d.id,o.revision,r.id AS review FROM fishery_documents d JOIN fishery_observations o ON o.document_id=d.id LEFT JOIN fishery_reviews r ON r.document_id=d.id WHERE d.canonical_url=${archiveUrl(6)}`;assert.equal(docs.length,1);assert.equal(docs[0].revision,1);assert.equal(docs[0].review,null);
     const [after]=await sql`SELECT (SELECT count(*) FROM articles) AS articles,(SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_reviews) AS reviews,(SELECT count(*) FROM publications) AS publications,(SELECT count(*) FROM fishery_flow_tasks) AS flows`;assert.equal(after.articles,before.articles+6);assert.deepEqual({...after,articles:before.articles},before);
     const bad=await sql`SELECT name FROM archive_test_boss.job WHERE name ~ 'analyze|translate|report|flow|publication'`;assert.equal(bad.length,0);
     const hourly=await configureArchive({enabled:true,mode:'hourly',runId:'hourly-followup'});assert.ok(Date.parse(hourly.nextAt!)>Date.now()+3500_000);
-    await runArchiveJob(j2,{fetch:mock});assert.equal(gets,n+3);assert.ok('skipped' in await archiveTick(b,c.revision));
+    await runArchiveJob(j2,{fetch:mock});assert.equal(gets,secondGets);assert.ok('skipped' in await archiveTick(b,c.revision));
   }finally{await b.stop({graceful:false});}
 });
-test('continuous archive preserves partial successful cursor, pauses at three core failures and never retries the same job',async()=>{
+test('continuous archive retains partial progress and discovers new news through recurring bad bodies',async()=>{
   await archiveFixture();const b=await testArchiveBoss();let gets=0;
   try{
-    const c=await configureArchive({enabled:true,mode:'hourly',runId:'three-failures'});
+    const c=await configureArchive({enabled:true,mode:'hourly',runId:'partial-body-isolation'});
+    for(let i=0;i<4;i++){
+      await dueArchive();const job=await claimArchive(b,c.revision),fresh=10+i;
+      await runArchiveJob(job,{wait:async()=>{},fetch:async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([fresh,99,...Array.from({length:i},(_,n)=>10+n)]):url===archiveUrl(99)?Buffer.from('<html>missing article body</html>'):archiveBody(Number(/_(\d+)\.htm/.exec(url)![1])-97000),headers:{get:()=> 'text/html'}};}});
+      const [after]=await sql`SELECT cursor,last_ok_at,fail_count FROM sources WHERE id=${bridgeSource}`;
+      assert.equal(after.fail_count,0);assert.ok(after.last_ok_at);assert.ok(after.cursor[COLUMN_CURSOR_KEY].completedUrls.includes(archiveUrl(fresh)));
+      assert.ok(after.cursor[COLUMN_CURSOR_KEY].retryUrls.includes(archiveUrl(99)));
+      assert.ok((await sql`SELECT id FROM fishery_documents WHERE canonical_url=${archiveUrl(fresh)}`).length);
+      const count=gets;await runArchiveJob(job,{fetch:async()=>{throw new Error('duplicate job must not fetch');}});assert.equal(gets,count);
+    }
+    const status=await archiveStatus();assert.equal(status.enabled,true);assert.equal(status.consecutiveFailures,0);assert.equal(status.pausedReason,null);
+    assert.equal(status.bodyFailures,1);assert.ok(status.lastBodySuccessAt);assert.ok(status.lastListingSuccessAt);
+  }finally{await b.stop({graceful:false});}
+});
+test('continuous archive pauses after three actual listing failures and never retries the same job',async()=>{
+  await archiveFixture();const b=await testArchiveBoss();let gets=0;
+  try{
+    const c=await configureArchive({enabled:true,mode:'hourly',runId:'three-listing-failures'});
     for(let i=0;i<3;i++){
-      await dueArchive();const job=await claimArchive(b,c.revision);const [before]=await sql`SELECT cursor::text AS bytes,last_ok_at FROM sources WHERE id=${bridgeSource}`;
-      await runArchiveJob(job,{wait:async()=>{},fetch:async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:200,body:url.endsWith('robots.txt')?Buffer.from('missing'):url===COLUMNS.moa.url?archiveListing([10,11]):url===archiveUrl(10)?archiveBody(10):Buffer.from('<html>missing article body</html>'),headers:{get:()=> 'text/html'}};}});
-      const [after]=await sql`SELECT cursor::text AS bytes,last_ok_at,fail_count FROM sources WHERE id=${bridgeSource}`;assert.equal(after.bytes,before.bytes);assert.equal(after.last_ok_at,before.last_ok_at);assert.equal(after.fail_count,i+1);
+      await dueArchive();const job=await claimArchive(b,c.revision);
+      await runArchiveJob(job,{wait:async()=>{},fetch:async url=>{gets++;return {url,status:url.endsWith('robots.txt')?404:503,body:Buffer.from('Unavailable listing'),headers:{get:()=> 'text/html'}};}});
+      const [after]=await sql`SELECT cursor,fail_count FROM sources WHERE id=${bridgeSource}`;assert.deepEqual(after.cursor,{});assert.equal(after.fail_count,i+1);
       const count=gets;await runArchiveJob(job,{fetch:async()=>{throw new Error('duplicate job must not fetch');}});assert.equal(gets,count);
     }
     const status=await archiveStatus();assert.equal(status.enabled,false);assert.equal(status.consecutiveFailures,3);assert.match(status.pausedReason!,/Three consecutive/);
@@ -2081,7 +2029,7 @@ test('notice article flow keeps webpage and second attachment provenance through
  });
  assert.equal(sends,2);assert.equal(result.status,'needs_human_review',JSON.stringify(result.error));
  assert.equal(result.draft.draft.summaryZh[0].evidence[0].source.url,second);assert.equal(result.internalArticle,null,'Separate final approval remains required');
- await decideFlow(task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'Synthetic final review of source-bound second attachment'},'authorized-agent:test');
+ await decideFlow(task.id,{decision:'qualified',publication:'publish',snapshotHash:result.snapshotHash,note:'Synthetic final review of source-bound second attachment'},'authorized-agent:test');
  const readable=await readerItem(doc.id);assert.equal(readable.summary[0].evidence[0].url,second);assert.equal(readable.summary[0].evidence[0].page,1);assert.notEqual(readable.summary[0].evidence[0].url,f.pdfUrl,'Second attachment page1 cannot link the first PDF');
 });
 
@@ -2097,7 +2045,7 @@ test('NPFC verified changed landing PDF URL invalidates old approval and qualifi
   const date={date:{precision:'unknown',value:null},evidence:[]},evidence=['p2s1'];
   const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic source evidence',evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic original sentence',evidence},{field:'relevance',verdict:'supported',reason:'Synthetic relevance evidence',evidence}]}),receiptId:999999,model:'mock',reused:false,usage:null});
   const task=await createFlow(first.id,{identity:'npfc-url-'+failure},'tester'),checked=await runFlow(task.id,invoke);assert.equal(checked.status,'needs_human_review');
-  await decideFlow(task.id,{decision:'qualified',snapshotHash:checked.snapshotHash,note:'Synthetic previous PDF approval'},'tester');assert.ok((await flowDetail(task.id)).internalArticle);
+  await decideFlow(task.id,{decision:'qualified',publication:'publish',snapshotHash:checked.snapshotHash,note:'Synthetic previous PDF approval'},'tester');assert.ok((await flowDetail(task.id)).internalArticle);
   const capture=(id:string,pdf:string)=>collectColumns({id,dataDir:config.dataDir,columns:['npfc'],limit:1,wait:async()=>{},fetch:async request=>{
    if(request===pdf&&failure==='timeout')throw new Error('Synthetic PDF timeout');
    return {url:request,status:request===pdf?(failure==='404'?404:200):200,headers:{get:()=>null},body:request.endsWith('/robots.txt')?npfcRobotsFixture:request===COLUMNS.npfc.url?Buffer.from(`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`):request===url?landing(pdf):Buffer.from('unavailable')};
@@ -2120,7 +2068,7 @@ test('NPFC verified changed PDF bytes invalidate approval despite semantic measu
   const [s]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-npfc'`;await approve(first.id,1,s.revision);
   const date={date:{precision:'unknown',value:null},evidence:[]},evidence=['p2s1'];
   const invoke=async(options:any)=>({data:options.schema.parse(options.purpose==='fishery_draft'?{relevance:{decision:'relevant',reason:'Synthetic source evidence',evidence},summaryZh:[{sentence:fact,evidence}],dates:{published:date,event:date,adopted:date,effective:date,objectionDeadline:date},entryIntoForce:{value:'unknown',evidence:[]},eventStatus:{value:'unknown',evidence:[]},validityStatus:'unknown',locations:[],organizations:[],uncertainties:[]}:{decision:'supported',coverage:'complete_input',findings:[{field:'summaryZh.0',verdict:'supported',reason:'Synthetic original sentence',evidence},{field:'relevance',verdict:'supported',reason:'Synthetic relevance evidence',evidence}]}),receiptId:999999,model:'mock',reused:false,usage:null});
-  const task=await createFlow(first.id,{identity:'npfc-semantic-'+conflict},'tester'),checked=await runFlow(task.id,invoke);assert.equal(checked.status,'needs_human_review');await decideFlow(task.id,{decision:'qualified',snapshotHash:checked.snapshotHash,note:'Synthetic previous measure approval'},'tester');assert.ok((await flowDetail(task.id)).internalArticle);
+  const task=await createFlow(first.id,{identity:'npfc-semantic-'+conflict},'tester'),checked=await runFlow(task.id,invoke);assert.equal(checked.status,'needs_human_review');await decideFlow(task.id,{decision:'qualified',publication:'publish',snapshotHash:checked.snapshotHash,note:'Synthetic previous measure approval'},'tester');assert.ok((await flowDetail(task.id)).internalArticle);
   const text=conflict==='measure'?'CMM 2025-08 Synthetic changed wrong measure.':conflict==='effective-date'?'CMM 2026-09 Entered into force 24 July 2026. Synthetic changed effective date.':'CMM 2026-09 Entered into force 23 July 2026. Synthetic changed content.',pdf=pdfFixture(false,false,text),newPdfUrl=conflict==='landing-title'?pdfUrl.replace('.pdf','-new.pdf'):pdfUrl;
   const capture=(id:string)=>collectColumns({id,dataDir:config.dataDir,columns:['npfc'],limit:1,wait:async()=>{},parsePdf:async bytes=>({status:'parsed',rawSha256:sha256(bytes),parser:'synthetic-semantic/v1',pages:1,text:'--- Page 1 ---\n'+text}),fetch:async request=>({url:request,status:200,headers:{get:()=>null},body:request.endsWith('/robots.txt')?npfcRobotsFixture:request===COLUMNS.npfc.url?Buffer.from(`<div class="region-content"><div class="view-document-list"><table><tr><td class="views-field-title"><a href="${url}">${title}</a></td></tr></table></div></div>`):request===url?(conflict==='landing-title'?Buffer.from(raw.toString().replace(title,'CMM 2025-08 Conflicting landing title').replace(pdfUrl,newPdfUrl)):raw):pdf})});
   for(const invalid of ['pdf-request','pdf-final','landing-final','landing-hash'] as const){
@@ -2134,77 +2082,11 @@ test('NPFC verified changed PDF bytes invalidate approval despite semantic measu
 });
 
 
-test('reviewed news facts reuse core events, selection and editions; replay, withdrawal and revision stay bounded',async()=>{
-  const keys=['LLM_MODEL','LLM_BASE_URL','LLM_API_KEY','LLM_REASONING_TOKENS','LLM_EXTRA_JSON','GROUP_MODEL','GROUP_REVIEW_MODEL','STRUCTURE_MODEL'] as const,old=keys.map(k=>process.env[k]),enabled=config.modelCallsEnabled;
-  const [priorLedger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;
-  const originalFetch=globalThis.fetch;let paid=0;
-  let lease:Awaited<ReturnType<typeof acquireProcessingLease>>|undefined;
-  const make=async(n:number)=>{
-    const d=await automaticFixture(n,'测试机构发布远洋船队申报安排，仅供隔离测试，不是真实新闻。');
-    const [core]=await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||' {"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id} RETURNING id`;
-    const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,source.revision);
-    const task=await createFlow(d.id,{identity:'structured-'+n},'tester'),sent:string[]=[];
-    assert.equal(await flowRequiredCalls(task.id),6);
-    const detail=await runFlow(task.id,selectionMock(d.body,sent));
-    assert.equal(detail.status,'needs_human_review',JSON.stringify(detail.error));assert.deepEqual(sent,['prefilter','score-1','score-2','generation','structure','review']);
-    assert.equal(detail.quality_review.structureSha256,hash(detail.selection.structure.result));
-    await decideFlow(task.id,{decision:'qualified',snapshotHash:detail.snapshotHash,note:'Synthetic full summary and event-fact approval'},'tester');
-    await syncFisheryPublications('synthetic-structured',new Date(),{target:{kind:'article',id:d.id}});
-    const [binding]=await sql`SELECT projection_hash,material_revision FROM fishery_publication_bindings WHERE item_id=${d.id}`;
-    return {...d,articleId:core.id,task,detail,job:{articleId:core.id,revision:binding.material_revision,projectionHash:binding.projection_hash,actor:'tester'}};
-  };
-  try{
-    process.env.LLM_MODEL=TRIAL.model;process.env.LLM_BASE_URL='https://api.deepseek.com';process.env.LLM_API_KEY='synthetic-local-only';process.env.LLM_REASONING_TOKENS='0';process.env.LLM_EXTRA_JSON='{"thinking":{"type":"disabled"}}';config.modelCallsEnabled=true;process.env.GROUP_MODEL='default';process.env.GROUP_REVIEW_MODEL='default';process.env.STRUCTURE_MODEL='default';
-    await sql`INSERT INTO settings(key,value) VALUES(${authorizationKey},${sql.json({id:TRIAL.id,entries:[],maxRequests:null,policy:amountOnlyPolicy,maxReservedMicroCny:TRIAL.maxReservedMicroCny})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
-    globalThis.fetch=async()=>{paid++;return Response.json({model:TRIAL.model,choices:[{message:{content:JSON.stringify({query:'synthetic',decisions:[{id:'C1',relation:'SAME_OCCURRENCE',confidence:1}],selection:{addsValue:false,reason:'Synthetic same fact'}})}}],usage:{prompt_tokens:200,completion_tokens:80}});};
-    lease=await acquireProcessingLease();
-    assert.deepEqual(await lease.run(()=>composeApprovedReports()),{generated:[]});assert.equal(paid,0);
-    assert.deepEqual(await lease.run(()=>refreshApprovedHot()),{ranked:false,sampled:false});
-    assert.equal((await sql`SELECT count(*)::int AS n FROM hot_rankings`)[0].n,0);
-    const first=await make(71);
-    const before=(await sql`SELECT selected,selection_candidate FROM publications WHERE article_id=${first.articleId}`)[0];assert.equal(before.selected,false);assert.equal(before.selection_candidate,true);
-    await lease.release();lease=undefined;
-    const boss=await getBoss({schedule:false,supervise:false}),stopConsumer=await registerManualFlowConsumer(boss,async()=>{});
-    try{for(let n=0;n<80;n++){if((await sql`SELECT selected FROM publications WHERE article_id=${first.articleId}`)[0].selected)break;await new Promise(r=>setTimeout(r,50));}}finally{await stopConsumer();}
-    lease=await acquireProcessingLease();
-    await lease.run(()=>runNewsEditorial(first.job));assert.equal(paid,0,'First event needs no comparison');
-    const firstPub=(await sql`SELECT selected,story_id,fact_id FROM publications WHERE article_id=${first.articleId}`)[0];assert.equal(firstPub.selected,true);assert.ok(firstPub.fact_id);
-    const second=await make(72);await lease.run(()=>runNewsEditorial(second.job));assert.equal(paid,1,'Second same-fact report uses the original batch judgement');
-    const secondPub=(await sql`SELECT fact_id FROM publications WHERE article_id=${second.articleId}`)[0];assert.equal(secondPub.fact_id,firstPub.fact_id);
-    const hotAt=new Date(Date.now()+3600000),firstHot=await lease.run(()=>refreshApprovedHot(hotAt));assert.equal(firstHot.ranked,true);assert.equal(firstHot.sampled,true);assert.equal(paid,1);
-    assert.deepEqual(await lease.run(()=>refreshApprovedHot(hotAt)),{ranked:false,sampled:false});
-    const {fisheryReaderTarget}=await import('../backend/publication-bridge.ts');
-    assert.deepEqual(await fisheryReaderTarget('article',first.id),{url:`/items/${first.articleId}`});
-    const [ledger]=await sql`SELECT value FROM settings WHERE key=${authorizationKey}`;assert.equal(ledger.value.entries.length,1);assert.equal(ledger.value.entries[0].state,'received');
-    await syncFisheryPublications('synthetic replay');await lease.run(()=>runNewsEditorial(first.job));await lease.run(()=>runNewsEditorial(second.job));assert.equal(paid,1);
-    assert.equal((await sql`SELECT count(*)::int AS n FROM analyses WHERE article_id=${first.articleId}`)[0].n,1);
-    const future=new Date(Date.now()+40*86400000),reports=await lease.run(()=>composeApprovedReports(future));assert.ok(reports.generated.some(k=>k.startsWith('daily:')));assert.ok(reports.generated.some(k=>k.startsWith('weekly:')));assert.ok(reports.generated.some(k=>k.startsWith('monthly:')));assert.equal(paid,1,'All editions reuse reviewed copy without overview calls');
-    assert.deepEqual(await lease.run(()=>composeApprovedReports(future)),{generated:[]});
-    await decideFlow(first.task.id,{decision:'rejected',snapshotHash:first.detail.snapshotHash,note:'Synthetic withdrawal'},'tester');
-    assert.equal((await loadItemDetail(first.articleId)).kind,'not_found');await assert.rejects(lease.run(()=>runNewsEditorial(first.job)),/Current approved/);assert.equal(paid,1);
-    await decideFlow(second.task.id,{decision:'rejected',snapshotHash:second.detail.snapshotHash,note:'Synthetic withdrawal of remaining evidence'},'tester');
-    await assert.rejects(fisheryReaderTarget('article',first.id),/No current readable/);
-    const {currentSignals}=await import('@aihot/backend/events/hot');
-    assert.equal((await sql`SELECT count(*)::int AS n FROM ${(await currentSignals()).query} cs WHERE article_id IN (${first.articleId},${second.articleId})`)[0].n,0,'Revoked evidence stops contributing heat before projection jobs run');
-    for(const issue of reports.generated){const [kind,key]=issue.split(':');const detail=await loadReport(kind as 'daily'|'weekly'|'monthly',key);assert.equal(detail!.lead,null);const citations=[...detail!.sections.flatMap(s=>s.items),...detail!.flashes];assert.ok(citations.length);for(const citation of citations){assert.equal(citation.available,false);assert.equal(citation.summary,null);assert.equal(citation.sourceUrl,'');}}
-    assert.equal((await recallFacts('another',reportText('测试机构发布远洋船队申报安排',first.body),0.6,10)).length,0,'Revoked articles cannot supply event identity');
-    await decideFlow(second.task.id,{decision:'qualified',snapshotHash:second.detail.snapshotHash,note:'Synthetic reapproval before revision'},'tester');await syncFisheryPublications('synthetic reapproval');
-    const [currentMaterial]=await sql`SELECT url,identity_key FROM articles WHERE id=${second.articleId}`;
-    const revised=await upsertMaterial({identityKey:currentMaterial.identity_key,sourceId:'fishery-column-moa',url:currentMaterial.url,title:'Changed synthetic news',publishedAt:new Date(),bodyText:second.body+'正文版本发生变化。',bodyStatus:'ok',via:'synthetic-revision'});assert.equal(revised.articleId,second.articleId);
-    await syncFisheryPublications('synthetic replay of changed core body');
-    assert.equal((await loadItemDetail(second.articleId)).kind,'not_found');await assert.rejects(lease.run(()=>runNewsEditorial(second.job)),/Current approved/);assert.equal(paid,1);
-  }finally{
-    await lease?.release();globalThis.fetch=originalFetch;config.modelCallsEnabled=enabled;keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});
-    if(priorLedger)await sql`UPDATE settings SET value=${sql.json(priorLedger.value)} WHERE key=${authorizationKey}`;else await sql`DELETE FROM settings WHERE key=${authorizationKey}`;
-  }
-});
-
-
 test('news structure receipt survives persistence failure and fact edits invalidate its review',async()=>{
   const d=await automaticFixture(73,'测试机构发布远洋船队申报安排，仅供隔离测试，不是真实新闻。');
   await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||'{"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id}`;
   const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;await approve(d.id,1,source.revision);
-  const task=await createFlow(d.id,{identity:'structure-recovery'},'tester'),sent:string[]=[],invoke=selectionMock(d.body,sent);
+  const task=await createFlow(d.id,{identity:'structure-recovery',selection:true},'tester'),sent:string[]=[],invoke=selectionMock(d.body,sent);
   await sql.unsafe(`CREATE FUNCTION structure_save_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${task.id}' AND OLD.stage='structure' AND NEW.stage='review' THEN RAISE EXCEPTION 'Synthetic structure persistence interruption'; END IF; RETURN NEW; END $$`);
   await sql.unsafe('CREATE TRIGGER structure_save_fault BEFORE UPDATE ON fishery_flow_tasks FOR EACH ROW EXECUTE FUNCTION structure_save_fault()');
   try{
@@ -2213,17 +2095,12 @@ test('news structure receipt survives persistence failure and fact edits invalid
     await assert.rejects(retryFlow(task.id,{note:'Synthetic forbidden regeneration',mode:'regenerate',acknowledgeNewCharge:true},'tester'),/resume same attempt/);
     await retryFlow(task.id,{note:'Synthetic resume saved structure receipt'},'tester');
     const done=await runFlow(task.id,invoke);assert.equal(done.status,'needs_human_review',JSON.stringify(done.error));assert.equal(sent.length,6);assert.equal(sent.filter(s=>s==='structure').length,1);
-    await decideFlow(task.id,{decision:'qualified',snapshotHash:done.snapshotHash,note:'Synthetic current news approval'},'tester');
+    await decideFlow(task.id,{decision:'qualified',publication:'publish',snapshotHash:done.snapshotHash,note:'Synthetic current news approval'},'tester');
     await syncFisheryPublications('synthetic recovery projection',new Date(),{target:{kind:'article',id:d.id}});
     const [binding]=await sql`SELECT article_id,projection_hash,material_revision FROM fishery_publication_bindings WHERE item_id=${d.id}`;
-    await sql`UPDATE pgboss.job SET state='failed',completed_on=now() WHERE name='fishery.news' AND data->>'articleId'=${binding.article_id}`;
-    const recovery={projectionHash:binding.projection_hash,revision:binding.material_revision,mode:'regenerate',reason:'Synthetic explicit recovery'};
-    await assert.rejects(retryNewsEditorial(task.id,recovery,'tester'),/new-charge acknowledgement/);
-    const resumed=await retryNewsEditorial(task.id,{...recovery,mode:'resume'},'tester');assert.equal(resumed.attempt,1);assert.ok(resumed.id);
-    await assert.rejects(retryNewsEditorial(task.id,{...recovery,mode:'resume'},'tester'),/settled failed/);
     await sql`UPDATE fishery_flow_tasks SET selection=jsonb_set(selection,'{structure,result,fact,subject}','"Changed unsupported subject"') WHERE id=${task.id}`;
     assert.equal((await flowDetail(task.id)).reviewBound,false);
-    await assert.rejects(decideFlow(task.id,{decision:'qualified',snapshotHash:done.snapshotHash,note:'Must not approve altered fact'},'tester'),/Structured news identity/);
+    await assert.rejects(decideFlow(task.id,{decision:'qualified',publication:'publish',snapshotHash:done.snapshotHash,note:'Must not approve altered fact'},'tester'),/Structured news identity/);
   }finally{await sql.unsafe('DROP TRIGGER IF EXISTS structure_save_fault ON fishery_flow_tasks');await sql.unsafe('DROP FUNCTION structure_save_fault()');}
 });
 
@@ -2259,4 +2136,126 @@ test('business capture imports preserve approved unchanged originals and invalid
  const [core]=await sql`SELECT publication_time,published_at_claim FROM articles WHERE raw->>'fisheryDocumentId'=${id}`;assert.equal(core.publication_time,'2026-10-22');assert.equal(core.published_at_claim.toISOString(),'2026-10-21T16:00:00.000Z');
  const changed=await capture('business-db-changed','changed'),updated=await importBatch(changed.id,'tester');assert.equal(updated.evidenceUpdates.length,1);assert.equal(updated.rows.length,0);assert.equal((await documentHistory(id)).observations.length,2);assert.notEqual((await materialDetail(id)).state,'approved');
  await importBatch(first.id,'tester');assert.equal((await documentHistory(id)).observations.length,2,'Old archive replay cannot restore old approval');
+});
+
+test('native document policy permits new ordinary news without human records and rejects stale evidence, refusals and review-only use',async()=>{
+ const d=await automaticFixture(961),[article]=await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||'{"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id} RETURNING id`;
+ assert.equal(await nativeArticlePermit(article.id),false,'Legacy unclassified documents are not silently authorized');
+ await assignNativeDocumentPurpose(d.id);
+ assert.equal(await nativeArticlePermit(article.id),true);
+ assert.equal((await sql`SELECT 1 FROM fishery_reviews WHERE document_id=${d.id}`).length,0);
+ assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE document_id=${d.id}`).length,0);
+ const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+ await sql`UPDATE fishery_sources SET revision=revision+1 WHERE source_id='fishery-column-moa'`;
+ assert.equal(await nativeArticlePermit(article.id),true,'A revision counter or health note alone does not invalidate evidence');
+ await sql`UPDATE fishery_sources SET profile=jsonb_set(profile,'{authRequired}','true') WHERE source_id='fishery-column-moa'`;
+ assert.equal(await nativeArticlePermit(article.id),false,'Relevant source policy changes invalidate the bound permission');
+ await sql`UPDATE fishery_sources SET profile=jsonb_set(profile,'{authRequired}','false') WHERE source_id='fishery-column-moa'`;
+ await sql`UPDATE fishery_sources SET revision=${source.revision} WHERE source_id='fishery-column-moa'`;
+ await sql`UPDATE articles SET body_text=body_text||'Changed evidence' WHERE id=${article.id}`;
+ assert.equal(await nativeArticlePermit(article.id),false);
+ await sql`UPDATE articles SET body_text=${d.body} WHERE id=${article.id}`;
+ await sql`UPDATE fishery_documents SET withdrawn_reason='Synthetic real withdrawal' WHERE id=${d.id}`;
+ assert.equal(await nativeArticlePermit(article.id),false);
+ await sql`UPDATE fishery_documents SET withdrawn_reason=NULL WHERE id=${d.id}`;
+ await review(d.id,{revision:1,sourceRevision:source.revision,decision:'rejected',applicabilityReviewed:false,note:'Synthetic explicit material refusal'},'tester');
+ assert.equal(await nativeArticlePermit(article.id),false);
+ await assignNativeDocumentPurpose(d.id);assert.equal(await nativeArticlePermit(article.id),false,'Capture replay cannot clear refusal');
+ const second=await automaticFixture(962),[other]=await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${second.id}),raw=raw||'{"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${second.id} RETURNING id`;
+ await sql`INSERT INTO fishery_document_purposes(document_id,purpose,reason) VALUES(${second.id},'review_only','Synthetic explicit review-only authorization')`;
+ await assignNativeDocumentPurpose(second.id);assert.equal(await nativeArticlePermit(other.id),false);
+});
+
+test('native low-scored news uses core publication and detail blocks current BLOCK, review-only and invalidated evidence',async()=>{
+ const d=await automaticFixture(963),initialHistory=await documentHistory(d.id),initial=initialHistory.observations.at(-1)!.payload,publishedAt=new Date().toISOString();
+ await observe(d.id,{...initial,expectedRevision:1,dates:{...initial.dates,published:{precision:'day',value:publishedAt.slice(0,10)}},sourceCapture:{...initial.sourceCapture,publishedAt}},'tester');
+ const captured=await storeCapturedNews('moa',d.id,d.body,'tester');assert.ok('articleId' in captured);
+ const [article]=await sql`SELECT id,revision FROM articles WHERE id=${captured.articleId!}`;
+ await assignNativeDocumentPurpose(d.id);
+ const addAnalysis=async(relevance:string)=>{
+  const [a]=await sql`INSERT INTO analyses(article_id,input_revision,origin,model,prompt_version,receipt_ids,relevance,category,tags,subjects,title_zh,summary_zh,reason_zh,score,selected,output)
+   VALUES(${article.id},${article.revision},'model','local-fixture','native-policy-behavior/v1','{}',${relevance},'policy','{}','{}','合成低分资讯','低分相关资讯仍应进入全部动态。',NULL,25,false,'{}'::jsonb) RETURNING id`;
+  return a.id;
+ };
+ const [sourceProfile]=await sql`SELECT profile FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+ assert.equal(sourceProfile.profile.rightsStatus,'unknown','Unknown redistribution rights do not invent a manual gate for original news summaries');
+ await addAnalysis('pass');await publishArticle(article.id);
+ const [publication]=await sql`SELECT eligible,selected,score FROM publications WHERE article_id=${article.id}`;
+ assert.equal(publication.eligible,true);assert.equal(publication.selected,false);assert.equal(Number(publication.score),25);
+ assert.equal((await loadItemDetail(article.id)).kind,'found');
+ assert.equal((await sql`SELECT 1 FROM editorial_overrides WHERE article_id=${article.id}`).length,0);
+ assert.equal((await sql`SELECT 1 FROM fishery_publication_bindings WHERE article_id=${article.id}`).length,0);
+ const absentEverywhere=async()=>{
+  assert.equal((await loadItemDetail(article.id)).kind,'not_found');assert.equal(await exportMarkdown(article.id),null);
+  assert.ok(!(await loadPool({channel:'all',category:null,tag:null})).items.some(i=>i.id===article.id));
+  const api=await v1Items({mode:'all',window:'7d',by:'timeline',category:null,q:null,limit:100,cursor:null});assert.ok(!api.items.some(i=>i.id===article.id));
+  assert.ok(!(await itemFeed('all',null)).includes(article.id));
+ };
+ await addAnalysis('block');await absentEverywhere();
+ await addAnalysis('pass');await publishArticle(article.id);assert.equal((await loadItemDetail(article.id)).kind,'found');
+ const permitted={...sourceProfile.profile,rightsStatus:'permitted',allowedSummary:true,allowedPublication:true,rightsCheckedAt:'2020-01-01T00:00:00Z',reviewDueAt:'2099-01-01T00:00:00Z',evidenceUrl:'https://example.org/summary-terms'};
+ for(const denied of [{...sourceProfile.profile,rightsStatus:'revoked'},{...sourceProfile.profile,rightsStatus:'restricted'},{...permitted,allowedSummary:false},{...permitted,allowedPublication:false},{...permitted,rightsCheckedAt:'2098-01-01T00:00:00Z'},{...permitted,reviewDueAt:'2021-01-01T00:00:00Z'}]){
+  await sql`UPDATE fishery_sources SET profile=${sql.json(denied)} WHERE source_id='fishery-column-moa'`;
+  await assignNativeDocumentPurpose(d.id);assert.equal(await nativeArticlePermit(article.id),false,'Fresh evidence cannot override an explicit source-use restriction');
+  assert.equal(await publishArticle(article.id),null);await absentEverywhere();
+ }
+ await sql`UPDATE fishery_sources SET profile=${sql.json(sourceProfile.profile)} WHERE source_id='fishery-column-moa'`;
+ await assignNativeDocumentPurpose(d.id);
+ await sql`UPDATE fishery_document_purposes SET purpose='review_only' WHERE document_id=${d.id}`;
+ await absentEverywhere();
+ await sql`UPDATE fishery_document_purposes SET purpose='native' WHERE document_id=${d.id}`;
+ await sql`UPDATE articles SET body_text=body_text||'Synthetic changed body' WHERE id=${article.id}`;
+ await absentEverywhere();
+ const history=await documentHistory(d.id),payload=history.observations.at(-1)!.payload,changed=d.body+'新证据版本。';
+ await observe(d.id,{...payload,expectedRevision:history.observations.at(-1)!.revision,sourceCapture:{...payload.sourceCapture,bodySha256:sha256(changed)}},'tester');
+ const revised=await storeCapturedNews('moa',d.id,changed,'tester');assert.ok('articleId' in revised&&revised.articleId===article.id);
+ await assignNativeDocumentPurpose(d.id);assert.equal(await nativeArticlePermit(article.id),true);
+ await absentEverywhere();assert.equal(await publishArticle(article.id),null,'An old revision analysis cannot republish a new material revision');
+
+});
+
+test('qualified review-only decision does not enqueue or project publication; explicit publish does',async()=>{
+ const d=await selectionFixture(964),result=await runFlow(d.task.id,selectionMock(d.body,[]));
+ await getBoss({schedule:false,supervise:false});
+ await decideFlow(d.task.id,{decision:'qualified',snapshotHash:result.snapshotHash,note:'Synthetic internal audit only'},'tester');
+ const reviewed=await flowDetail(d.task.id);assert.equal(reviewed.human_decision.publication,'review_only');assert.equal(reviewed.publication.queued,false);assert.equal(reviewed.publication.executed,false);
+ assert.equal((await sql`SELECT 1 FROM pgboss.job WHERE name='fishery.publication' AND data->>'itemId'=${d.id}`).length,0);
+ await syncFisheryPublications('Synthetic review-only replay',new Date(),{target:{kind:'article',id:d.id}});
+ assert.equal((await sql`SELECT 1 FROM fishery_publication_bindings WHERE item_id=${d.id}`).length,0);
+ await sql`INSERT INTO fishery_document_purposes(document_id,purpose,reason) VALUES(${d.id},'review_only','Synthetic hard review-only purpose')`;
+ await assert.rejects(decideFlow(d.task.id,{decision:'qualified',publication:'publish',snapshotHash:result.snapshotHash,note:'Cannot expand review-only authorization'},'tester'),/review-only/);
+ await sql`UPDATE fishery_document_purposes SET purpose='manual' WHERE document_id=${d.id}`;
+ await decideFlow(d.task.id,{decision:'qualified',publication:'publish',snapshotHash:result.snapshotHash,note:'Synthetic explicit publication decision'},'tester');
+ assert.equal((await flowDetail(d.task.id)).publication.queued,true);
+});
+
+
+test('explicit pristine handover has a read-only dry run and never releases paid or rejected work',async()=>{
+ const d=await automaticFixture(965),[article]=await sql`UPDATE articles SET url=(SELECT canonical_url FROM fishery_documents WHERE id=${d.id}),raw=raw||'{"mode":"verified-news-candidate"}'::jsonb WHERE raw->>'fisheryDocumentId'=${d.id} RETURNING id`;
+ const task=await createFlow(d.id,{identity:'auto-pristine-handover'},'tester');
+ await getBoss({schedule:false,supervise:false});
+ const original=(await sql`SELECT published_at,discovered_at,backfill FROM articles WHERE id=${article.id}`)[0];
+ const dry=await migrateOrdinaryDocumentPurpose(d.id,'tester','Synthetic bounded migration dry run',{dryRun:true});assert.equal(dry.dryRun,true);
+ assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE id=${task.id}`).length,1);
+ assert.equal((await sql`SELECT 1 FROM fishery_document_purposes WHERE document_id=${d.id}`).length,0);
+ assert.equal((await sql`SELECT 1 FROM audit_log WHERE action='fishery.native.handover' AND subject=${'fishery:'+d.id}`).length,0);
+ await migrateOrdinaryDocumentPurpose(d.id,'tester','Synthetic explicit no-cost handover');
+ assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE id=${task.id}`).length,0);assert.equal(await nativeArticlePermit(article.id),true);
+ assert.deepEqual((await sql`SELECT published_at,discovered_at,backfill FROM articles WHERE id=${article.id}`)[0],original);
+ const old=await selectionFixture(966);await runFlow(old.task.id,selectionMock(old.body,[]));
+ await assert.rejects(migrateOrdinaryDocumentPurpose(old.id,'tester','Cannot automatically migrate existing paid review',{dryRun:true}),/pristine/);
+ const refused=await automaticFixture(967),placeholder=await createFlow(refused.id,{identity:'auto-rejected-handover'},'tester'),[source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+ await review(refused.id,{revision:1,sourceRevision:source.revision,decision:'rejected',applicabilityReviewed:false,note:'Synthetic real human refusal'},'tester');
+ await assert.rejects(migrateOrdinaryDocumentPurpose(refused.id,'tester','Cannot release a human refusal',{dryRun:true}),/rejection/);
+ assert.equal((await sql`SELECT 1 FROM fishery_flow_tasks WHERE id=${placeholder.id}`).length,1);
+});
+
+test('specified policy purpose is persisted explicitly without changing historical decisions or receipts',async()=>{
+ const d=await automaticFixture(968),[document]=await sql`SELECT * FROM fishery_documents WHERE id=${d.id}`;
+ await sql`INSERT INTO fishery_documents(id,source_id,issuer,canonical_url) VALUES(${reviewOnlyPolicyDocument},${document.source_id},'Synthetic policy purpose',${document.canonical_url+'-review-only'})`;
+ const before=(await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows`)[0];
+ assert.equal((await initializeReviewOnlyPurpose()).length,1);
+ const [purpose]=await sql`SELECT purpose FROM fishery_document_purposes WHERE document_id=${reviewOnlyPolicyDocument}`;assert.equal(purpose.purpose,'review_only');
+ await assignNativeDocumentPurpose(reviewOnlyPolicyDocument);assert.equal((await sql`SELECT purpose FROM fishery_document_purposes WHERE document_id=${reviewOnlyPolicyDocument}`)[0].purpose,'review_only');
+ assert.deepEqual((await sql`SELECT (SELECT count(*) FROM receipts) AS receipts,(SELECT count(*) FROM fishery_flow_tasks) AS flows`)[0],before);
 });

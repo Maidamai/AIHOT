@@ -66,9 +66,8 @@ export async function automaticFlowPermit(id:string,binding?:AutomaticFlowBindin
     WHERE t.id=${id} FOR SHARE OF s,f`;
   if(!r||!c.sourceIds.includes(r.source_id)||c.documentIds&&!c.documentIds.includes(r.document_id))throw new Conflict('Document is outside automatic dispatch scope');
   const [core]=await db`SELECT backfill,body_status,encode(sha256(convert_to(body_text,'UTF8')),'hex') AS body_hash FROM articles WHERE source_id=${r.source_id} AND raw->>'fisheryDocumentId'=${r.document_id} LIMIT 1`;
-  const ordinary=new Date(r.created_at)>=new Date(c.createdAfter)&&core&&!core.backfill&&core.body_status==='ok';
-  const eligibility=ordinary?null:await processingEligibility(r.document_id,db);
-  if(!ordinary&&!eligibility?.eligible)throw new Conflict('Historical or undated reference requires a current bounded business-review nomination');
+  const eligibility=await processingEligibility(r.document_id,db);
+  if(!eligibility?.eligible)throw new Conflict('Historical or undated reference requires a current bounded business-review nomination');
   if(core&&core.body_hash!==r.snapshot.bodySha256)
     throw new Conflict('Core news body differs from current evidence; recapture before any model request');
   if(r.withdrawn_reason||r.participation_mode!=='editorial')throw new Conflict('Source isolated or document withdrawn');
@@ -80,8 +79,8 @@ export async function automaticFlowPermit(id:string,binding?:AutomaticFlowBindin
 }
 export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHeld?:()=>Promise<void>}={}){
   const c=await configuration();if(!c?.enabled)return {enabled:false,rows:[]};
-  // Ordinary discovery stays date-bounded. Individually nominated current evidence is a separate
-  // review scope; it never changes backfill, publication date, selection or final approval.
+  // Only explicitly nominated specialized review remains on fishery.flow; ordinary news
+  // is exclusively owned by native processing, without material/final approval gates.
   const nominated=(await activeProcessingCandidates()).map(a=>a.subject.slice('fishery:'.length));
   const rulesHash=hash({execution:fisheryConfigurationVersion(),discovery:'core-news/v1'});
   const docs=await sql`SELECT d.id,d.source_id,f.revision AS source_revision,o.revision,o.content_hash,s.participation_mode,rv.id AS review_id,coalesce(news.revision,0) AS core_revision,eligibility.id AS eligibility_id
@@ -90,7 +89,7 @@ export async function dispatchAutomaticDocuments(ids?:string[],options:{assertHe
     LEFT JOIN LATERAL(SELECT id FROM fishery_reviews WHERE document_id=d.id ORDER BY id DESC LIMIT 1)rv ON true
     LEFT JOIN LATERAL(SELECT a.revision,a.backfill FROM articles a WHERE a.source_id=d.source_id AND a.raw->>'fisheryDocumentId'=d.id AND a.body_status='ok' LIMIT 1)news ON true
     LEFT JOIN LATERAL(SELECT id FROM audit_log WHERE subject='fishery:'||d.id AND action IN ('fishery.flow.eligibility.grant','fishery.flow.eligibility.revoke') ORDER BY id DESC LIMIT 1)eligibility ON true
-    WHERE d.source_id IN ${sql(c.sourceIds)} AND ((d.created_at>=${new Date(c.createdAfter)} AND NOT news.backfill) OR d.id IN ${sql(nominated.length?nominated:['00000000-0000-0000-0000-000000000000'])})
+    WHERE d.source_id IN ${sql(c.sourceIds)} AND d.id IN ${sql(nominated.length?nominated:['00000000-0000-0000-0000-000000000000'])}
       ${c.documentIds?sql`AND d.id IN ${sql(c.documentIds)}`:sql``} ${ids?sql`AND d.id IN ${sql(ids.length?ids:['00000000-0000-0000-0000-000000000000'])}`:sql``}
       AND NOT EXISTS(SELECT 1 FROM audit_log a WHERE a.subject='fishery:'||d.id AND a.action='fishery.flow.auto_checked'
         AND a.after->>'configurationRevision'=${c.revision} AND a.after->>'sourceRevision'=f.revision::text

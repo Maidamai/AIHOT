@@ -18,7 +18,7 @@ export function trialUsage(value:unknown) {
   // Peak uncached input CNY2/M + output CNY8/M; no cache/idle discount assumed.
   return {promptTokens:Number(u.prompt_tokens),completionTokens:Number(u.completion_tokens),estimatedMicroCny:Number(u.prompt_tokens)*2+Number(u.completion_tokens)*8};
 }
-export type TrialEntry={id?:number;state:string;reservedMicroCny:number;usage?:ReturnType<typeof trialUsage>|null};
+export type TrialEntry={id?:number;wireBytes?:number;purpose?:string;subject?:string;state:string;reservedMicroCny:number;usage?:ReturnType<typeof trialUsage>|null};
 export const amountOnlyPolicy="amount-only/v1";
 export function trialBudget(entries:TrialEntry[]) {
   let spentMicroCny=0,unsettledReserveMicroCny=0;

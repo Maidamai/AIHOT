@@ -40,7 +40,7 @@ export default function ReportLatestPage() {
   const { kind, report, index, today } = useLoaderData<typeof loader>();
   return (
     <ReportLayout kind={kind} index={index} current={report?.key ?? null} today={today} outline={report ? reportOutline(report) : []}>
-      {report ? <ReportPaper report={report} index={index} /> : <EmptyState title={subjectAfter("还没有发布", REPORT_NAMES[kind])}>暂无已发布期刊；有符合条件的已审资讯后生成。<Link to="/" className="mt-3 block text-accent">阅读行业动态与资料 →</Link></EmptyState>}
+      {report ? <ReportPaper report={report} index={index} /> : <EmptyState title={subjectAfter("还没有发布", REPORT_NAMES[kind])}>暂无已发布期刊；按真实内容与刊期生成。<Link to="/all" className="mt-3 block text-accent">阅读全部动态 →</Link></EmptyState>}
     </ReportLayout>
   );
 }

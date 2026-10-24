@@ -1,6 +1,7 @@
 import { sql } from "@aihot/backend/db";
 import { decideTimeline } from "@aihot/backend/content/materials";
-import { beijingAt } from "@aihot/contracts/time";
+import {columnPublishedAt} from "./official-columns.ts";
+import {explicitBackfill} from "@aihot/backend/content/materials";
 import { sourceArticleAvailability } from "./source-availability.ts";
 import { createHash } from "node:crypto";
 import { readSourceBody } from "./source-body.ts";
@@ -17,10 +18,11 @@ const sources = async (): Promise<MaterialSource[]> => (await listSources()).map
 function rowOf(d: Record<string, any>, source: MaterialSource, latest: MaterialObservation | null, review: MaterialReview | null, linkedStatus?: string): MaterialRow {
   const c = latest?.payload.sourceCapture;
   const published=latest?.payload.dates.published;
-  const claimed=c?.publishedAt?new Date(c.publishedAt):published?.precision==='day'?beijingAt(published.value!,'00:00'):null;
-  const timeline=decideTimeline(claimed,new Date(d.created_at));
+  const claimed=columnPublishedAt(d.source_id.replace(/^fishery-column-/,''),c?.publishedAt??(published?.precision==='day'?published.value:null));
+  const discovered=d.material_discovered_at??d.first_seen_at??d.created_at;
+  const timeline=decideTimeline(claimed,new Date(discovered),explicitBackfill(d.material_backfill_reason));
   const timing={kind:timeline.backfill?'reference' as const:'news' as const,publishedAt:timeline.publishedAt?.toISOString()??null,
-    discoveredAt:iso(d.created_at),reason:timeline.backfillReason};
+    discoveredAt:iso(discovered),reason:timeline.backfillReason};
   const state = d.withdrawn_reason ? "withdrawn" : c && (c.httpStatus !== 200 || ["failed", "missing"].includes(c.parseStatus)) ? "failed"
     : c && (c.parseStatus === "unverified" || !c.bodySha256 || c.conflicts.length) ? "unverified"
     : review && (review.revision !== latest?.revision || review.sourceRevision !== source.revision) ? "stale"
@@ -69,7 +71,8 @@ export async function materialDetail(id: string): Promise<MaterialDetail> {
     // Never fall back to another version's text if the bound archive is missing or changed.
     if (capture.bodySha256) try { body = await readSourceBody(capture); } catch { body = null; }
   }
-  return { ...rowOf(d, source, latest, review, linkedStatus), observations, reviews, text: body ? {
+  const [purpose] = await sql<{purpose:MaterialDetail["purpose"]}[]>`SELECT purpose FROM fishery_document_purposes WHERE document_id=${id}`;
+  return { ...rowOf(d, source, latest, review, linkedStatus), purpose:purpose?.purpose??"manual", observations, reviews, text: body ? {
     body: body.slice(0, 65536), truncated: body.length > 65536, acquisitionMode: mode ?? null,
     hashMatches: createHash("sha256").update(body).digest("hex") === latest?.payload.sourceCapture?.bodySha256 } : null };
 }

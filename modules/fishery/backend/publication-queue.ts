@@ -1,3 +1,4 @@
+import {documentPublicationAllowed} from "./native-permit.ts";
 // Durable, non-paid continuation of a successful final editorial decision.
 import { defineQueue } from "@aihot/backend/modules";
 import { sql, type Db } from "@aihot/backend/db";
@@ -9,9 +10,9 @@ export interface PublicationJob { kind: "article" | "business_guide"; itemId: st
 export const publicationDecisionHash = (decision: unknown, revision: number | null = null) => hash({ decision, revision });
 export async function publicationDecisionCurrent(job: PublicationJob, db: Db = sql): Promise<boolean> {
   const [row] = job.kind === "article"
-    ? await db`SELECT t.id,t.status,t.human_decision,NULL::integer AS revision,d.withdrawn_reason FROM fishery_flow_tasks t JOIN fishery_documents d ON d.id=t.document_id WHERE t.document_id=${job.itemId} ORDER BY t.created_at DESC,t.id DESC LIMIT 1`
-    : await db`SELECT g.id,g.status,g.human_decision,g.revision,d.withdrawn_reason FROM fishery_business_guides g JOIN fishery_documents d ON d.id=g.document_id WHERE g.id=${job.itemId}`;
-  return !!row && !row.withdrawn_reason && row.id === job.decisionId && row.status === (job.kind === "article" ? "qualified" : "approved")
+    ? await db`SELECT t.id,t.status,t.human_decision,t.document_id,NULL::integer AS revision,d.withdrawn_reason FROM fishery_flow_tasks t JOIN fishery_documents d ON d.id=t.document_id WHERE t.document_id=${job.itemId} ORDER BY t.created_at DESC,t.id DESC LIMIT 1`
+    : await db`SELECT g.id,g.status,g.human_decision,g.document_id,g.revision,d.withdrawn_reason FROM fishery_business_guides g JOIN fishery_documents d ON d.id=g.document_id WHERE g.id=${job.itemId}`;
+  return !!row && await documentPublicationAllowed(row.document_id,db) && (job.kind!=="article" || row.human_decision?.publication==="publish") && !row.withdrawn_reason && row.id === job.decisionId && row.status === (job.kind === "article" ? "qualified" : "approved")
     && publicationDecisionHash(row.human_decision, row.revision) === job.decisionHash;
 }
 export const publicationQueue = defineQueue<PublicationJob>({

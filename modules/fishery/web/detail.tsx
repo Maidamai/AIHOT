@@ -1,5 +1,5 @@
 import { SITE } from "@aihot/site";
-import {beijingDate} from '@aihot/contracts/time';
+import {beijingAt,beijingDate,beijingIso} from '@aihot/contracts/time';
 import {noticeDeadlineState} from '../contracts.ts';
 import { useState } from "react";
 import { Link, useRouteLoaderData } from "react-router";
@@ -31,7 +31,7 @@ function ProcessingCandidate({ document: d }: { document: MaterialDetail & { eli
   if (draftFor !== snapshot) {
     setDraftFor(snapshot); setQuote(""); setReason(""); setExpires(""); setRevoke(false); setError(null);
   }
-  const limit = new Date(Date.now() + 30 * 86400_000 + 8 * 3600_000).toISOString().slice(0, 16);
+  const limit = beijingIso(Date.now() + 30 * 86400_000).slice(0, 16);
   const base = `/api/admin/fishery/documents/${d.id}/processing-eligibility`;
   return <Card title="有界业务审核候选">
     <p className="text-[13px] leading-relaxed text-ink-3">将已审核且正文完整核验的素材提为政策、申报窗口或法规变化的业务审核候选。只授予最长 30 天的处理评估期，不证明政策有效、窗口开放、事实通过或可以发布；全站最多保留 20 条活跃资格。</p>
@@ -48,7 +48,7 @@ function ProcessingCandidate({ document: d }: { document: MaterialDetail & { eli
     <form className="mt-4 space-y-4" onSubmit={async event => {
       event.preventDefault(); setError(null);
       if (!ready || busy || draftFor !== snapshot) return;
-      const expiresAt = new Date(`${expires}:00+08:00`);
+      const expiresAt = beijingAt(expires.slice(0, 10), expires.slice(11, 16));
       if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 30 * 86400_000) { setError("处理评估截止时间须在未来 30 天内；该期限不是政策有效期。"); return; }
       const result = await run("POST", base, { revision: d.latest!.revision, sourceRevision: d.source.revision, kind, evidenceQuote: quote.trim(), reason: reason.trim(), expiresAt: expiresAt.toISOString() }, { success: "候选申请已记录；事实、效力和发布仍须审核" });
       if (result) { setQuote(""); setReason(""); setExpires(""); }
@@ -75,8 +75,8 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
   const o = d.latest?.payload, c = o?.sourceCapture, { run, busy } = useAdminAction(), fresh = useFreshMaterial();
   const me = (useRouteLoaderData("admin-layout") as { me: AdminMe }).me;
   const [flowIdentity,setFlowIdentity]=useState("");
-  const newsSource=['moa','fujian','fujian-notices','jfa-press'].includes(c?.adapter??'');
-  const [selection,setSelection]=useState(newsSource);
+  const native=d.purpose==="native";
+  const [selection,setSelection]=useState(false);
   const [command, setCommand] = useState<Command | null>(null), [ack, setAck] = useState(false), [downloading, setDownloading] = useState(false), [error, setError] = useState<string | null>(null);
   const base = `/api/admin/fishery/documents/${d.id}`, frozen = busy || downloading, terminal = !!d.withdrawnReason || !d.latest;
   const open = (kind: Command["kind"]) => { setAck(false); setError(null); setCommand({ id: d.id, kind, revision: d.latest!.revision, sourceRevision: d.source.revision }); };
@@ -96,12 +96,12 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
     actions={<Button busy={fresh.state === "loading"} onClick={() => fresh.revalidate()}>重新核对</Button>}>
     <TrialNotice testOnly={d.testOnly} />
     <div className="mb-4 flex flex-wrap gap-2"><StateBadge row={d} /><Badge>观察 v{d.latest?.revision ?? 0} · 来源许可 v{d.source.revision}</Badge><Badge>法律适用性未审核</Badge></div>
-    <p className="mb-4 rounded-control bg-bg-sunk p-3 text-[13px]">{d.timing?.kind==='news'?'近期资讯候选：仍需正文相关性、价值和事实审核。':'历史或日期待核参考：不计作新资讯；政策是否现行有效须另行核验。'} 素材入库不等于读者可见。</p>
+    <p className="mb-4 rounded-control bg-bg-sunk p-3 text-[13px]">{d.timing?.kind==='news'?'近期资讯候选：核心按正文相关性、价值和事件增量处理；专项资料另行审核。':'历史或日期待核参考：不计作新资讯；政策是否现行有效须另行核验。'} 素材入库不等于读者可见。</p>
     {error && <p role="alert" className="mb-4 rounded-card bg-hot-soft p-3 text-[13px] text-hot">{error}</p>}
     {(d.state === "failed" || d.state === "unverified") && <div role="alert" className="mb-5 rounded-card bg-hot-soft p-4 text-[13px] text-hot ring-1 ring-hot/20"><strong>{c?.httpStatus !== 200 ? `HTTP ${c?.httpStatus}：原文获取失败` : `解析未核验：${c?.parseStatus}`}</strong><p className="mt-1">没有可用正文时不能导出。不会用搜索缓存补正文，也不据此认定官方撤稿。</p></div>}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
       <div className="min-w-0 space-y-5">
-        <ProcessingCandidate key={d.id} document={d} />
+        {native?<Card title="普通资讯 · 原生处理"><p className="text-[13px] text-ink-3">当前文书绑定原生资讯用途，在明确授权的来源和时间范围内由核心自动处理，不需要素材审核或专项文章终审。评分、分类、事件归组与发布结果以核心实际记录为准；拒绝、撤回和用途限制仍然生效。</p><div className="mt-3 flex flex-wrap gap-4 text-[13px] text-accent"><Link to="/admin/fishery/collect">查看采集、处理范围与阻塞</Link>{d.articleId&&<Link to={`/admin/content/${d.articleId}`}>查看核心内容诊断</Link>}</div></Card>:<ProcessingCandidate key={d.id} document={d} />}
         {c?.noticeContext&&<Card title="公告与附件核验"><KV items={[
           ['公告性质',({consultation:'征求意见（不是正式生效政策）',application_notice:'申报通知（资格仍待核）',funding_allocation:'资金下达（不是到账或开放申报）',publicity:'公示（不是申报通知）',policy_reference:'政策资料（不证明现行有效）',issued_document:'文件发布（效力待核）',unknown:'待核实'})[c.noticeContext.nature]],
           ['原文明确的截止日',dateLabel(c.noticeContext.deadline)],
@@ -110,15 +110,15 @@ export default function Material({ loaderData: d }: ComponentProps<typeof loader
         ]}/>{c.noticeContext.deadlineLiteral&&<p className="mt-3 text-[13px]">原文：{c.noticeContext.deadlineLiteral}</p>}
           <ul className="mt-3 space-y-2 text-[13px]">{c.noticeContext.attachments.map(a=><li key={a.url}><a className="text-accent break-all" href={a.url} target="_blank" rel="noreferrer">{a.label||a.url}</a> · {a.format} / {a.parseStatus} · {a.pages??'未知'}页</li>)}</ul><p className="mt-3 text-[12px] text-ink-3">必需附件 {c.noticeContext.attachmentCount} 件。未完整解析的附件保持待复核，不以页面标题补正文。</p>
         </Card>}
-        <Card title="AI 草稿与内部审核任务">
-          <p className="text-[13px] text-ink-3">创建任务不发送模型请求。任务绑定当前观察、正文与来源许可版本；AI核查后仍须人工决定内部合格，不能公开发布。</p>
+        {!native&&<Card title="专项草稿与审核任务">
+          <p className="text-[13px] text-ink-3">创建任务不发送模型请求。任务绑定当前观察、正文与来源许可版本；核查后须明确选择仅审核或批准发布。仅审核不排发布，批准发布仍须后台实际执行和当前资格核对。{d.purpose==="review_only"&&"本材料用途固定为仅审核，不允许发布。"}</p>
           <form className="my-4 flex flex-wrap items-end gap-3" onSubmit={async e=>{e.preventDefault();await run("POST",base+"/flows",{identity:flowIdentity,selection},{success:"任务已创建，可进入查看"});}}>
             <label className="text-[13px]">尝试名称<input aria-label="任务尝试名称" required pattern="[a-zA-Z0-9_-]{1,64}" maxLength={64} value={flowIdentity} onChange={e=>setFlowIdentity(e.target.value)} className="mt-1 block rounded-control border border-line bg-bg-sunk px-3 py-2" placeholder="例如 review-20261020" /></label>
             <Button type="submit" disabled={terminal||frozen||!d.text?.hashMatches}>创建内部审核任务</Button>
-            <label className="text-[13px]"><input type="checkbox" checked={newsSource||selection} disabled={newsSource} onChange={e=>setSelection(e.target.checked)}/> 新闻候选先做正文预筛和双评分；新采集新闻另做事件事实抽取，连同摘要核查与终审（门槛未校准）</label>
+            <label className="text-[13px]"><input type="checkbox" checked={selection} onChange={e=>setSelection(e.target.checked)}/> 专项处理附加预筛与双评分（不授予发布资格）</label>
           </form>
           <ul className="space-y-3 text-[13px]">{d.flows.map(task=><li key={task.id}><Link className="text-accent" to={`/admin/fishery/flows/${task.id}`}>{task.identity} · {task.status}</Link>{task.stale&&<span className="ml-2 text-hot">版本已失效</span>}</li>)}</ul>{!d.flows.length&&<p className="text-[13px] text-ink-3">尚无AI审核任务。</p>}
-        </Card>
+        </Card>}
         <Card title="来源与日期"><KV items={[
           ["原始URL", <a className="break-all text-accent" href={d.canonicalUrl} target="_blank" rel="noreferrer">{d.canonicalUrl}</a>],
           ["来源归属", d.sourceAttribution], ["网页发布机构", "未核实"], ["政策发文机关", "未核实"], ["文号", d.documentNumber ?? "未核实"], ["获取方式", acquisitionLabel(c?.acquisitionMode ?? d.text?.acquisitionMode)],

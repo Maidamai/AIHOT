@@ -8,6 +8,9 @@ import { serverModules } from "../modules.ts";
 import { sql, type Db } from "../db.ts";
 import { independentSelectedSources } from './rules.ts';
 
+/** The in-memory form of the same composite rule used by publication SQL below. */
+export function isCompositeScope(scope: string | null | undefined): boolean { return scope === "composite"; }
+
 /** These reports share their fact's display slot; independent sources keep their own selected card. */
 export function foldableSelectionCondition() {
   return sql`(NOT p.selected OR p.source_id <> ALL(${independentSelectedSources()}::text[]))`;

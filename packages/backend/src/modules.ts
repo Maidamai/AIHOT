@@ -181,7 +181,27 @@ export interface RequestNotices {
   feed: (req: FastifyRequest, feedPath: string) => FeedNotice | null;
 }
 
+export interface ModelRequestContext {
+  purpose: string;
+  subject: string;
+  model: string;
+  maxTokens: number;
+}
+
+export interface ModelWireRequest extends ModelRequestContext {
+  url: string;
+  options: RequestInit;
+}
+
 export interface ServerModule {
+  /** Processing permission checked both at dispatch and consumption; false means no work or paid request. */
+  processing?: { permit: (articleId: string, db: Db, phase?: "queue" | "consume") => Promise<boolean>; workerProfile?: () => Promise<string | null>; fullWorkerLease?: () => Promise<() => Promise<void>> };
+  /** A site's existing paid authorization, applied before receipt identity and at the actual wire boundary. */
+  modelRequests?: {
+    allowAutomaticRecovery?: (receipt: { purpose: string; subject: string | null; authorization: string | null }) => Promise<boolean>;
+    prepare: (request: ModelRequestContext) => Promise<{ maxTokens?: number; rejectTruncated?: boolean }>;
+    send: (request: ModelWireRequest, send: () => Promise<Response>) => Promise<Response>;
+  };
   /** Exclusive worker process mode, selected before any core consumers or schedules start. */
   workerProfiles?: Record<string,()=>Promise<()=>Promise<void>>>;
   /** Its folder under modules/. */
@@ -190,6 +210,8 @@ export interface ServerModule {
   independentSelectedSources?: readonly string[];
   /** Current read-time restrictions over publications alias `p`; missing approval must fail closed. */
   publication?: {
+    /** Current write permission, independent of editorial selection or read projections. */
+    permit?: (articleId: string, db: Db) => Promise<boolean>;
     referenceMetadata?: (articleIds: string[], now: Date) => Promise<Record<string, ReferenceMetadata>>;
     itemDetails?: (articleId: string) => Promise<unknown | null>;
     /** Reviewed reference archives may be listed without inventing a publication date. */
@@ -320,4 +342,30 @@ export async function startModuleWorkerProfile(name:string):Promise<()=>Promise<
   const matches=serverModules().flatMap(module=>module.workerProfiles?.[name]?[module.workerProfiles[name]]:[]);
   if(matches.length!==1)throw new Error(`Unknown or ambiguous module worker profile: ${name}`);
   return matches[0]();
+}
+
+/** All installed restrictions must permit an article, including replay and sweep. */
+export async function processingPermitted(articleId: string, db: Db, phase: "queue" | "consume" = "queue"): Promise<boolean> {
+  for (const module of installed) if (module.processing && !await module.processing.permit(articleId, db, phase)) return false;
+  return true;
+}
+
+export async function prepareModelRequest(request: ModelRequestContext): Promise<{ maxTokens: number; rejectTruncated: boolean }> {
+  let maxTokens = request.maxTokens, rejectTruncated = false;
+  for (const module of installed) {
+    const limit = await module.modelRequests?.prepare({ ...request, maxTokens });
+    if (limit?.maxTokens !== undefined) maxTokens = Math.min(maxTokens, limit.maxTokens);
+    rejectTruncated ||= limit?.rejectTruncated === true;
+  }
+  return { maxTokens, rejectTruncated };
+}
+
+export async function sendModelRequest(request: ModelWireRequest, send: () => Promise<Response>): Promise<Response> {
+  let run = send;
+  for (const module of [...installed].reverse()) {
+    if (!module.modelRequests) continue;
+    const next = run;
+    run = () => module.modelRequests!.send(request, next);
+  }
+  return run();
 }

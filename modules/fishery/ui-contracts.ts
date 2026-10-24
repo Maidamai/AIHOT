@@ -19,6 +19,7 @@ export interface MaterialRow {
 export type SourceCaptureSummary=Pick<NonNullable<Observation["sourceCapture"]>,"capturedAt"|"httpStatus"|"parseStatus"|"acquisitionMode">&{documentId:string;observationRevision:number};
 export interface Workbench { sourceCaptures:Record<string,SourceCaptureSummary>;rows: MaterialRow[]; sources: MaterialSource[]; limit: number; page: number; total: number; counts: Record<MaterialState, number>; scopeCounts: { real: number; test: number; all: number }; }
 export interface MaterialDetail extends MaterialRow {
+  purpose: "native" | "manual" | "review_only";
   observations: MaterialObservation[]; reviews: MaterialReview[];
   text: { body: string; truncated: boolean; hashMatches: boolean; acquisitionMode: string | null } | null;
 }
@@ -51,8 +52,9 @@ export interface FlowView {
   selection?:{structure?:{attempt:number;promptVersion:string;result?:{receiptId:number;scope:string;fact:unknown}};config:{version:string;calibrated:false};results:Record<string,{data:unknown;receiptId:number;model:string}>;outcome?:{label:string;values:number[];threshold:number|null;average:number|null;attentionCandidate:boolean;calibrated:false;factApproval:false}}|null;
   draft:{receiptId:number|null;promptVersion:string;model:string;provenance?:{origin:"human_revision";candidateHash:string;originalTaskId:string;receiptId:number;responseHash:string;reason:string;actor:string;at:string;diff:unknown};draft:{relevance:{decision:string};summaryZh:{sentence:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[];[key:string]:unknown}}|null;
   quality_review:{receiptId:number;model:string;promptVersion:string;status:string;review:{decision:string;coverage:string;findings:{field:string;verdict:string;reason:string;evidence:{quote:string;paragraph:number;page:number|null}[]}[]};missingFields:string[]}|null;
-  human_decision:{decision:string;actor:string;at:string;note:string}|null;
+  human_decision:{decision:string;publication?:"review_only"|"publish";actor:string;at:string;note:string}|null;
   error:{code?:string;nextStageRequiresNewCharge?:boolean;newCallsOnResume?:number;stage:string;phase?:string;reason:string;receiptId:number|null}|null;
+  publication:{intent:"review_only"|"publish"|"legacy";canPublish:boolean;queued:boolean;executed:boolean;executedAt:string|null;readable:boolean;publishedAt:string|null;blockedReason:string|null};
   internalArticle:{summaryZh:{sentence:string}[];qualifiedBy:string;timeline:FlowTimeline}|null;
 }
 

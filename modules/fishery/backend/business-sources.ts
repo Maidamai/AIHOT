@@ -2,7 +2,8 @@
 // These definitions are not registered or enabled by importing this module.
 import * as cheerio from 'cheerio';
 import {fromHtml} from '@aihot/backend/sources/web-list';
-import {readPublicationDate} from '@aihot/backend/sources/dates';
+import {beijingDate} from '@aihot/contracts/time';
+import {articleUtcOffset,readPublicationDate} from '@aihot/backend/sources/dates';
 import {stableJson} from '@aihot/backend/lib/ids';
 import {identityKeyForUrl} from '@aihot/backend/lib/url';
 import type {Candidate,SourceRow} from '@aihot/backend/sources/types';
@@ -30,7 +31,7 @@ export const BUSINESS_SOURCES={
  },
  'mpa-port':{
   name:'MPA 港口作业通知',kind:'rss',role:'port_notice',
-  config:{feedUrl:`${MPA}feeds/media-releases`,summaryIsBody:false,allowUrlPrefixes:[`${MPA}media-centre/details/`],publishedAtUtcOffset:'+08:00'},
+  config:{feedUrl:`${MPA}feeds/media-releases`,summaryIsBody:false,allowUrlPrefixes:[`${MPA}media-centre/details/`]},
   title:'.news-header h3',body:'.news-detail__content',date:'.news-header__date',
   boundary:'Singapore port notices and circulars only; applicability to a vessel or its port call requires review. Bunker volumes and operational announcements are not fuel quotations.',
  },
@@ -62,7 +63,7 @@ function publicationDay(id:BusinessSourceId,literal:string):string|null {
   return m?readPublicationDate(`${m[3]}-${m[2]}-${m[1]}`,'+00:00').publicationTime:null;
  }
  const normalized=literal.replace(/^Published\s+/i,'');
- return readPublicationDate(normalized,id==='mpa-port'?'+08:00':'+00:00').publicationTime;
+ return readPublicationDate(normalized,articleUtcOffset(BUSINESS_SOURCES[id].config)).publicationTime;
 }
 
 /** Static lists only; use the existing fetchRss + restrictMpaListing for MPA. */
@@ -109,7 +110,7 @@ export function prepareBusinessArticle(id:BusinessSourceId,candidate:Candidate,i
  if(id==='itf-fisheries'&&machineDate&&readPublicationDate(machineDate,'+00:00').publicationTime?.slice(0,10)!==day)issues.push('ITF visible and machine dates disagree');
  const listed=candidate.publicationTime;
  // RSS carries a UTC timestamp; compare its Singapore calendar day, retaining page day precision.
- const listedDay=listed&&/^\d{4}-\d{2}-\d{2}$/.test(listed)?listed:listed&&id==='mpa-port'&&Number.isFinite(Date.parse(listed))?new Date(Date.parse(listed)+8*3600000).toISOString().slice(0,10):null;
+ const listedDay=listed&&/^\d{4}-\d{2}-\d{2}$/.test(listed)?listed:listed&&id==='mpa-port'&&Number.isFinite(Date.parse(listed))?beijingDate(listed):null;
  if(!listedDay||listedDay!==day)issues.push('Listing and article publication days disagree or are unverified');
  if(contentNodes.length!==1)issues.push('Unique complete article body container required');
  const content=contentNodes.clone();content.find('script,style,iframe,form,noscript').remove();

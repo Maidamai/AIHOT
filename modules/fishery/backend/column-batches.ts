@@ -23,7 +23,8 @@ export type PreparedArticle = ReturnType<typeof prepareColumnArticle> | ReturnTy
 export interface BatchItem { column: ColumnId; url: string; discoveryTitle: string; listDate: string | null; state: "ready" | "irrelevant" | "needs_review" | "failed"; archiveId: string; listingUrl?:string; prepared: Omit<PreparedArticle, "body"> | null; error: string | null; }
 const hashSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const paginationSchema=z.strictObject({pageUrl:linkSchema,pageIndex:z.int().min(0).max(999),nextUrl:linkSchema.nullable(),totalPages:z.int().min(1).max(1000).nullable(),scope:z.enum(["verified_pagination","current_page_only","pagination_unverified"])});
-const sourceSummarySchema=z.object({id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),currentUrls:z.array(linkSchema).max(4096).optional(),remaining:z.array(linkSchema).max(4096).optional(),historyDeferredUrls:z.array(linkSchema).max(4096).optional(),revisionCheckUrls:z.array(linkSchema).max(5).optional(),latestPending:z.int().nonnegative().optional(),historyDeferred:z.int().nonnegative().optional(),revisionChecks:z.int().nonnegative().optional()});
+export const firstSeenSchema=z.record(linkSchema,z.strictObject({at:z.iso.datetime({offset:true}),batchId:batchIdSchema}));
+const sourceSummarySchema=z.object({listingSucceededAt:z.iso.datetime({offset:true}).optional(),firstSeen:firstSeenSchema.optional(),id:columnIdSchema,listed:z.int().nonnegative(),titleFiltered:z.int().nonnegative(),attempted:z.int().nonnegative(),error:z.string().nullable(),outcome:z.enum(["success","partial","failure"]).optional(),pagination:paginationSchema.optional(),currentUrls:z.array(linkSchema).max(4096).optional(),remaining:z.array(linkSchema).max(4096).optional(),historyDeferredUrls:z.array(linkSchema).max(4096).optional(),revisionCheckUrls:z.array(linkSchema).max(5).optional(),latestPending:z.int().nonnegative().optional(),historyDeferred:z.int().nonnegative().optional(),revisionChecks:z.int().nonnegative().optional()});
 const replaySchema=z.strictObject({version:z.literal("fishery-pdf-reparse/1"),operation:z.literal("static-archived-pdf-reparse"),sourceBatchId:batchIdSchema,sourceManifestSha256:hashSchema,reparsedAt:z.iso.datetime({offset:true}),networkRequests:z.literal(0),reparsedItems:z.int().min(1).max(36),sourceSummary:z.array(sourceSummarySchema).max(6),
   artifacts:z.array(z.strictObject({sourceName:z.string(),targetName:z.string(),sha256:hashSchema})).max(148),
   items:z.array(z.strictObject({sourceArchiveId:archiveIdSchema,archiveId:archiveIdSchema,oldBodySha256:hashSchema,oldParser:z.string().min(1).max(200),newBodySha256:hashSchema,newParser:z.string().min(1).max(200)})).max(36)});
@@ -59,6 +60,32 @@ export async function readBatch(dataDir: string, id: string): Promise<ColumnBatc
   for (const item of value.items) { columnIdSchema.parse(item.column); archiveIdSchema.parse(item.archiveId); if(item.listingUrl) columnPageIndex(item.column,item.listingUrl);if (!item.archiveId.startsWith(id + "_")) throw new Error("Archive/batch mismatch"); }
   return value;
 }
+// Reconstruct a listing's success from archived bytes, not from a health label in JSON.
+export async function verifyBatchListing(dataDir:string,batch:ColumnBatch,column:ColumnId) {
+  if(batch.status!=="complete"||batch.sources.length!==1||batch.sources[0].id!==column||batch.sources[0].error)throw new Error("Complete successful single-source listing required");
+  const listing=await readArchive(path.join(batchRoot(dataDir),batch.id,"raw"),`${column}-list`,6*1024*1024);
+  const url=batch.sources[0].pagination?.pageUrl??COLUMNS[column].url;
+  columnPageIndex(column,url);
+  if(listing.receipt.status!==200||listing.receipt.requestedUrl!==url||listing.receipt.finalUrl!==url)throw new Error("Archived listing receipt identity mismatch");
+  const found=isBusinessSource(column)?discoverBusinessListing(column,listing.receipt,listing.body):discoverColumn(column,new TextDecoder("utf8",{fatal:true}).decode(listing.body));
+  if(!found.listed)throw new Error("Archived listing contains no article identities");
+  return {at:listing.receipt.finishedAt,candidates:found.candidates};
+}
+
+// The timestamp comes from the original archived listing response, including candidates that
+// waited for a later bounded round. It is never the import/worker execution time.
+export async function firstSeenForBatchItem(dataDir:string,batch:ColumnBatch,item:BatchItem) {
+  const seen=batch.sources.find(s=>s.id===item.column)?.firstSeen?.[item.url];
+  const original=seen?await readBatch(dataDir,seen.batchId):batch;
+  const listing=await readArchive(path.join(batchRoot(dataDir),original.id,"raw"),`${item.column}-list`,6*1024*1024);
+  const listingUrl=original.sources.find(s=>s.id===item.column)?.pagination?.pageUrl??COLUMNS[item.column].url;
+  columnPageIndex(item.column,listingUrl);
+  if(listing.receipt.status!==200||listing.receipt.requestedUrl!==listingUrl||listing.receipt.finalUrl!==listingUrl)throw new Error("First-seen listing receipt identity mismatch");
+  const discovered=isBusinessSource(item.column)?discoverBusinessListing(item.column,listing.receipt,listing.body):discoverColumn(item.column,new TextDecoder("utf8",{fatal:true}).decode(listing.body));
+  if(!discovered.candidates.some(c=>c.url===item.url)||seen&&seen.at!==listing.receipt.finishedAt)throw new Error("First-seen identity/date differs from archived listing");
+  return new Date(listing.receipt.finishedAt);
+}
+
 export async function listBatches(dataDir: string):Promise<BatchListEntry[]> {
   let names: string[];
   try { names = await readdir(batchRoot(dataDir)); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
@@ -288,7 +315,7 @@ type Response = { url: string; status: number; body: Buffer; headers: { get(name
 export type ColumnFetcher = (url: string, options?:{signal?:AbortSignal;headers?:ConditionalHeaders}) => Promise<Response>;
 type Fetcher=ColumnFetcher;
 const defaultFetch: Fetcher = (url,options) => guardedFetch(url, { signal:options?.signal, route: "direct", timeoutMs: 20_000, maxBytes: new URL(url).pathname.endsWith(".pdf") ? 10 * 1024 * 1024 : 6 * 1024 * 1024, maxRedirects: 3, redirectPolicy: "same-origin", headers: { "user-agent": "Mozilla/5.0 (compatible; FisheryEvidencePilot/0.2)", accept: "text/html,application/pdf;q=0.9,text/plain;q=0.8", ...(options?.headers?.["if-none-match"]?{"if-none-match":options.headers["if-none-match"]}:{}), ...(options?.headers?.["if-modified-since"]?{"if-modified-since":options.headers["if-modified-since"]}:{}) } });
-export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[];pendingUrls?:string[];revisionCursorUrl?:string|null;retryUrls?:string[];historyDeferredUrls?:string[];revision?:number};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
+export async function collectColumns(options: { id: string; dataDir: string; columns: ColumnId[]; limit: number; iotcSelect?: string[]; noticeSelect?:string[]; fetch?: Fetcher; wait?: (ms: number) => Promise<unknown>; page?:{url:string;completedUrls:string[];pendingUrls?:string[];revisionCursorUrl?:string|null;retryUrls?:string[];historyDeferredUrls?:string[];revision?:number;firstSeen?:z.infer<typeof firstSeenSchema>};guard?:()=>Promise<void>;signal?:AbortSignal;parsePdf?:ParsePdf }) {
   const id = batchIdSchema.parse(options.id), limit = z.number().int().min(1).max(5).parse(options.limit);
   const columns = [...new Set(options.columns.map(c => columnIdSchema.parse(c)))];
   if (!columns.length) throw new Error("At least one column is required");
@@ -351,6 +378,10 @@ export async function collectColumns(options: { id: string; dataDir: string; col
       }
       source.listed = discovered.listed; source.titleFiltered = discovered.rejected;
       if (!discovered.listed) throw new Error("Official listing selector returned no article identities");
+      source.listingSucceededAt=listing.receipt.finishedAt;
+      source.firstSeen=Object.fromEntries(discovered.candidates.map(c=>[c.url,options.page?.firstSeen?.[c.url]??{at:listing.receipt.finishedAt,batchId:id}]));
+      if(Object.keys(source.firstSeen).length>4096)throw new Error("Listing discovery identity bound reached");
+      await persist();
       let ready = 0;
       let candidates = [...discovered.candidates];
       if(column==='fujian-notices'&&options.noticeSelect?.length){if(options.noticeSelect.some(url=>!candidates.some(c=>c.url===url)))throw new Error('Requested notice absent from current listing; no direct URL bypass');candidates=candidates.filter(c=>options.noticeSelect!.includes(c.url));}
@@ -449,7 +480,7 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           item.state = prepared.readyForReview ? "ready" : noticeNeedsReview(prepared)||jfaNeedsReview(prepared) ? "needs_review" : prepared.sourceCapture.parseStatus === "parsed" ? "irrelevant" : "failed";
           if (item.state === "ready") ready++;
           if (item.state === "failed"||item.state === "needs_review") item.error = [item.error,...prepared.sourceCapture.conflicts, ...prepared.warnings].filter(Boolean).join("; ") || "Article parse failed";
-        } catch (error) { item.error = String((error as Error).message).slice(0, 500); }
+        } catch (error) { await check();item.error = String((error as Error).message).slice(0, 500); }
         await persist();
       }
       if(options.page) {
@@ -460,9 +491,9 @@ export async function collectColumns(options: { id: string; dataDir: string; col
           source.revisionChecks=batch.items.filter(i=>source.revisionCheckUrls!.includes(i.url)).length;
         }
       }
-    } catch (error) { source.error = String((error as Error).message).slice(0, 500); }
+    } catch (error) { await check();source.error = String((error as Error).message).slice(0, 500); }
     const items=batch.items.filter(i=>i.column===column),failed=items.filter(i=>i.state==="failed").length;
-    source.outcome=source.error||failed===items.length&&failed>0?"failure":failed>0?"partial":"success";
+    source.outcome=source.error?"failure":failed>0?"partial":"success";
     await persist();
   }
   batch.status = "complete"; batch.finishedAt = new Date().toISOString(); await persist();

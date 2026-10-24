@@ -1,4 +1,5 @@
-import { approvedNewsRun, projectNewsAnalysis, enqueueNews } from "./news-editorial.ts";
+import {nativeArticleCondition,nativeArticlePermit,documentPublicationAllowed} from "./native-permit.ts";
+import { approvedNewsRun, projectNewsAnalysis } from "./news-editorial.ts";
 import type { AnalysisRun } from "@aihot/backend/editorial/analyze";
 import type { ReferenceMetadata } from "@aihot/contracts/site";
 import { BUSINESS_FIELD_STATE_LABELS } from "../business-contracts.ts";
@@ -27,14 +28,23 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
     n.id IS NOT NULL AS news,n.tier AS core_tier,encode(sha256(convert_to(n.body_text,'UTF8')),'hex') AS core_body_hash
     FROM fishery_flow_tasks t LEFT JOIN LATERAL (
       SELECT a.id,a.body_text,s.tier FROM articles a JOIN fishery_documents d ON d.id=t.document_id JOIN sources s ON s.id=a.source_id
-      WHERE a.source_id=d.source_id AND a.url=d.canonical_url AND a.raw->>'fisheryDocumentId'=d.id AND a.raw->>'mode'='verified-news-candidate' LIMIT 1
+      WHERE t.selection IS NOT NULL AND a.source_id=d.source_id AND a.url=d.canonical_url AND a.raw->>'fisheryDocumentId'=d.id AND a.raw->>'mode'='verified-news-candidate' LIMIT 1
     ) n ON true WHERE t.document_id=ANY(${articles.map(item => item.id)}::text[]) ORDER BY t.document_id,t.created_at DESC,t.id DESC`;
   const taskBindings = new Map(tasks.map(task => [task.document_id, task]));
+  const publishable = new Set<string>();
+  for (const item of articles) {
+    const task=taskBindings.get(item.id);
+    const [binding]=await db`SELECT 1 FROM fishery_publication_bindings WHERE kind='article' AND item_id=${item.id}`;
+    if(await documentPublicationAllowed(item.id,db) && (task?.human_decision?.publication==='publish' || task?.human_decision?.publication==null&&binding)) publishable.add(item.id);
+  }
   const guides = target?.kind === "article" ? [] : db === sql
     ? await sql.begin(tx => eligibleBusinessGuideItems(tx, now, target?.id ?? null))
     : await eligibleBusinessGuideItems(db, now, target?.id ?? null);
+  const allowedGuides=[];
+  for(const guide of guides)if(await documentPublicationAllowed(guide.documentId,db))allowedGuides.push(guide);
   return [
     ...articles.flatMap(item => {
+      if(!publishable.has(item.id))return [];
       const { selection, news, core_tier, core_body_hash, ...task } = taskBindings.get(item.id)!;
       const outcome = selection?.outcome;
       const score = news && outcome?.label === "SCORED" && outcome.attentionCandidate && Number.isInteger(outcome.average) ? outcome.average : null;
@@ -46,7 +56,7 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
         publicationTime: item.dates.published.precision === "day" ? item.dates.published.value : null,
         binding: hash({ task, title: item.title, source: item.source, category: item.category, summary: item.summary, dates: item.dates, verification: item.verification, ...(news ? { selection } : {}) }) }];
     }),
-    ...guides.map(item => {
+    ...allowedGuides.map(item => {
       const topic = BUSINESS_TOPICS.find(topic => topic.id === item.payload.topicId);
       if (!topic) throw new Conflict("Reviewed guide topic is absent from the configured business topics");
       const tags = [topic.label, "资料"];
@@ -76,6 +86,7 @@ async function currentProjections(now: Date, db: Db = sql, target?: { kind: "art
 // qualification and compare inside its final SQL statement so concurrent revocation fails closed.
 function qualificationState(documentId: postgres.PendingQuery<postgres.Row[]>, kind: postgres.PendingQuery<postgres.Row[]>, itemId: postgres.PendingQuery<postgres.Row[]>) {
   return sql`encode(sha256(convert_to(jsonb_build_object(
+    'purpose', (SELECT to_jsonb(purpose) FROM fishery_document_purposes purpose WHERE purpose.document_id=${documentId}),
     'document', (SELECT to_jsonb(d) FROM fishery_documents d WHERE d.id=${documentId}),
     'source', (SELECT jsonb_build_object('profile',to_jsonb(f),'name',s.name,'kind',s.kind,
       'participation',s.participation_mode,'tier',s.tier,'siteFulltext',s.site_fulltext,'syndicateFulltext',s.syndicate_fulltext)
@@ -101,14 +112,18 @@ export async function fisheryPublicationCondition(now: Date, db: Db = sql) {
   const current = new Map(projections.map(p => [`${p.kind}:${p.id}`, p]));
   const allowed = bindings.filter(b => current.get(`${b.kind}:${b.item_id}`)?.binding === b.projection_hash).map(b => ({ article_id: String(b.article_id), state: b.qualification_state, projection_hash: b.projection_hash, structured: !!current.get(`${b.kind}:${b.item_id}`)!.analysis, score: current.get(`${b.kind}:${b.item_id}`)!.score, tags: current.get(`${b.kind}:${b.item_id}`)!.tags }));
   return { condition: sql`(
-    NOT EXISTS (SELECT 1 FROM fishery_sources managed WHERE managed.source_id = p.source_id)
+    (${nativeArticleCondition(sql`p.article_id`)} AND EXISTS(SELECT 1 FROM analyses published JOIN articles material ON material.id=published.article_id WHERE published.id=p.analysis_id AND published.input_revision=material.revision) AND (SELECT latest.relevance FROM analyses latest JOIN articles current_a ON current_a.id=latest.article_id WHERE latest.article_id=p.article_id AND latest.input_revision=current_a.revision ORDER BY latest.id DESC LIMIT 1) IS DISTINCT FROM 'block')
+    OR NOT EXISTS (SELECT 1 FROM fishery_sources managed WHERE managed.source_id = p.source_id)
     AND NOT EXISTS (SELECT 1 FROM fishery_publication_bindings managed WHERE managed.article_id = p.article_id)
+    AND NOT EXISTS (SELECT 1 FROM articles managed JOIN fishery_documents d ON d.id=managed.raw->>'fisheryDocumentId' WHERE managed.id=p.article_id)
     OR EXISTS (
       SELECT 1 FROM jsonb_to_recordset(${sql.json(allowed)}) approved(article_id text,state text,projection_hash text,structured boolean,score numeric,tags text[])
       JOIN fishery_publication_bindings binding ON binding.article_id=approved.article_id
       JOIN articles material ON material.id = binding.article_id
       JOIN fishery_documents document ON document.id = binding.document_id
       WHERE binding.article_id = p.article_id AND material.revision = binding.material_revision
+        AND NOT EXISTS(SELECT 1 FROM fishery_document_purposes purpose WHERE purpose.document_id=binding.document_id AND purpose.purpose='review_only')
+        AND binding.document_id<>'5f67141e-47ee-4521-bd66-7e842936c02f'
         AND binding.projection_hash=approved.projection_hash
         AND ${qualificationState(sql`binding.document_id`, sql`binding.kind`, sql`binding.item_id`)}=approved.state
         AND p.title = binding.title AND p.summary = binding.summary AND p.category = binding.category AND p.url = binding.url
@@ -116,6 +131,29 @@ export async function fisheryPublicationCondition(now: Date, db: Db = sql) {
         AND p.body_mode = 'summary' AND NOT p.syndicate AND p.score IS NOT DISTINCT FROM approved.score
         AND (NOT approved.structured OR EXISTS (SELECT 1 FROM analyses an WHERE an.id=p.analysis_id AND an.article_id=material.id AND an.input_revision=material.revision AND an.output->>'fisheryApproval'=approved.projection_hash))
         AND (NOT p.selected OR approved.structured AND material.grouping_status='complete' AND material.selection_adds_value IS TRUE)))` };
+}
+
+/** The writer and reader use the same current evidence; ordinary news never needs a bridge. */
+export async function fisheryPublicationPermit(articleId:string,db:Db=sql):Promise<boolean> {
+  const [article]=await db`SELECT a.id,a.revision,EXISTS(SELECT 1 FROM fishery_sources f WHERE f.source_id=a.source_id)
+    OR EXISTS(SELECT 1 FROM fishery_documents d WHERE d.id=a.raw->>'fisheryDocumentId')
+    OR EXISTS(SELECT 1 FROM fishery_publication_bindings b WHERE b.article_id=a.id) AS managed,
+    a.raw ? 'fisheryDocumentId' OR EXISTS(SELECT 1 FROM fishery_publication_bindings b WHERE b.article_id=a.id) AS bound_identity
+    FROM articles a WHERE a.id=${articleId}`;
+  if(!article)return false;
+  const [latest]=await db`SELECT relevance FROM analyses WHERE article_id=${articleId} AND input_revision=${article.revision} ORDER BY id DESC LIMIT 1`;
+  if(!article.managed)return true;
+  // A linked source original is internal evidence, not a module reader projection. Its core
+  // visibility still controls whether specialized review may use it; the read guard keeps it private.
+  if(!article.bound_identity)return true;
+  if(latest?.relevance==='block')return false;
+  if(await nativeArticlePermit(articleId,db)) {
+    return !!latest;
+  }
+  const [binding]=await db`SELECT * FROM fishery_publication_bindings WHERE article_id=${articleId}`;
+  if(!binding||binding.material_revision!==article.revision||!await documentPublicationAllowed(binding.document_id,db))return false;
+  const [projection]=await currentProjections(new Date(),db,{kind:binding.kind,id:binding.item_id});
+  return projection?.binding===binding.projection_hash;
 }
 
 export async function allowFisheryUndatedArchive(articleId: string, db: Db): Promise<boolean> {
@@ -140,7 +178,7 @@ export async function syncFisheryPublications(actor: string, now = new Date(), o
       const fresh = (await currentProjections(now, tx, { kind: projection.kind, id: projection.id }))[0];
       if (!fresh || fresh.binding !== projection.binding) return null;
       const [before] = await tx`SELECT * FROM fishery_publication_bindings WHERE kind=${projection.kind} AND item_id=${projection.id} FOR UPDATE`;
-      const [news]=projection.kind==='article'?await tx`SELECT id AS "articleId" FROM articles
+      const [news]=projection.kind==='article'&&projection.analysis?await tx`SELECT id AS "articleId" FROM articles
         WHERE source_id=${document.source_id} AND url=${projection.url} AND raw->>'fisheryDocumentId'=${projection.documentId} AND raw->>'mode'='verified-news-candidate' ORDER BY discovered_at LIMIT 1`:[];
       const material = news ?? await upsertMaterial({ sourceId: document.source_id, url: projection.url, title: projection.title,
         identityKey: `fishery-publication:${projection.kind}:${projection.id}`, language: "zh", publicationTime: projection.publicationTime,
@@ -168,7 +206,6 @@ export async function syncFisheryPublications(actor: string, now = new Date(), o
       if (!before || before.projection_hash !== projection.binding || before.material_revision !== article!.revision)
         await audit(actor, "fishery.publication.bridge", `content:${material.articleId}`, "Associate existing qualified material with core publication", before ?? null,
           { kind: projection.kind, itemId: projection.id, documentId: projection.documentId, projectionHash: projection.binding, materialRevision: article!.revision, selected: false, score: projection.score }, { db: tx });
-      if(projection.analysis)await enqueueNews({articleId:material.articleId,revision:article!.revision,projectionHash:projection.binding,actor},tx);
       await options.assertHeld?.();
       return { kind: projection.kind, itemId: projection.id, articleId: material.articleId, eligible: publication !== null };
     });

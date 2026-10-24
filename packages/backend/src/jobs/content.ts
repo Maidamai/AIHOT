@@ -5,6 +5,7 @@
 // an article wait and retry with backoff; only a permanent refusal or exhausted retries end in
 // "failed", which the admin re-queues in bulk.
 import type { PgBoss } from "pg-boss";
+import { processingPermitted } from "../modules.ts";
 import { sql, type Db } from "../db.ts";
 import { extractArticleBody, pageFetchable } from "../content/extract.ts";
 import { analyzeArticle } from "../editorial/analyze.ts";
@@ -71,6 +72,7 @@ export function groupingPriority(a: { signal: boolean; historical: boolean }): n
  */
 export async function queueProcessing(articleId: string, opts: { step?: Step; attemptTag?: string; db?: Db } = {}): Promise<string | null> {
   const db = opts.db ?? sql;
+  if (!await processingPermitted(articleId, db)) return null;
   const r = await route(articleId, db);
   if (!r) return null;
   const step = opts.step ?? r.step;
@@ -124,6 +126,7 @@ async function processingInput(articleId: string) {
  * request; the same tag reuses its receipt.
  */
 export async function processArticle(articleId: string, opts: { attemptTag?: string } = {}): Promise<{ state: string; retryAt?: Date }> {
+  if (!await processingPermitted(articleId, sql, "consume")) return { state: "restricted" };
   const row = await processingInput(articleId);
   if (!row) return { state: "missing" };
   try {
@@ -197,16 +200,17 @@ async function afterFailure(articleId: string, revision: number, error: unknown)
   return { state: "retrying", retryAt };
 }
 
-export async function registerContentJobs(boss: PgBoss) {
-  await work(boss, QUEUES.analyze, { localConcurrency: 6, pollingIntervalSeconds: 2 }, ({ articleId, attemptTag }) => processArticle(articleId, { attemptTag }));
+export async function registerContentJobs(boss: PgBoss, execute: <T>(run: () => Promise<T>) => Promise<T> = run => run()) {
+  await work(boss, QUEUES.analyze, { localConcurrency: 6, pollingIntervalSeconds: 2 }, ({ articleId, attemptTag }) => execute(() => processArticle(articleId, { attemptTag })));
 }
 
 /**
  * Body extraction before analysis. Failures are retried a few times; after that the article is judged
  * on the excerpt it has ("unconfirmed" body, never a wrong one).
  */
-export async function registerExtractionJobs(boss: PgBoss) {
-  await work(boss, QUEUES.extractBody, { localConcurrency: 4, pollingIntervalSeconds: 2 }, async ({ articleId }) => {
+export async function registerExtractionJobs(boss: PgBoss, execute: <T>(run: () => Promise<T>) => Promise<T> = run => run()) {
+  await work(boss, QUEUES.extractBody, { localConcurrency: 4, pollingIntervalSeconds: 2 }, async ({ articleId }) => execute(async () => {
+    if (!await processingPermitted(articleId, sql, "consume")) return { state: "restricted" };
     const [input] = await sql<{ revision: number }[]>`SELECT revision FROM articles WHERE id = ${articleId}`;
     if (!input) return { state: "missing" };
     try {
@@ -234,7 +238,7 @@ export async function registerExtractionJobs(boss: PgBoss) {
       await queueProcessing(articleId);
       return { state: "unconfirmed" };
     }
-  });
+  }));
 }
 
 /**

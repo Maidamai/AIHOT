@@ -1,3 +1,4 @@
+import {isCompositeScope} from "@aihot/backend/publication/scope";
 // The core fact extractor supplies identity; the existing evidence review must approve it too.
 import { PROMPT_VERSIONS, type AnalysisRun } from '@aihot/backend/editorial/analyze';
 import { collapseWhitespace } from '@aihot/backend/lib/text';
@@ -16,7 +17,7 @@ export function structureClaims(input: DraftInput, structure: NewsStructure, sum
     return [{paragraph,page,quote:original,...(source?{source}:{})}];
   };
   if (structure.scope === 'unknown' || structure.scope === 'single' && !structure.fact) throw new Error('News identity remains unknown; no confirmed fact can be published');
-  if (structure.scope === 'composite') return [{id:'newsStructure.scope',assertion:{scope:'composite',evidence:summary.flatMap(s=>s.evidence).slice(0,4)}}];
+  if (isCompositeScope(structure.scope)) return [{id:'newsStructure.scope',assertion:{scope:'composite',evidence:summary.flatMap(s=>s.evidence).slice(0,4)}}];
   const {conditions,...fact} = structure.fact!;
   return [
     {id:'newsStructure.fact',assertion:{scope:structure.scope,fact,evidence:anchors(fact.evidence)}},

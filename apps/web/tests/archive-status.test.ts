@@ -9,6 +9,7 @@ import {prepareNotice} from '../../../modules/fishery/backend/fujian-notices.ts'
 import {sha256} from '../../../modules/fishery/backend/source-adapters.ts';
 
 const initial: ArchiveStatus = {
+  lastListingSuccessAt:"2026-10-21T09:58:00Z",lastBodySuccessAt:"2026-10-21T09:55:00Z",bodyFailures:2,
   registered:true, adapted:true, normalCycleVerified:false, latestPending:2, historyDeferred:15, revisionChecks:3,
   enabled: true, coreSourceEnabled: false, mode: "hourly", runId: "synthetic-authorization",
   heartbeatAt: "2026-10-21T10:00:00Z", lastSuccessAt: "2026-10-21T09:58:00Z", lastFailureAt: null, lastError: null,
@@ -35,7 +36,7 @@ const reads: Array<{ path: string; method: string; cookie: string }> = [];
 const createdSelections:Array<{identity:string;selection:boolean}>=[];
 const syntheticDate={precision:'unknown',value:null};
 const selectionMaterial={
- id:'synthetic-selection-material',sourceId:'synthetic',title:'合成测试：单任务选材',issuer:'Synthetic',sourceAttribution:'Synthetic',canonicalUrl:'https://example.org/synthetic',documentNumber:null,articleId:null,withdrawnReason:null,
+ purpose:'manual',id:'synthetic-selection-material',sourceId:'synthetic',title:'合成测试：单任务选材',issuer:'Synthetic',sourceAttribution:'Synthetic',canonicalUrl:'https://example.org/synthetic',documentNumber:null,articleId:null,withdrawnReason:null,
  state:'pending',testOnly:true,blockers:[{code:'synthetic',message:'仅供隔离浏览器测试'}],
  source:{id:'synthetic',name:'Synthetic',revision:1,enabled:false,participationMode:'editorial',testOnly:true,profile:{rightsStatus:'unknown',allowedSummary:false,allowedPublication:false,rightsCheckedAt:null,reviewDueAt:null,evidenceUrl:null}},
  latest:{revision:1,observedAt:'2026-10-21T10:00:00Z',actor:'synthetic',contentHash:'a'.repeat(64),payload:{originalTitle:'Synthetic original',title:'合成测试',summaryZh:'合成素材，不能当真实报道。',rawSha256:'a'.repeat(64),language:'zh',policyStatus:'unknown',dates:{published:syntheticDate,adopted:syntheticDate,effectiveFrom:syntheticDate,effectiveUntil:syntheticDate},scope:{regions:[],species:[],flags:[],activities:[],unknownFields:[]},evidence:[]}},
@@ -80,6 +81,8 @@ test("existing collection page distinguishes controlled archive from disabled co
     await expect(card.getByText("近期待采", { exact: true }).locator("..")).toContainText("2");
     await expect(card.getByText("历史延后", { exact: true }).locator("..")).toContainText("15");
     await expect(card.getByText("正文修订复核", { exact: true }).locator("..")).toContainText("3");
+    await expect(card.getByText("本轮单篇正文失败", { exact: true }).locator("..")).toContainText("2");
+    await expect(card.locator('time[datetime="2026-10-21T09:55:00Z"]')).toBeVisible();
     await expect(card.getByText("已收录", { exact: true })).toBeVisible();
     await expect(card.getByText("已适配", { exact: true })).toBeVisible();
     await expect(card.getByText("正常周期未验证", { exact: true })).toBeVisible();
@@ -93,12 +96,12 @@ test("existing collection page distinguishes controlled archive from disabled co
     await expect(page.getByText("synthetic-existing-batch", { exact: true })).toBeVisible();
     await expect(page.getByText("Synthetic unreadable archive record", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "导入或记录采集结果", exact: true })).toBeDisabled();
-    await expect(page.getByText("归档不自动进行付费加工、审核或发布", { exact: false })).toBeVisible();
+    await expect(page.getByText("范围内普通资讯交核心自动处理", { exact: false })).toBeVisible();
     await page.screenshot({ path: "/tmp/archive-status-synthetic-desktop.png", fullPage: true });
     status = { ...initial, enabled: false, currentRound: null, lastRound: "synthetic-current-round", lastFailureAt: "2026-10-21T10:01:00Z", lastError: "Synthetic gateway failure", nextRunAt: null, consecutiveFailures: 3, pausedReason: "Three synthetic failures; inspect before reauthorization" };
     await page.getByRole("button", { name: "刷新记录", exact: true }).click();
     await expect(card.getByText("已暂停", { exact: true })).toBeVisible();
-    await expect(card.getByText("连续失败", { exact: true }).locator("..")).toContainText("3");
+    await expect(card.getByText("列表连续失败", { exact: true }).locator("..")).toContainText("3");
     await expect(card.getByText("Synthetic gateway failure", { exact: true })).toBeVisible();
     await expect(card.getByText(status.pausedReason!, { exact: true })).toBeVisible();
     await expect(card.getByText("当前轮", { exact: true }).locator("..")).toContainText("未记录");
@@ -151,8 +154,8 @@ test('single-task selection is opt-in, persists only the explicit choice and nev
  const {context,page}=await authorizedPage(390);createdSelections.length=0;
  try{
   await visit(page,web.origin+'/admin/fishery/synthetic-selection-material');
-  const choice=page.getByRole('checkbox',{name:/本任务先做预筛和双评分/});
-  await expect(choice).not.toBeChecked();await expect(page.getByText(/最多新增3次调用/)).toBeVisible();
+  const choice=page.getByRole('checkbox',{name:/专项处理附加预筛与双评分/});
+  await expect(choice).not.toBeChecked();
   await page.getByLabel('任务尝试名称').fill('synthetic-default-off');
   await page.getByRole('button',{name:'创建内部审核任务',exact:true}).click();
   await expect.poll(()=>createdSelections.length).toBe(1);assert.equal(createdSelections[0].selection,false);
@@ -162,4 +165,12 @@ test('single-task selection is opt-in, persists only the explicit choice and nev
   assert.ok(!reads.some(r=>r.method==='POST'&&/\/flows\/[^/]+\/run/.test(r.path)));
   await page.reload();await expect(choice).not.toBeChecked();
  }finally{await context.close();}
+});
+
+
+test('native material purpose shows core diagnostics instead of creating a second specialist flow',async()=>{
+ const {context,page}=await authorizedPage(390);
+ const previous=selectionMaterial.purpose;selectionMaterial.purpose='native';
+ try{await visit(page,web.origin+'/admin/fishery/synthetic-selection-material');await expect(page.getByRole('heading',{name:'普通资讯 · 原生处理',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'创建内部审核任务',exact:true})).toHaveCount(0);await expect(page.getByRole('link',{name:'查看采集、处理范围与阻塞',exact:true})).toHaveAttribute('href','/admin/fishery/collect');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}
+ finally{selectionMaterial.purpose=previous;await context.close();}
 });

@@ -5,14 +5,14 @@ import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
-import { batchIdSchema, batchRoot, collectColumns, readBatch, type ColumnBatch, type ColumnFetcher } from "./column-batches.ts";
+import { batchIdSchema, firstSeenSchema, batchRoot, collectColumns, readBatch, type ColumnBatch, type ColumnFetcher } from "./column-batches.ts";
 import { COLUMNS, isNewsColumn, columnIdSchema, columnPageIndex, type ColumnId } from "./official-columns.ts";
 import { linkSchema } from "../contracts.ts";
 import { sha256 } from "./source-adapters.ts";
 
 const hash=z.string().regex(/^[a-f0-9]{64}$/),stamp=z.iso.datetime({offset:true}),outcome=z.enum(["success","partial","failure"]);
-const healthSchema=z.strictObject({outcome,lastAttemptAt:stamp,lastSuccessAt:stamp.nullable(),lastCaptureAt:stamp.nullable(),reason:z.string().nullable(),pending:z.int().nonnegative(),nextPageUrl:linkSchema,coverage:z.enum(["more_pages","cycle_complete","pagination_unverified","current_page_only","blocked"]),latestPending:z.int().nonnegative().optional(),historyDeferred:z.int().nonnegative().optional(),revisionChecks:z.int().nonnegative().optional()});
-const stateSchema=z.strictObject({version:z.literal("fishery-column-progress/1"),column:columnIdSchema,profileHash:hash,revision:z.int().nonnegative(),cycle:z.int().nonnegative(),cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096),health:healthSchema.nullable(),history:z.strictObject({pausedAt:stamp,cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096)}).optional(),revisionCursorUrl:linkSchema.nullable().optional(),retryUrls:z.array(linkSchema).max(4096).optional()});
+const healthSchema=z.strictObject({listingSucceededAt:stamp.nullable().optional(),lastBodySuccessAt:stamp.nullable().optional(),bodyFailures:z.int().nonnegative().optional(),outcome,lastAttemptAt:stamp,lastSuccessAt:stamp.nullable(),lastCaptureAt:stamp.nullable(),reason:z.string().nullable(),pending:z.int().nonnegative(),nextPageUrl:linkSchema,coverage:z.enum(["more_pages","cycle_complete","pagination_unverified","current_page_only","blocked"]),latestPending:z.int().nonnegative().optional(),historyDeferred:z.int().nonnegative().optional(),revisionChecks:z.int().nonnegative().optional()});
+const stateSchema=z.strictObject({firstSeen:firstSeenSchema.optional(),version:z.literal("fishery-column-progress/1"),column:columnIdSchema,profileHash:hash,revision:z.int().nonnegative(),cycle:z.int().nonnegative(),cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096),health:healthSchema.nullable(),history:z.strictObject({pausedAt:stamp,cursorUrl:linkSchema,completedUrls:z.array(linkSchema).max(4096),pendingUrls:z.array(linkSchema).max(4096)}).optional(),revisionCursorUrl:linkSchema.nullable().optional(),retryUrls:z.array(linkSchema).max(4096).optional()});
 export type ColumnProgress=z.infer<typeof stateSchema>;
 export function parseColumnProgress(column:ColumnId,input:unknown):ColumnProgress {
   const value=stateSchema.parse(input);columnPageIndex(column,value.cursorUrl);
@@ -32,9 +32,18 @@ const equal=isDeepStrictEqual;
 const serial=(value:unknown)=>JSON.stringify(value,null,2)+"\n";
 const profile=(column:ColumnId)=>{
   // Editorial source grades do not change the acquired resource or invalidate its cursor.
-  const acquisition=Object.fromEntries(Object.entries(COLUMNS[column]).filter(([key])=>key!=="tier"));
+  const {url,list,body}=COLUMNS[column];
+  const acquisition={url,list,body};
   return sha256(JSON.stringify({column:acquisition,selection:isNewsColumn(column)?"official-current-list-body/v2":"official-dwf-title-and-body/v1",pagination:isNewsColumn(column)?"latest-list-incremental/v2":"inspected-pagination/v1"}));
 };
+// Explicit operator migration only: preserve every URL, failure and historical cursor. Collection
+// never invokes this or guesses that a changed source profile has the same acquisition semantics.
+export function migrateColumnProfile(column:ColumnId,input:unknown,expectedHash:string):ColumnProgress {
+  const value=stateSchema.parse(input);
+  if(value.column!==column||value.profileHash!==hash.parse(expectedHash))throw new Error("Cursor migration expected profile differs");
+  columnPageIndex(column,value.cursorUrl);
+  return {...value,profileHash:profile(column)};
+}
 export const initialColumnProgress=(column:ColumnId):ColumnProgress=>({version:"fishery-column-progress/1",column,profileHash:profile(column),revision:0,cycle:0,cursorUrl:COLUMNS[column].url,completedUrls:[],pendingUrls:[],health:null});
 async function exists(file:string) {try {await stat(file);return true;} catch(error) {if((error as NodeJS.ErrnoException).code==="ENOENT") return false;throw error;}}
 async function atomic(file:string,value:unknown,guard?:()=>Promise<void>,beforeRename?:()=>Promise<void>) {
@@ -60,11 +69,14 @@ export async function listColumnRounds(dataDir:string) {
   const ids=(await readdir(directory)).filter(id=>batchIdSchema.safeParse(id).success).sort().reverse().slice(0,40);
   return await Promise.all(ids.map(async id=>{try{return await readRound(path.join(directory,id,"manifest.json"),id);}catch(error){return {id,status:"unreadable" as const,error:String((error as Error).message).slice(0,500)};}}));
 }
-function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
+export function advanceColumnProgress(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   const source=batch.sources[0];
   if(batch.status!=="complete"||!batch.finishedAt||batch.sources.length!==1||source?.id!==current.column) throw new Error("A complete single-column page batch is required");
   const next=structuredClone(current),succeeded=batch.items.filter(i=>i.state!=="failed"),failed=batch.items.filter(i=>i.state==="failed");
   const currentUrls=isNewsColumn(current.column)?source.currentUrls:undefined;
+  if(source.firstSeen) {
+    next.firstSeen={...current.firstSeen,...source.firstSeen};
+  }
   const completed=current.completedUrls;
   next.completedUrls=[...new Set([...(currentUrls?completed.filter(url=>currentUrls.includes(url)):completed),...succeeded.map(i=>i.url)])].filter(url=>!failed.some(i=>i.url===url));
   if(currentUrls) {
@@ -79,9 +91,14 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
   // An old pending identity disappearing from the new list is unavailable, never a confirmed withdrawal.
   const unresolvedOld=(currentUrls?[]:current.pendingUrls).filter(url=>!next.completedUrls.includes(url)&&!source.remaining?.includes(url)&&!batch.items.some(i=>i.url===url));
   next.pendingUrls=[...new Set([...(source.remaining??current.pendingUrls),...unresolvedOld])];
+  if(next.firstSeen) {
+    const retained=new Set([...(currentUrls??next.completedUrls),...next.pendingUrls,...next.retryUrls??[],...next.history?.pendingUrls??[]]);
+    next.firstSeen=Object.fromEntries(Object.entries(next.firstSeen).filter(([url])=>retained.has(url)));
+    if(Object.keys(next.firstSeen).length>4096)throw new Error("First-seen identity bound reached; preserve state for explicit archival reconciliation");
+  }
   const error=source.error??(unresolvedOld.length&&!isNewsColumn(current.column)?"Pending identities disappeared from the observed list; inspect without declaring withdrawal":null);
   let coverage:z.infer<typeof healthSchema>["coverage"]="blocked";
-  if(!error&&!failed.length&&source.pagination) {
+  if(!error&&source.pagination) {
     if(isNewsColumn(current.column)) {
       next.cursorUrl=COLUMNS[current.column].url;
       if(currentUrls?.length&&currentUrls.every(url=>next.completedUrls.includes(url))&&(!currentUrls.every(url=>current.completedUrls.includes(url))||source.revisionCheckUrls?.includes(currentUrls.at(-1)!)))next.cycle++;
@@ -95,10 +112,11 @@ function advance(current:ColumnProgress,batch:ColumnBatch):ColumnProgress {
     }
   }
   const failedRound=!!error||failed.length>0;
-  const status=failedRound?(succeeded.length?"partial":"failure"):"success";
+  const status=error?"failure":failedRound?"partial":"success";
   const captures=succeeded.flatMap(i=>i.prepared?.sourceCapture.capturedAt?[i.prepared.sourceCapture.capturedAt]:[]).sort();
-  next.health={...(currentUrls?{latestPending:next.pendingUrls.length,historyDeferred:next.history!.pendingUrls.filter(url=>!currentUrls.includes(url)).length,revisionChecks:source.revisionChecks??0}:{}),outcome:status,lastAttemptAt:batch.finishedAt,lastSuccessAt:status==="success"?batch.finishedAt:current.health?.lastSuccessAt??null,lastCaptureAt:captures.at(-1)??current.health?.lastCaptureAt??null,
-    reason:error??(failed.length?`${failed.length} article acquisition/parse failure(s); cursor not advanced`:null),pending:next.pendingUrls.length,nextPageUrl:next.cursorUrl,coverage};
+  const bodies=succeeded.flatMap(i=>i.prepared?.sourceCapture.parseStatus==='parsed'&&i.prepared.sourceCapture.bodySha256?[i.prepared.sourceCapture.capturedAt]:[]).sort();
+  next.health={lastBodySuccessAt:bodies.at(-1)??current.health?.lastBodySuccessAt??null,listingSucceededAt:source.error?null:source.listingSucceededAt??null,bodyFailures:failed.length,...(currentUrls?{latestPending:next.pendingUrls.length,historyDeferred:next.history!.pendingUrls.filter(url=>!currentUrls.includes(url)).length,revisionChecks:source.revisionChecks??0}:{}),outcome:status,lastAttemptAt:batch.finishedAt,lastSuccessAt:status==="success"?batch.finishedAt:current.health?.lastSuccessAt??null,lastCaptureAt:captures.at(-1)??current.health?.lastCaptureAt??null,
+    reason:error??(failed.length?`${failed.length} article acquisition/parse failure(s); successful progress retained`:null),pending:next.pendingUrls.length,nextPageUrl:next.cursorUrl,coverage};
   return next;
 }
 const roundSchema=z.object({storage:z.enum(["file","db"]).optional(),version:z.literal("fishery-column-round/1"),id:batchIdSchema,columns:z.array(columnIdSchema).min(1).max(3),limit:z.int().min(1).max(5),maxPages:z.int().min(1).max(3),startedAt:stamp,finishedAt:stamp.nullable(),status:z.enum(["running","finished"]),outcome:outcome.nullable(),recoveries:z.array(z.strictObject({at:stamp,reason:z.string().min(1).max(1000)})).max(20),sources:z.array(z.object({retainedChildren:z.array(z.strictObject({id:batchIdSchema,reason:z.literal("missing_manifest")})).max(3).optional(),sourceId:z.string().optional(),column:columnIdSchema,status:z.enum(["running","ready_to_commit","finished"]),before:stateSchema,after:stateSchema.nullable(),batches:z.array(batchIdSchema).max(3),health:healthSchema.nullable()})).max(3)});
@@ -233,10 +251,10 @@ export async function collectColumnRound(options:{id:string;dataDir:string;colum
                 reason:`Interrupted child ${batchId} retained unchanged; no HTTP during reconciliation; start a new bounded round for unfinished work`,pending:working.pendingUrls.length,nextPageUrl:working.cursorUrl,coverage:"blocked"};
               anyFailure=true;break;
             }
-          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:isNewsColumn(column)?COLUMNS[column].url:working.cursorUrl,completedUrls:working.completedUrls,pendingUrls:working.pendingUrls,revisionCursorUrl:working.revisionCursorUrl,retryUrls:working.retryUrls,historyDeferredUrls:working.history?.pendingUrls,revision:working.revision},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
+          } else batch=await collectColumns({id:batchId,dataDir:options.dataDir,columns:[column],limit:limit-attempted,page:{url:isNewsColumn(column)?COLUMNS[column].url:working.cursorUrl,completedUrls:working.completedUrls,pendingUrls:working.pendingUrls,revisionCursorUrl:working.revisionCursorUrl,retryUrls:working.retryUrls,historyDeferredUrls:working.history?.pendingUrls,revision:working.revision,firstSeen:working.firstSeen},fetch:options.fetch,wait:options.wait,guard,signal:currentColumnLease(column)?.signal});
           if(batch.items.some(i=>i.column!==column)||(batch.sources[0]?.pagination&&batch.sources[0].pagination.pageUrl!==(isNewsColumn(column)?COLUMNS[column].url:working.cursorUrl))) throw new Error("Saved page batch/cursor binding differs");
           await options.checkpoint?.("child-persisted");
-          const beforeCursor=working.cursorUrl,beforeCycle=working.cycle;working=advance(working,batch);attempted+=batch.items.length;
+          const beforeCursor=working.cursorUrl,beforeCycle=working.cycle;working=advanceColumnProgress(working,batch);attempted+=batch.items.length;
           anyFailure ||= working.health!.outcome!=="success";lastCapture=working.health!.lastCaptureAt??lastCapture;
           if(!anyFailure) lastSuccessful=working.health!.lastSuccessAt;
           if(isNewsColumn(column)||working.health!.outcome!=="success"||working.pendingUrls.length||working.cycle!==beforeCycle||working.cursorUrl===beforeCursor) break;

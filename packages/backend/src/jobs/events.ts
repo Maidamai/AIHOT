@@ -1,5 +1,6 @@
 // Event jobs: serial grouping, debounced digests.
 import type { PgBoss } from "pg-boss";
+import { processingPermitted } from "../modules.ts";
 import { groupArticle } from "../events/group.ts";
 import { composeStoryDigest } from "../events/digest.ts";
 import { groupingPriority, settleNonEditorial } from "./content.ts";
@@ -7,10 +8,11 @@ import { enqueue, ensureQueue, QUEUES, work } from "./queue.ts";
 import { sql } from "../db.ts";
 import { isHistorical, newsCondition } from "../content/materials.ts";
 
-export async function registerEventJobs(boss: PgBoss) {
+export async function registerEventJobs(boss: PgBoss, execute: <T>(run: () => Promise<T>) => Promise<T> = run => run()) {
   // Serial on purpose: two reports of the same new fact must not both create it.
-  await work(boss, QUEUES.group, { localConcurrency: 1, pollingIntervalSeconds: 0.5 }, async (data) => {
+  await work(boss, QUEUES.group, { localConcurrency: 1, pollingIntervalSeconds: 0.5 }, async (data) => execute(async () => {
     const { articleId, signalOnly } = data;
+    if (!await processingPermitted(articleId, sql, "consume")) return { verdict: "restricted" };
     // A discussion post comes here straight from collection: record it first (settleNonEditorial).
     if (signalOnly && !(await settleNonEditorial(articleId)).group) return { verdict: "skipped" };
     const result = await groupArticle(articleId, { signalOnly });
@@ -18,8 +20,8 @@ export async function registerEventJobs(boss: PgBoss) {
       await enqueue(QUEUES.digest, { storyId: result.storyId }, { singletonKey: `story:${result.storyId}`, startAfter: 60 });
     }
     return result;
-  });
-  await work(boss, QUEUES.digest, { localConcurrency: 3, pollingIntervalSeconds: 5 }, ({ storyId }) => composeStoryDigest(storyId));
+  }));
+  await work(boss, QUEUES.digest, { localConcurrency: 3, pollingIntervalSeconds: 5 }, ({ storyId }) => execute(() => composeStoryDigest(storyId)));
 }
 
 /**
@@ -42,6 +44,7 @@ export async function sweepUngrouped(): Promise<{ enqueued: number }> {
       ORDER BY a.created_at LIMIT 100 FOR UPDATE OF a SKIP LOCKED`;
     let enqueued = 0;
     for (const row of rows) {
+      if (!await processingPermitted(row.id, tx)) continue;
       const signal = row.participation_mode !== "editorial";
       const priority = groupingPriority({ signal, historical: isHistorical(row) });
       const data = signal ? { articleId: row.id, signalOnly: true } : { articleId: row.id };

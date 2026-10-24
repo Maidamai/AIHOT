@@ -4,7 +4,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "@aihot/backend/config";
 import { closeDb, sql } from "@aihot/backend/db";
-import { getBoss, stopBoss, enqueueOn, shutdownSignal } from "@aihot/backend/jobs/queue";
+import { getBoss, stopBoss, enqueueOn, shutdownSignal, workModuleQueues } from "@aihot/backend/jobs/queue";
+import { installModules } from "@aihot/backend/modules";
+import fishery from "../server.ts";
 import { acquireProcessingLease, assertProcessingLease, type ProcessingLease } from "../backend/processing-lease.ts";
 import { registerManualFlowConsumer } from "../backend/manual-processing.ts";
 import { authorizationKey, assertFisheryCapacity, withFisheryAuthorization } from "../backend/authorization.ts";
@@ -12,6 +14,13 @@ import { TRIAL, amountOnlyPolicy, trialBudget, trialUsage, type TrialEntry } fro
 import { paidRequest, completeReceipt } from "@aihot/backend/providers/receipts";
 import { publicationQueue } from "../backend/publication-queue.ts";
 import { flowQueue } from "../backend/flow.ts";
+import { createHash } from "node:crypto";
+import { COLUMNS } from "../backend/official-columns.ts";
+import { importCapturedMaterial, registerSource, storeCapturedNews } from "../backend/store.ts";
+import { assignNativeDocumentPurpose } from "../backend/native-permit.ts";
+import { acquireFullWorkerLease, assertLegacyNewsRetired, configureNativeProcessing, nativeProcessingConfiguration, nativeProcessingPermit, prepareNativeModelRequest, requiredNativeWorkerProfile, sendNativeModelRequest, withNativeProcessing } from "../backend/native-processing.ts";
+import { upsertMaterial } from "@aihot/backend/content/materials";
+import { observationFixture, sourceFixture } from "./fixtures.ts";
 
 after(async()=>{await stopBoss();await closeDb();});
 const wire={method:"POST",body:JSON.stringify({model:TRIAL.model,messages:[{role:"system",content:"Synthetic lease test"},{role:"user",content:"Synthetic body"}],temperature:0,max_tokens:2048,response_format:{type:"json_object"},thinking:{type:"disabled"}})};
@@ -221,6 +230,253 @@ test("received request cache and repeated business completion add no reservation
       assert.equal(receipt!.status,"completed");assert.equal(receipt!.attempts,1);assert.equal(receipt!.attempt_rows,1);
     }));
   } finally {await lease.release();}
+});
+
+async function nativeRequestFixture(marker='BUDGET') {
+  const now=new Date().toISOString(),body=`${marker}：远洋渔船船员换班安排已经更新，港口将按公告执行。`.repeat(12),url=`https://yyj.moa.gov.cn/gzdt/synthetic-native-${Date.now()}-${Math.random()}`;
+  const doc=await importCapturedMaterial({id:'moa',...COLUMNS.moa},url,{...observationFixture,originalTitle:`${marker} synthetic native news`,language:'zh',sourceCapture:{adapter:'moa',sourceUrl:url,capturedAt:now,publishedAt:now,httpStatus:200,rawSha256:observationFixture.rawSha256,bodySha256:createHash('sha256').update(body).digest('hex'),parser:'synthetic/v1',parseStatus:'parsed',attachmentSha256:null,conflicts:[]}},'tester');
+  const material=await storeCapturedNews('moa',doc.id,body,'tester');assert.ok('articleId' in material&&material.articleId);
+  await assignNativeDocumentPurpose(doc.id);
+  await configureNativeProcessing({enabled:true,sourceIds:['fishery-column-moa'],createdAfter:'2020-01-01T00:00:00Z'},'tester','Synthetic native authorization fixture');
+  return {documentId:doc.id,articleId:material.articleId,purpose:'score_article',subject:`article:${material.articleId}`,model:TRIAL.model,maxTokens:2048,url:TRIAL.endpoint,options:{...wire,redirect:'error' as const}};
+}
+
+test('native parallel stages retain the original ledger, serialize sends and preserve uncertain reservations',async t=>{
+  configure(t);
+  for(const outcome of ['received','unknown'] as const) await t.test(outcome,async()=>{
+    const request=await nativeRequestFixture(),history=nearLimitHistory();await seedTestLedger(history);
+    const lease=await acquireProcessingLease(),sent=Promise.withResolvers<void>(),reply=Promise.withResolvers<Response>();let sends=0;
+    try {
+      const execution=lease.run(()=>withNativeProcessing(async()=>{
+        assert.deepEqual(await prepareNativeModelRequest({...request,maxTokens:16384}),{maxTokens:2048,rejectTruncated:true});
+        return Promise.allSettled([1,2].map(()=>sendNativeModelRequest(request,async()=>{sends++;sent.resolve();return reply.promise;})));
+      }));
+      await sent.promise;
+      const pending=await budgetLedger();assert.deepEqual(pending.entries.slice(0,50),history);assert.equal(pending.entries.length,51);assert.equal(pending.entries[50]!.state,'pending');assert.equal(sends,1);
+      assert.equal(trialBudget(pending.entries).occupiedMicroCny,10_000_000);
+      if(outcome==='received')reply.resolve(new Response(JSON.stringify({model:'mock',usage:{prompt_tokens:96000,completion_tokens:0}}),{status:200}));
+      else reply.reject(new Error('Synthetic native uncertain outcome'));
+      const results=await execution;
+      assert.equal(results.filter(r=>r.status==='fulfilled').length,outcome==='received'?1:0);
+      assert.ok(results.some(r=>r.status==='rejected'&&/limit|unknown/.test(String(r.reason))));
+      const settled=await budgetLedger();assert.deepEqual(settled.entries.slice(0,50),history);assert.equal(settled.entries.length,51);assert.equal(settled.entries[50]!.state,outcome);assert.equal(sends,1);
+      assert.equal(trialBudget(settled.entries).occupiedMicroCny,outcome==='received'?9_792_000:10_000_000);
+      await assert.rejects(lease.run(()=>withNativeProcessing(()=>sendNativeModelRequest(request,async()=>{sends++;return response();}))),outcome==='received'?/limit/:/unknown/);
+      assert.deepEqual(await budgetLedger(),settled);assert.equal(sends,1);
+    } finally {reply.resolve(response());await lease.release();}
+  });
+});
+
+test('native configuration preserves unmanaged source processing while managed news requires an authorized execution',async()=>{
+  const source=`unmanaged-native-${Date.now()}`;
+  await sql`INSERT INTO sources(id,name,kind) VALUES(${source},'Synthetic unmanaged source','external')`;
+  const material=await upsertMaterial({sourceId:source,url:`https://example.org/${source}`,title:'Synthetic unmanaged news',publishedAt:new Date(),bodyText:'Synthetic unmanaged body',bodyStatus:'ok',via:'test'});
+  const managed=await nativeRequestFixture();
+  for(const enabled of [false,true]){
+    await configureNativeProcessing({enabled,sourceIds:['fishery-column-moa'],createdAfter:'2020-01-01T00:00:00Z'},'tester','Synthetic native scope comparison');
+    assert.equal(await nativeProcessingPermit(material.articleId),true);
+    assert.deepEqual(await prepareNativeModelRequest({...managed,subject:`article:${material.articleId}`,maxTokens:16384}),{});
+    assert.equal(await nativeProcessingPermit(managed.subject.slice('article:'.length)),enabled);
+    await assert.rejects(prepareNativeModelRequest(managed),/lease|execution/);
+  }
+  const orphanSource='fishery-column-itf-fisheries';
+  await sql`INSERT INTO sources(id,name,kind) VALUES(${orphanSource},'Synthetic uncaptured source','external')`;
+  const orphan=await upsertMaterial({sourceId:orphanSource,url:'https://example.org/uncaptured-native',title:'Synthetic uncaptured article',publishedAt:new Date(),bodyText:'No fishery capture evidence exists.',bodyStatus:'ok',via:'test'});
+  await configureNativeProcessing({enabled:true,sourceIds:[orphanSource],createdAfter:'2020-01-01T00:00:00Z'},'tester','Synthetic uncaptured source scope');
+  assert.equal(await nativeProcessingPermit(orphan.articleId),false,'a registered adapter name is not verified capture evidence');
+});
+
+test('native wire limits reject altered destinations, output capacity and nontext inputs before any reservation',async()=>{
+  const request=await nativeRequestFixture();await seedTestLedger();const lease=await acquireProcessingLease();let sends=0;
+  try {
+    await lease.run(()=>withNativeProcessing(async()=>{
+      for(const changed of [
+        {...request,url:'https://example.org/chat/completions'},
+        {...request,options:{...request.options,body:JSON.stringify({...JSON.parse(wire.body),max_tokens:2049})}},
+        {...request,options:{...request.options,body:JSON.stringify({...JSON.parse(wire.body),messages:[{role:'user',content:[{type:'image_url',image_url:{url:'https://example.org/image'}}]}]})}},
+        {...request,options:{...request.options,body:'x'.repeat(96001)}},
+      ])await assert.rejects(sendNativeModelRequest(changed,async()=>{sends++;return response();}));
+    }));
+    assert.equal(sends,0);assert.deepEqual(await entries(),[]);
+  } finally {await lease.release();}
+});
+
+test('native preflight refuses unstarted and active legacy news while retaining completed history',async()=>{
+  const boss=await getBoss({schedule:false,supervise:false});await boss.createQueue('fishery.news');
+  const id=await boss.send('fishery.news',{articleId:'synthetic-legacy-preflight'});assert.ok(id);
+  try {
+    for(const state of ['created','retry','active']){
+      await sql`UPDATE pgboss.job SET state=${state}::pgboss.job_state WHERE id=${id}`;
+      await assert.rejects(assertLegacyNewsRetired(),/retire-legacy/);
+      assert.equal((await sql`SELECT state FROM pgboss.job WHERE id=${id}`)[0].state,state,'preflight must never cancel or rewrite old work');
+    }
+    await sql`UPDATE pgboss.job SET state='completed',completed_on=now() WHERE id=${id}`;
+    await assertLegacyNewsRetired();assert.equal((await sql`SELECT state FROM pgboss.job WHERE id=${id}`)[0].state,'completed');
+  } finally {await sql`DELETE FROM pgboss.job WHERE id=${id}`;}
+});
+
+test('full worker ownership fences native configuration and notifies once when its database session is lost',async()=>{
+  const policy={enabled:false,sourceIds:['fishery-column-moa'],createdAfter:'2020-01-01T00:00:00Z'};
+  const disabled=await configureNativeProcessing(policy,'tester','Synthetic full worker ownership fixture');
+  const lost=Promise.withResolvers<void>();let notices=0;
+  const release=await acquireFullWorkerLease({watchIntervalMs:10,onLeaseLost:()=>{notices++;lost.resolve();}});
+  try {
+    await assert.rejects(acquireProcessingLease(),/already running/);
+    await assert.rejects(configureNativeProcessing({...policy,enabled:true},'tester','Synthetic forbidden concurrent enable'),/already running/);
+    assert.deepEqual(await nativeProcessingConfiguration(),disabled);assert.equal(await requiredNativeWorkerProfile(),null);
+    const sessions=await sql`SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND application_name='fishery-processing-lease'`;
+    assert.equal(sessions.length,1);await terminateOwnLease({backendPid:sessions[0]!.pid});
+    await Promise.race([lost.promise,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Full worker lease loss was not detected')),5000))]);
+    assert.equal(notices,1);
+  } finally {await release();}
+  await configureNativeProcessing({...policy,enabled:true},'tester','Synthetic explicit enable after full shutdown');
+  assert.equal(await requiredNativeWorkerProfile(),'fishery-native');
+});
+
+test('installed fishery native processing runs real analysis, grouping, digest and editions with the original receipts',async t=>{
+  configure(t);
+  const {installModules,serverModules}=await import('@aihot/backend/modules');
+  const {SERVER_MODULES}=await import('../../../site/modules/server.ts');
+  const {CAPABILITIES,invalidateModelCache}=await import('@aihot/backend/editorial/models');
+  const {analysisStep}=await import('../../../tests/analysis-steps.ts');
+  const {processArticle}=await import('@aihot/backend/jobs/content');
+  const {groupArticle}=await import('@aihot/backend/events/group');
+  const {composeStoryDigest,DIGEST_SYSTEM}=await import('@aihot/backend/events/digest');
+  const {composeDaily,composeWeekly}=await import('@aihot/backend/reports/compose');
+  const {beijingDate,beijingAt,addDays,isoWeekLabel}=await import('@aihot/contracts/time');
+  const {EDITION_TIMES}=await import('@aihot/site');
+  const {v1Items}=await import('@aihot/backend/publication/v1');
+  const {itemFeed}=await import('@aihot/backend/publication/feeds');
+  const {buildApp}=await import('../../../apps/api/src/app.ts');
+  const previous=serverModules();installModules(SERVER_MODULES);t.after(()=>installModules(previous));
+  for(const capability of Object.values(CAPABILITIES)){
+    const before=process.env[capability.env];process.env[capability.env]='deepseek-flash';
+    t.after(()=>{if(before===undefined)delete process.env[capability.env];else process.env[capability.env]=before;});
+  }
+  for(const [name,value] of Object.entries({DEEPSEEK_BASE_URL:'https://api.deepseek.com',DEEPSEEK_API_KEY:'test-key'})){
+    const before=process.env[name];process.env[name]=value;t.after(()=>{if(before===undefined)delete process.env[name];else process.env[name]=before;});
+  }
+  invalidateModelCache();t.after(invalidateModelCache);
+  const high=await nativeRequestFixture('NATIVEHIGH'),low=await nativeRequestFixture('NATIVELOW'),block=await nativeRequestFixture('NATIVEBLOCK'),reviewOnly=await nativeRequestFixture('NATIVEREVIEW');
+  const [source]=await sql`SELECT revision FROM fishery_sources WHERE source_id='fishery-column-moa'`;
+  await registerSource('fishery-column-moa',{...sourceFixture,expectedRevision:source.revision},'tester');
+  for(const record of [high,low,block,reviewOnly])await assignNativeDocumentPurpose(record.documentId);
+  await sql`UPDATE fishery_document_purposes SET purpose='review_only',reason='Synthetic explicit review-only restriction' WHERE document_id=${reviewOnly.documentId}`;
+  const history=[{id:1,state:'received',reservedMicroCny:400000,usage:trialUsage({prompt_tokens:10,completion_tokens:2})}];await seedTestLedger(history);
+  const requests:Array<{marker:string;step:string}>=[],scoreValues={NATIVEHIGH:[90,88],NATIVELOW:[20,18]};
+  t.mock.method(globalThis,'fetch',async(input:unknown,options?:RequestInit)=>{
+    assert.equal(input,TRIAL.endpoint,'all provider traffic is intercepted; no network request is sent');
+    const body=String(options?.body),parsed=JSON.parse(body),system=parsed.messages[0]?.content,user=parsed.messages.at(-1).content;
+    const marker=['NATIVEHIGH','NATIVELOW','NATIVEBLOCK','NATIVEREVIEW'].find(m=>String(user).includes(m))??'';
+    let step:string,answer:unknown;
+    if(system===DIGEST_SYSTEM){step='digest';answer={title:'远洋船员换班安排更新',digest:'远洋船员换班安排已经更新。港口按公布的安排执行，具体条件以来源为准。'};}
+    else if(String(user).includes('【运营】')||String(user).includes('远洋船员换班安排更新')&&!marker){step='period';answer={overview:'远洋船员换班安排更新。',sections:{}};}
+    else {
+      step=analysisStep(body);
+      if(step==='prefilter')answer={label:marker==='NATIVEBLOCK'?'BLOCK':marker==='NATIVELOW'?'UNKNOWN':'PASS',reason:'Synthetic local replay'};
+      else if(step==='score')answer={attentionScore:scoreValues[marker as keyof typeof scoreValues]?.shift()};
+      else if(step==='structure')answer={category:'operations',tags:['运营'],subjects:[],scope:'single',fact:{title:'远洋船员换班安排更新',subject:'港口',action:'更新',object:'船员换班安排',occurredAt:null,evidence:'远洋渔船船员换班安排已经更新',conditions:[]}};
+      else if(step==='understand')answer={itemType:'industry_event',authorRole:'principal',tags:[],editorialJudgment:'公布了船员换班安排。',titleZh:'远洋船员换班安排更新',summaryZh:'远洋船员换班安排已经更新。港口按公告执行，具体要求以原文为准。'};
+      else if(step==='summarize')answer='title_zh: 远洋船员换班例行动态\nsummary_zh: 远洋渔船换班安排发布了例行信息。具体要求以原文为准。';
+      else throw new Error(`Unexpected native replay step ${step}`);
+    }
+    requests.push({marker,step});
+    return new Response(JSON.stringify({model:TRIAL.model,choices:[{message:{content:typeof answer==='string'?answer:JSON.stringify(answer)},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5}}),{status:200});
+  });
+  const [unclaimed]=await sql`SELECT processing_state,processing_attempts FROM articles WHERE id=${high.articleId}`;
+  await assert.rejects(processArticle(high.articleId),/native execution owner/);
+  assert.deepEqual((await sql`SELECT processing_state,processing_attempts FROM articles WHERE id=${high.articleId}`)[0],unclaimed);
+  assert.equal(requests.length,0,'an unowned consumer retains the job without paid work or article failure');
+  const lease=await acquireProcessingLease();let app:Awaited<ReturnType<typeof buildApp>>|undefined;
+  try {
+    await getBoss({schedule:false,supervise:false});
+    await lease.run(()=>withNativeProcessing(async()=>{
+      assert.equal((await processArticle(reviewOnly.articleId)).state,'restricted');assert.equal(requests.length,0);
+      assert.equal((await processArticle(high.articleId)).state,'pass');
+      const [beforeGroup]=await sql`SELECT selected FROM publications WHERE article_id=${high.articleId}`;assert.equal(beforeGroup.selected,false);
+      await groupArticle(high.articleId);
+      const [membership]=await sql`SELECT f.story_id FROM fact_articles fa JOIN facts f ON f.id=fa.fact_id WHERE fa.article_id=${high.articleId}`;assert.ok(membership);
+      assert.equal((await composeStoryDigest(Number(membership.story_id))).updated,true);
+      assert.equal((await processArticle(low.articleId)).state,'pass');
+      assert.equal((await processArticle(block.articleId)).state,'block');
+      const callsBefore=requests.length,ledgerBefore=await budgetLedger();
+      await processArticle(high.articleId);await processArticle(low.articleId);await processArticle(block.articleId);await groupArticle(high.articleId);
+      assert.equal((await composeStoryDigest(Number(membership.story_id))).updated,false);
+      assert.equal(requests.length,callsBefore,'reconsumption reuses received receipts without another provider send');assert.deepEqual(await budgetLedger(),ledgerBefore);
+      const now=new Date(),today=beijingDate(now),date=beijingAt(today,EDITION_TIMES.daily)>now?today:addDays(today,1);
+      assert.ok((await composeDaily(date)).entries>0);
+      assert.ok((await composeWeekly(isoWeekLabel(date),'Synthetic native replay'))!.entries>0);
+    }));
+    const query={mode:'all' as const,window:'7d' as const,by:'timeline' as const,category:null,q:null,limit:100,cursor:null};
+    const all=await v1Items(query),selected=await v1Items({...query,mode:'selected'});
+    assert.ok(all.items.some(i=>i.id===low.articleId));assert.ok(all.items.some(i=>i.id===high.articleId));assert.ok(selected.items.some(i=>i.id===high.articleId));assert.ok(!selected.items.some(i=>i.id===low.articleId));
+    app=await buildApp();
+    const exits=[JSON.stringify(all),JSON.stringify(selected),await itemFeed('all',null),await itemFeed('selected',null),JSON.stringify((await v1Items({...query,q:'远洋'})).items)];
+    for(const path of ['/api/v1/items?mode=all&window=7d','/api/v1/items?mode=selected&window=7d','/api/v1/agent/latest?mode=all&window=7d','/feed/all.xml','/feed.xml']){const result:{statusCode:number;body:string}=await app.inject({url:path});assert.equal(result.statusCode,200);exits.push(result.body);}
+    const {MCP_TOOL_NAMES}=await import('@aihot/contracts/mcp');
+    const mcp:{statusCode:number;body:string}=await app.inject({method:'POST',url:'/api/mcp',headers:{'content-type':'application/json',accept:'application/json, text/event-stream'},payload:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:MCP_TOOL_NAMES.latest,arguments:{mode:'all',window:'7d'}}}});
+    assert.equal(mcp.statusCode,200);assert.ok(mcp.body.includes(high.articleId));assert.ok(mcp.body.includes(low.articleId));exits.push(mcp.body);
+    for(const record of [block,reviewOnly])for(const exit of exits)assert.ok(!exit.includes(record.articleId));
+    for(const record of [block,reviewOnly])for(const path of [`/api/site/items/${record.articleId}`,`/items/${record.articleId}/markdown`])assert.equal((await app.inject({url:path})).statusCode,404);
+    for(const record of [high,low]){
+      const [analysis]=await sql`SELECT output,receipt_ids FROM analyses WHERE article_id=${record.articleId} ORDER BY id DESC LIMIT 1`;
+      assert.equal(analysis.output.scores.length,2);assert.notEqual(analysis.output.scores[0],analysis.output.scores[1]);
+      assert.equal(requests.filter(r=>r.marker===(record===high?'NATIVEHIGH':'NATIVELOW')&&r.step==='score').length,2);
+    }
+    const ledger=await budgetLedger();assert.deepEqual(ledger.entries[0],history[0]);assert.ok(ledger.entries.every(e=>e.state==='received'));
+    const receipts=await sql`SELECT purpose,status,attempts FROM receipts WHERE subject LIKE ${`article:${high.articleId}%`} OR subject LIKE ${`article:${low.articleId}%`}`;
+    assert.ok(receipts.length>=10);assert.ok(receipts.every(r=>r.status==='completed'&&r.attempts===1));
+    assert.ok(requests.some(r=>r.step==='digest'));assert.ok(requests.some(r=>r.step==='period'));assert.equal(requests.filter(r=>r.marker==='NATIVEBLOCK').length,1);assert.equal(requests.filter(r=>r.marker==='NATIVEREVIEW').length,0);
+  } finally {await app?.close();await lease.release();}
+});
+
+test('specialized queues belong only to explicit manual and native consumers',async()=>{
+  await seedTestLedger();
+  await configureNativeProcessing({enabled:false,sourceIds:['fishery-column-moa'],createdAfter:'2020-01-01T00:00:00Z'},'tester','Synthetic explicit queue ownership');
+  installModules([fishery]);
+  const boss=await getBoss({schedule:false,supervise:false});
+  const publication={kind:'article' as const,itemId:'synthetic-owned-publication',decisionId:'synthetic',decisionHash:'synthetic',actor:'tester'};
+  const flowId=await enqueueOn(flowQueue,{id:'synthetic-owned-flow'},{singletonKey:'ownership-flow'});
+  const publicationId=await enqueueOn(publicationQueue,publication,{singletonKey:'ownership-publication'});
+  assert.ok(flowId&&publicationId,'producers create queues without global consumer registration');
+  await workModuleQueues(boss);
+  assert.ok(!boss.getWipData().some(worker=>[flowQueue.name,publicationQueue.name].includes(worker.name)));
+  assert.equal((await boss.getJobById(flowQueue.name,flowId))?.state,'created');
+  assert.equal((await boss.getJobById(publicationQueue.name,publicationId))?.state,'created');
+  let flows=0,publications=0;
+  const release=await registerManualFlowConsumer(boss,async jobs=>{await assertProcessingLease();flows+=jobs.length;},{publicationRun:async jobs=>{await assertProcessingLease();publications+=jobs.length;}});
+  try{
+    for(const worker of boss.getWipData())boss.notifyWorker(worker.id);
+    for(let n=0;n<200&&(flows!==1||publications!==1);n++)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(flows,1);assert.equal(publications,1);
+  }finally{await release();installModules([]);}
+  await configureNativeProcessing({enabled:true,sourceIds:['fishery-column-moa'],createdAfter:'2020-01-01T00:00:00Z'},'tester','Synthetic native queue ownership');
+  const code=`
+    import {installModules} from '@aihot/backend/modules';
+    import {SERVER_MODULES} from '@aihot/site/modules/server';
+    import {getBoss,enqueueOn} from '@aihot/backend/jobs/queue';
+    import {closeDb} from '@aihot/backend/db';
+    import {startNativeProfile} from './modules/fishery/backend/native-processing.ts';
+    import {assertProcessingLease} from './modules/fishery/backend/processing-lease.ts';
+    import {flowQueue} from './modules/fishery/backend/flow.ts';
+    import {publicationQueue} from './modules/fishery/backend/publication-queue.ts';
+    installModules(SERVER_MODULES);let flows=0,publications=0;
+    flowQueue.run=async jobs=>{await assertProcessingLease();flows+=jobs.length;};
+    publicationQueue.run=async jobs=>{await assertProcessingLease();publications+=jobs.length;};
+    const stop=await startNativeProfile();
+    try{
+      const boss=await getBoss({schedule:false,supervise:false});
+      await enqueueOn(flowQueue,{id:'synthetic-native-owned-flow'},{singletonKey:'native-owned-flow'});
+      await enqueueOn(publicationQueue,{kind:'article',itemId:'synthetic-native-owned-publication',decisionId:'synthetic',decisionHash:'synthetic',actor:'tester'},{singletonKey:'native-owned-publication'});
+      for(const worker of boss.getWipData())boss.notifyWorker(worker.id);
+      for(let n=0;n<200&&(flows!==1||publications!==1);n++)await new Promise(resolve=>setTimeout(resolve,20));
+      console.log('NATIVE_QUEUE_OWNERSHIP '+JSON.stringify({flows,publications}));
+      if(flows!==1||publications!==1)throw new Error('Native consumers did not own specialized jobs');
+    }finally{await stop();await closeDb();}
+  `;
+  const child=await promisify(execFile)(process.execPath,['--input-type=module','-e',code],{env:{...process.env,MODEL_CALLS_ENABLED:'false',COLLECT_ENABLED:'false'},timeout:20000});
+  assert.match(child.stdout,/NATIVE_QUEUE_OWNERSHIP \{"flows":1,"publications":1\}/);
+  assert.equal((await entries()).length,0,'registration and fake handlers never spend the retained authorization');
 });
 
 test("active HTTP lease loss drains consumer release and shutdown until the deferred response settles",async t=>{
