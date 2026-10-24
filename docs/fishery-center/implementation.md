@@ -1,5 +1,8 @@
 # 分阶段实施与验收
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 以下P0—P3保留规划目标。早期阶段仅交付研究文档；2026-10-20用户随后授权本地实施，当前首期为管理员手工登记、观察、审核、导出模块。没有真实采集、付费模型/OCR调用、Easel上传、部署/DNS/订阅/平台发布动作。
 
 当前本地仓库origin为用户fork，upstream保留原上游；本期不push、公开PR、Library上传或截图分享。历史只读限制属于较早研究阶段，不能作为用户随后本地改造授权的阻断。
@@ -71,7 +74,7 @@ MVP完成的判断：一批真实公开样本可追溯、可审核、能带许�
 
 已实现的重点行为：未知许可默认关、观察追加不吞A→B→A、附件hash独立、新观察/来源版本使旧审核失效、日期unknown/month/day分离、最新审核拒绝/许可到期/撤回阻断、关联article当前publication资格复核、管理员JSON/Markdown手工导出与48KiB字节限制、无匿名原始证据出口。哈希是管理员声明，不是已完成真实采集核验；素材confidence仅为人工审核元数据，不宣称法律适用性自动核验。
 
-完整API、回放命令、保留语义与未实现清单见[模块说明](../../modules/fishery/README.md)。新增迁移不会删除既有数据；普通文章清理不级联删除文书与观察。本期无机器认证、snapshot/changes、Easel创作/发布或跨平台撤回，不能把本地样例回放称为完整MVP已交付。
+完整API、回放命令、保留语义与未实现清单见[模块说明](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/modules/fishery/README.md)。新增迁移不会删除既有数据；普通文章清理不级联删除文书与观察。本期无机器认证、snapshot/changes、Easel创作/发布或跨平台撤回，不能把本地样例回放称为完整MVP已交付。
 
 ### 实际本地验证结果
 
@@ -90,7 +93,7 @@ MVP完成的判断：一批真实公开样本可追溯、可审核、能带许�
 | 合成离线demo | JSON 2,589字节，Markdown 1,315字节；独立Python复算canonical内容SHA-256一致；无真实抓取或Easel上传 |
 | `git diff --check` 与文档相对链接 | 主线程独立检查通过 |
 
-最初完整测试因尚无web构建产物、PATH缺少`pg_dump`及一处新增Markdown安全测试失败；修正后完整重跑全部通过，未改核心测试绕过。首次web测试因缺锁定版本WebKit而悬挂，精确停止本任务父子进程后，在 `/tmp/aihot-fishery-playwright` 安装锁定测试浏览器，重跑59项全部通过；未改用户浏览器配置或缓存。初始失败日志和最终成功日志均保留于本任务工作目录，不提交仓库。
+最初完整测试因尚无web构建产物、PATH缺少`pg_dump`及一处新增Markdown安全测试失败；修正后完整重跑全部通过，未改核心测试绕过。首次web测试因缺锁定版本WebKit而悬挂，精确停止本任务父子进程后，在 `[temporary-evidence-path]` 安装锁定测试浏览器，重跑59项全部通过；未改用户浏览器配置或缓存。初始失败日志和最终成功日志均保留于本任务工作目录，不提交仓库。
 
 可核验日志名：`fishery-npm-ci.log`、`fishery-lock.log`、`fishery-typecheck.log`、`fishery-module-tests.log`、`fishery-all-tests.log`、`fishery-web-build.log`、`fishery-web-tests.log`、`fishery-browser-install.log`、`fishery-smoke-migrations.log`、`fishery-smoke.log`、`fishery-smoke-guards.json`、`fishery-demo.log`。合成实物保存在同一任务目录的 `fishery-demo/fishery-fixture.json` 与 `.md`，不上传或提交。主线程最终复核并单独处理本地commit；本记录不宣称push、部署、真实来源准确率、Easel创作/发布或下游撤回通过。
 

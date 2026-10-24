@@ -1,12 +1,15 @@
 # 审核质量与真实候选小样本核查
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 核查基线：`605ac218a44a724bbcbd2c616706b331191c4ca5`。核查发生于2026-10-23 UTC、北京时间10月24日凌晨。只读生产、复用已有原文和模型回执；新增付费调用0、生产写入0。没有改变门槛、提示词、来源权限或发布状态。
 
 ## 结论
 
 现有证据支持保留质量门槛，同时修正审核口径的不一致。发现1条已发生、后来人工纠正的相关性误拒，以及1个用真实原文在当前代码复现的事件状态误拒；二者都不能用来推导“近期应该有多少条文章”。政策正例通过72/72，产量统计低分拒绝合理，会议报道虽能证明会议举办，也不因此具有精选价值。
 
-附属[12条真实候选清单](review-samples-2026-10-24.json)给出5条应保留审核的参考、4条对指定用途应拒绝、3条仍待证。标签是本次基于证据的编辑建议，**不是使用者金标、不是正式审核、不是模型分数**。`select`仅指值得继续处理所列用途；历史、日期未知、当前适用性未知仍单独记录。不能用这组定向挑选的小样本计算总体准确率或校准数值门槛。
+附属[12条真实候选清单](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/docs/fishery-center/review-samples-2026-10-24.json)给出5条应保留审核的参考、4条对指定用途应拒绝、3条仍待证。标签是本次基于证据的编辑建议，**不是使用者金标、不是正式审核、不是模型分数**。`select`仅指值得继续处理所列用途；历史、日期未知、当前适用性未知仍单独记录。不能用这组定向挑选的小样本计算总体准确率或校准数值门槛。
 
 ## 发现与误差证据
 

@@ -1,0 +1,69 @@
+{
+  "scope": "local isolated verification; synthetic models; not production balances",
+  "sourceCodeCommit": "3a162cb5f30e27a6385d0fb0c1b7227f059028a3",
+  "backendCompleteSuite": {
+    "pass": 1255,
+    "fail": 0,
+    "timing": "before final specialist queue registry fix; not a complete suite of d92 or 3a"
+  },
+  "queueRegistryPostfix": {
+    "pass": 1,
+    "fail": 0,
+    "typecheck": "passed"
+  },
+  "handoverIncrementD92": {
+    "pass": 21,
+    "fail": 0,
+    "moduleTypecheck": "passed"
+  },
+  "prefilterIncrement3a": {
+    "pass": 2,
+    "fail": 0,
+    "scope": "existing rerun recovery and command idempotency; no literal prompt assertions",
+    "specializedConfigurationUnchanged": true
+  },
+  "webTests": {
+    "pass": 90,
+    "fail": 0
+  },
+  "smoke": {
+    "pass": 30,
+    "fail": 0
+  },
+  "realSavedArchiveReplay": {
+    "sources": [
+      "ITF",
+      "FAO",
+      "MPA"
+    ],
+    "listResponses": 6,
+    "coreObservations": 114,
+    "coreUniqueUrls": 57,
+    "industryObservations": 68,
+    "industryUniqueUrls": 34,
+    "detailResponses": 6,
+    "uniqueArticles": 3,
+    "dateAndBodyDifferences": 0,
+    "injectedFailure": "synthetic MPA503 and 72h queue; not real DB fault recovery",
+    "networkDbModelRequests": 0
+  },
+  "fullSuiteOrWebBuildRepeatedFor3a": false,
+  "sourceArtifacts": [
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/summary.md",
+      "originalSha256": "e3102fd024ecef36f776e2a4f15a9b913524bf5b033f76fb3bfe142a39268f94"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-version-proof.safe.json",
+      "originalSha256": "2f054d1759fdf9200b7dfc448fbbf9649a14d3c142db8a863e9c3254b40ba9cf"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-fix-commit-manifest.json",
+      "originalSha256": "095759e9c88c3cc19830154385220c774e3a02da801c3af63c68278219252d1e"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/archive-replay/report.md",
+      "originalSha256": "126db79974f912dafe48278c9f5e5da57b4a9e1c6518eb3963f2495ece01022c"
+    }
+  ]
+}

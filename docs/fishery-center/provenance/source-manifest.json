@@ -1,0 +1,1871 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-10-24T06:23:00Z",
+  "sourceCodeCommit": "3a162cb5f30e27a6385d0fb0c1b7227f059028a3",
+  "documentationCommit": "This documentation archive commit; inspect Git history. Not a production deployment SHA.",
+  "sourceLocatorRoot": "Original local Codex task artifacts; workstation absolute paths omitted. Originals are retained outside the repository.",
+  "hashSemantics": {
+    "originalSha256": "SHA256 of exact original bytes before redaction/link normalization.",
+    "repositoryFileSha256": "SHA256 of the normalized archived file bytes; not equal to the original unless no transformation occurred."
+  },
+  "transformations": [
+    "Mark stage snapshots and point to one current status entry.",
+    "Normalize known source snapshots to fixed GitHub commit links.",
+    "Map archived documents to portable relative links.",
+    "Replace private workstation/server/SSH/backup locations and non-loopback IP addresses.",
+    "Link non-copied local evidence to this inventory; retain original hashes, not raw contents.",
+    "Replace temporary absolute evidence paths and omit synthetic test credential example values.",
+    "Paraphrase private delegation wording into objective project authorization outcomes."
+  ],
+  "excludedClasses": [
+    "credentials, .env, cookies, access/CSRF tokens, private keys",
+    "private conversations or Codex session/provider configuration",
+    "complete production databases/dumps and complete billing ledgers",
+    "source snapshots, node_modules, caches, full source bodies/PDF originals, screenshots and execution bundles"
+  ],
+  "records": [
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/AIHOT-autonomous-news-implementation-plan-20261024.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/AIHOT-autonomous-news-implementation-plan-20261024.md",
+      "originalSha256": "203cbada3f3e1fdb690be452d72abcacf946765e68c09f3f243794c048b884f5",
+      "repositoryFileSha256": "3defd637a10b8e455a740c098071bbb3022ace74e052ab097bc4d6486e031546"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/AIHOT-flow-audit-20261024.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/AIHOT-flow-audit-20261024.md",
+      "originalSha256": "f62c93e3e58c134d1a17929125c2bc6051e0ddea232cb2e02dfe7145c2225060",
+      "repositoryFileSha256": "1e41a7d221cd9e1425a15fe44c5902fb06ba65e87d8039e0121e977ad5a4aaaf"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/AIHOT-native-flow-implementation-plan-v2-20261024.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/AIHOT-native-flow-implementation-plan-v2-20261024.md",
+      "originalSha256": "02f0c8697988bafa24b4264615121da69332e6eb226920592a19d0f90d008906",
+      "repositoryFileSha256": "82dcdae7b500fa7432b92a9836f927735c82d104cc2c65d46ce2225bf1c90aeb"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/downstream-review.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/downstream-review.md",
+      "originalSha256": "a625e77b18c0e89f49b4dd07e607d15cfeac622b088677d0e4f7a4db2bb5b81b",
+      "repositoryFileSha256": "1980179e38357843aa925e8b98d6b5b9eef40fd8a696cb058805b28c12904a3e"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/implementation-delivery.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/implementation-delivery.md",
+      "originalSha256": "05464ace58ee6e0486555c267c4fd30c7625c11fe312dd9f88a6a11dc9a57ac9",
+      "repositoryFileSha256": "39b6bb7c8c89a19109bb7e7f39580d300d9f73863da9519980dc94ed5a52d5fe"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/intake-review.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/intake-review.md",
+      "originalSha256": "67ec45a168bf312f2b4985660e71a5b9b02b119fcf4bb150c33f53f73d9ae5c2",
+      "repositoryFileSha256": "13573b6a9f323ff024f7cf8d83f154ba7697accef6dc83a1287f543cd55110a2"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/jfa-incremental-rollout-plan.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/jfa-incremental-rollout-plan.md",
+      "originalSha256": "c83d0df8086a03dec2b2607ffac78161a615c10723861f28d4c8ef317c2b5818",
+      "repositoryFileSha256": "b14dfb586b49887f6d3e599d4748280fc4b7b94a5982e07c5d6dde597b96c7bf"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/jfa-prefilter-incremental-plan.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/jfa-prefilter-incremental-plan.md",
+      "originalSha256": "9deae715de4e1c655f1a28fdfdac0412f8803b7be8dcbfbdbb97ff616bb35b85",
+      "repositoryFileSha256": "ce30dd6ae814bc90cb852abb91b833d57ce1fa778e4a5400a728b8dd75584d8b"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-deployment-3a162-before-rerun-report.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/production-deployment-3a162-before-rerun-report.md",
+      "originalSha256": "0db9e35af438c65ab8bc34e090e412e0a3d9a5fd8d32befe0dca03d8c5e6a029",
+      "repositoryFileSha256": "6b82df179e529c43481617893c336b48242a31b22a10679a88b66f02efa242b1"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-deployment-3a162-final-report.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/production-deployment-3a162-final-report.md",
+      "originalSha256": "560bfe089ede067d25b39f3c783ff681e1279aca8731c31f2ca2390987f5e8fe",
+      "repositoryFileSha256": "172ba1f9df6c2779b61cf026981bb4d65ada0f913e07bfd6f6400d90b41ebb2b"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-deployment-d92-report.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/production-deployment-d92-report.md",
+      "originalSha256": "1a6f769318c08619d789a40ebbcf49160fca12dc6ba7b45f3003cbfec2985f03",
+      "repositoryFileSha256": "c537ee7455ba33713928389471adcfcd4f143db1df0783445e44859685e03021"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-deployment-fa8-report.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/production-deployment-fa8-report.md",
+      "originalSha256": "f7e012ed38d3352b566beed0b4b1e352b5de5547b66cc64b0956be679c996f12",
+      "repositoryFileSha256": "9cda8f8f38eb7ae34efdee03e11c555d91784650c1857f4ac91c4d9e7e94bcfb"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-rollout-plan.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/production-rollout-plan.md",
+      "originalSha256": "d5c52c8a3e42f4d70a2f18f841042a51f96e37f169dc4d91180d0981e5bc2693",
+      "repositoryFileSha256": "3d48c19727b0c4b6cf6e0d243025c9c295f47c991f6e91500bfc4fdc6d462c40"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-trace.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/production-trace.md",
+      "originalSha256": "7a5b1ac0918a73599eacd3ac64a1cee8b2c8cc5fd2263f593956906626325282",
+      "repositoryFileSha256": "538612db4264f8463184691167fd7e50c92efeca087254634072c67d00892f95"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/review-publish.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-24; exact version/time remains in body",
+      "source": "workspace-artifacts/2026-10-24/task-5/review-publish.md",
+      "originalSha256": "8d00552d0c98143567cf0dd71e9c5d96f86b614606eeaea7e37981cbb331e490",
+      "repositoryFileSha256": "f5fd89d214272444dc5aceb8686d6b7df54d50edde45443f5d136dd7e8f784c9"
+    },
+    {
+      "destination": "docs/fishery-center/evidence/local-verification-20261024.safe.json",
+      "status": "summarized-only",
+      "stage": "local isolated verification; not production",
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/summary.md",
+      "originalSha256": "e3102fd024ecef36f776e2a4f15a9b913524bf5b033f76fb3bfe142a39268f94",
+      "repositoryFileSha256": "04665795cb38dc33bcbc7c4f4be773505c8c4a5e6cc1e7117b783626ffd8ca68",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied."
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/verification/environment.md",
+      "status": "archived-redacted",
+      "stage": "local isolated verification; not production",
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/environment.md",
+      "originalSha256": "915b0c0b0ce119f630e110c0bb302b625df942235620af7c1f80af3903a6fbc7",
+      "repositoryFileSha256": "b3586b5168b438bf907fbc5487bcd3fe67d077df297e436d25d018028771423a"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-native-flow/verification/reproduce.md",
+      "status": "archived-redacted",
+      "stage": "local isolated verification; not production",
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/reproduce.md",
+      "originalSha256": "ef2a13418768090b963fa4fdfd44f829b854bd43ead83d0671f52e4babf6063a",
+      "repositoryFileSha256": "d3bd53620d55b4b870825ee947e1870d8095cbf1ba7b72ee64c4c33106652def"
+    },
+    {
+      "destination": "docs/fishery-center/evidence/local-verification-20261024.safe.json",
+      "status": "summarized-only",
+      "stage": "finite saved-public-source offline replay",
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/archive-replay/report.md",
+      "originalSha256": "126db79974f912dafe48278c9f5e5da57b4a9e1c6518eb3963f2495ece01022c",
+      "repositoryFileSha256": "04665795cb38dc33bcbc7c4f4be773505c8c4a5e6cc1e7117b783626ffd8ca68",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied."
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-research-entry.md",
+      "status": "archived-redacted",
+      "stage": "2026-10-20 initial research entry; superseded",
+      "source": "repository-before-archive/docs/fishery-center/README.md",
+      "originalSha256": "514dcaed17dbbdeebbb9caefd93aeffd39986af295054b098e8f1705105bc74c",
+      "repositoryFileSha256": "d5745c412c7e5cbaa5f3946c5512c0cd19685137b6b92a7c699889410c45560c"
+    },
+    {
+      "destination": "docs/fishery-center/architecture.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/architecture.md",
+      "originalSha256": "7b95d7eb32aeee3cec7ff565d83323d492216b03bea083cc4dd0575b09a24657",
+      "repositoryFileSha256": "87ad1367218f7ff4144da277b9ece0b0483bc9f5df7be9ec27458d654f98f63e"
+    },
+    {
+      "destination": "docs/fishery-center/business-source-expansion-20261023.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/business-source-expansion-20261023.md",
+      "originalSha256": "aa0f2149aeff480864d52ae6655d6cd0bb187a5a0d4ee3299969edc51e5664a1",
+      "repositoryFileSha256": "3a0fa0156942e43381198a57a71f9bced7f8777d69df28d592bccf07fd7c4b73"
+    },
+    {
+      "destination": "docs/fishery-center/easel-contract.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/easel-contract.md",
+      "originalSha256": "c9f8536ea54661f18603aeb182c2e999e627376ef8e08b02a9954c3f7bcabfd9",
+      "repositoryFileSha256": "0b85594993a251d36014e4991dfd61eb38b8c0c0606d8750560edd47954aef9c"
+    },
+    {
+      "destination": "docs/fishery-center/implementation.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/implementation.md",
+      "originalSha256": "9e7aa91bc3cd72e3b02ef6852360f705740da61fc868976ffc77a1788d312051",
+      "repositoryFileSha256": "114a5835c46e34177fa1ee4a66efdef042c9406891912cef9b591880234f9c7f"
+    },
+    {
+      "destination": "docs/fishery-center/integration-20261024.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/integration-20261024.md",
+      "originalSha256": "100bdb08769919b5f13c37052dec9bb5761e4889a2aa0f10554597ed924eb38d",
+      "repositoryFileSha256": "f88095c3c4fd31b2d2ca85d744daf65b9116301e6f4f1077ad70690d2f0125d6"
+    },
+    {
+      "destination": "docs/fishery-center/jma-integration-contract.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/jma-integration-contract.md",
+      "originalSha256": "df274414aced6d352d73dce48e20ced3e77475d90c925282c92e56838c0b5d6f",
+      "repositoryFileSha256": "5da635e0fd330c8f4e2da3bc35bb847cbe7d6a193efdcd7b055b09d7c69d5495"
+    },
+    {
+      "destination": "docs/fishery-center/jma-sea-warning-validation.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/jma-sea-warning-validation.md",
+      "originalSha256": "536f5fbe6679090f1053a8904fc6e66afc5f43d863e7d282042a1e1c6d04c162",
+      "repositoryFileSha256": "d4ac48a1362a2380d825e07ee9079fba5357fbc4da6f8e97914a455cc9bdede6"
+    },
+    {
+      "destination": "docs/fishery-center/jma-validation.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/jma-validation.md",
+      "originalSha256": "71c1d501c1565dad42d241b3d3f647344858da06a2fc8850d7ee502dda0a6dd0",
+      "repositoryFileSha256": "9eb8f8c5a659c13d18ed923f4a2c331aceeac549cf62ae6de83e29a9722bc881"
+    },
+    {
+      "destination": "docs/fishery-center/local-pilot.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/local-pilot.md",
+      "originalSha256": "5d6b3b6a5ee30867961cde6f51742a66c10902a5fbad93ba46ada434a8652e45",
+      "repositoryFileSha256": "c5646e8504399f729c763a431d627e57f386973ac336cb8ff3ad87c4a50e3bbc"
+    },
+    {
+      "destination": "docs/fishery-center/material-workbench.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/material-workbench.md",
+      "originalSha256": "4774796cb61964e023406f4f30e8f92904507e550c3b356f9652b25da2e1ff07",
+      "repositoryFileSha256": "5b165c0aef7c89a97a2d1d053d298ebeea6be3bf4e0d550c62c0847163e128b6"
+    },
+    {
+      "destination": "docs/fishery-center/news-flow-correction.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/news-flow-correction.md",
+      "originalSha256": "ab2841003a2f239b1603dc571c9637eb63c3a4ef4dd2511213e226f96567fd15",
+      "repositoryFileSha256": "eda314e3e0940d08f2add0655a50832520580e584755251810a154eaec2739da"
+    },
+    {
+      "destination": "docs/fishery-center/pdf-blank-page-review.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/pdf-blank-page-review.md",
+      "originalSha256": "1cb644c699c8ef1736e7baf8d998a46efab935d1d45a9d9c4e3d28b045f35541",
+      "repositoryFileSha256": "f5f203af7071150f4cc5938560ff61723f51109bf1583fa2ad56325c42ef7b09"
+    },
+    {
+      "destination": "docs/fishery-center/review-assessment.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/review-assessment.md",
+      "originalSha256": "2028dcb473c0da2f129ce919abff2a9ef880773999bc657c72dee73ef2a1654e",
+      "repositoryFileSha256": "2123a07c8622537efeeb36bae8e038f6e251edc58b4a64551ca7008ff2a7ca32"
+    },
+    {
+      "destination": "docs/fishery-center/review-quality-2026-10-24.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/review-quality-2026-10-24.md",
+      "originalSha256": "d58203dca6debce9d70524aa6eec186304b505ebd47e1a5b2078dc400f0718f0",
+      "repositoryFileSha256": "101207099a4efd00176a39f1a1c7d6fd9a3639ea9e1bf47b9a64ba72317c7097"
+    },
+    {
+      "destination": "docs/fishery-center/server-pilot.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/server-pilot.md",
+      "originalSha256": "42d601d39e24c1eb8ef47181ecb3a9adf2e83e4e267b8a65aebfb76fce4ffbcb",
+      "repositoryFileSha256": "49c417781008c2a11d152f0bfd77db2a44d40667927cf0c9ca4b4c97a7a50136"
+    },
+    {
+      "destination": "docs/fishery-center/source-adapter-validation.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/source-adapter-validation.md",
+      "originalSha256": "07d92890a60a2f0816642d8a52ba6cd23b0b6155ee94d24cafd05ed7c06c8576",
+      "repositoryFileSha256": "5ea740c6c351c593ae21b861de4ad210154db1fd9d05bdf3c29ac9b4e8fa8347"
+    },
+    {
+      "destination": "docs/fishery-center/source-register.md",
+      "status": "existing-reference-normalized",
+      "stage": "Existing repository reference; deployment assertions belong to its original stage.",
+      "source": "repository-before-archive/docs/fishery-center/source-register.md",
+      "originalSha256": "33e6511b1662363a5c2ea30704acf6c203c41ceb1e1e0f170f6a156f555cef89",
+      "repositoryFileSha256": "c6dba6849b0042928114ee39b70b7f53acb240b99ee453fbf435bc27f019890a"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-initial-proposal/README.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "远洋渔业信源中心：研究结论与实施入口",
+      "reason": "archive_initial_proposal_as_superseded",
+      "source": "workspace-artifacts/2026-10-20/task-3/aihot-source/docs/fishery-center/README.md",
+      "originalSha256": "f24110ff3aaebf7b573017e6b95b0441b2ee7393efaf940f71439dff8fcce4c2",
+      "repositoryFileSha256": "f3e8c0f929c2421b37146320bc6ccf3c62b0a26b8b1805666403c15a77fa68d6"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-initial-proposal/architecture.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "远洋渔业信源中心：最小实现设计",
+      "reason": "archive_initial_proposal_as_superseded",
+      "source": "workspace-artifacts/2026-10-20/task-3/aihot-source/docs/fishery-center/architecture.md",
+      "originalSha256": "f5aa34253a51bd4229fbae2705e92ef77791205e7437c00d5ab3fafeb9154262",
+      "repositoryFileSha256": "a795a91c1a1d905aea60c966243a97a20c27df69302976b20febd6500e744f6e"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-initial-proposal/easel-contract.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "Easel 素材合同与同步验收（提案 v0.1）",
+      "reason": "archive_initial_proposal_as_superseded",
+      "source": "workspace-artifacts/2026-10-20/task-3/aihot-source/docs/fishery-center/easel-contract.md",
+      "originalSha256": "d88d26caa484bdb80c2bb899a7ef1cdc36098e24b64329f05f48090c0303ddf0",
+      "repositoryFileSha256": "0b5ce0f387152598a2c1dff7255fb9caf9ecaeef4f64d7ed0f0f6c02a7801cda"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-initial-proposal/implementation.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "分阶段实施与验收",
+      "reason": "archive_initial_proposal_as_superseded",
+      "source": "workspace-artifacts/2026-10-20/task-3/aihot-source/docs/fishery-center/implementation.md",
+      "originalSha256": "e7248356e86d5765301af2e56f01cb7ba97addba93631211bf61aaae588b7073",
+      "repositoryFileSha256": "76bf328b0408a3fe1ff710159c8e647f1f43d6ddf021879ee15e1c6258a20b4b"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-initial-proposal/review-assessment.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "Pro评审记录与执行者复核",
+      "reason": "archive_initial_proposal_as_superseded",
+      "source": "workspace-artifacts/2026-10-20/task-3/aihot-source/docs/fishery-center/review-assessment.md",
+      "originalSha256": "78cd305fbcfac52587f12366a69698306006cbf90f0343a2842c8188027f0e28",
+      "repositoryFileSha256": "066197df3bdf2854354bd8cde77f1a46663cf7f1272a437d856c2f950e95b43a"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-initial-proposal/source-register.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "分层信源登记与取证状态",
+      "reason": "archive_initial_proposal_as_superseded",
+      "source": "workspace-artifacts/2026-10-20/task-3/aihot-source/docs/fishery-center/source-register.md",
+      "originalSha256": "8a3cc38ec089a9e5ddf0d84f40a956004789140e51a3d14380d11a33b8c959c4",
+      "repositoryFileSha256": "08576b3c197e017b93c991f5773d831be182ac3e872a720f644159c04c38027e"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/compact-policy-draft-20261023/acceptance/REPORT.md",
+      "status": "archived-redacted",
+      "stage": "历史专项安全/政策PDF/AI核查验收 / 2026-10-23",
+      "title": "福建完整原件 → 待审稿 + AI核查（2026-10-23 UTC）",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/compact-policy-draft-20261023/acceptance/REPORT.md",
+      "originalSha256": "b9b0e9637cf92d2f1a3e90753ebca023ae17239b4dbf602387f598d65e3d0373",
+      "repositoryFileSha256": "a06fd1e20b01b8d29d0ddc6b30e7009584ba127eff52cc9c281ab4efa9c18f71"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/deployment-checks/checkpoint-before-install.md",
+      "status": "archived-redacted",
+      "stage": "历史服务器可行性/隔离部署检查点 / 2026-10-20",
+      "title": "隔离部署检查点（2026-10-20 UTC）",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/deployment-checks/checkpoint-before-install.md",
+      "originalSha256": "43ed0e58513c00e39878cb48b05a06c1de823098cebbc949a9035ae412b297c9",
+      "repositoryFileSha256": "d5f5080a891c2fe26cf23ba5ed35935a70454e0bd679e903810d24b58372f77e"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/deployment-checks/checkpoint.md",
+      "status": "archived-redacted",
+      "stage": "历史服务器可行性/隔离部署检查点 / 2026-10-20",
+      "title": "当前隔离部署检查点",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/deployment-checks/checkpoint.md",
+      "originalSha256": "e416d3ef5a2444afb615c9953c5113aaf988161ad2ae4d973a311e3603be695c",
+      "repositoryFileSha256": "e588b827bf605c2a2a8a2df5588e88212e87e830ffff99aeec1719805488b4f8"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "离线政策测试样例",
+      "reason": "summary_or_index_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/fishery-demo/fishery-fixture.md",
+      "originalSha256": "da47f9e5063ae21a848e74e76a2e341186cbe4c32e9971ae82777e1f4c497e58",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/fujian-policy-blank-20261023/acceptance/REPORT.md",
+      "status": "archived-redacted",
+      "stage": "历史专项安全/政策PDF/AI核查验收 / 2026-10-23",
+      "title": "福建政策原件正文处理验收",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/fujian-policy-blank-20261023/acceptance/REPORT.md",
+      "originalSha256": "dbd239e78a18ce6fc5128b54a6bc1fc8e6454fac9f13482481b9df04eeddf104",
+      "repositoryFileSha256": "136d41ce88f83519e8293743e7c5c404f763103d87da2845364d7fa18e256658"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "备航 D/E/F 官方静态GET证据，核验日2026-10-21。",
+      "reason": "summary_or_index_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/business-expansion-20261021/preparation/README.md",
+      "originalSha256": "9f57f72182d9966af902654538b70983144e906fab011b1a568fa45acce23e23",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "A/B/C补贴来源核验与完整原件归档",
+      "reason": "summary_or_index_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/business-expansion-20261021/subsidies/REVIEW.md",
+      "originalSha256": "1ec9deb3bc694571bf0ab9b6a7a5900e08340bf270e60a71b41e66a9df408e65",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "中央官方来源核验：远洋渔业项目审批修改",
+      "reason": "summary_or_index_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/business-first-20261021/central/REVIEW.md",
+      "originalSha256": "1a558500c3ee940a70277413cd80b7266706cf2c65879c0fd70e863d5e0ee1f1",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "外籍船员及深圳扶持官方证据归档",
+      "reason": "summary_or_index_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/business-first-20261021/crew-funding/README.md",
+      "originalSha256": "46c64d43e115d79f4161ba560f82eb16437e6d8fb760d981aa0a66cbb345de9e",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-research-entry.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "远洋渔业信源中心：研究结论与实施入口",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/README.md",
+      "originalSha256": "514dcaed17dbbdeebbb9caefd93aeffd39986af295054b098e8f1705105bc74c",
+      "repositoryFileSha256": "d5745c412c7e5cbaa5f3946c5512c0cd19685137b6b92a7c699889410c45560c"
+    },
+    {
+      "destination": "docs/fishery-center/architecture.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "远洋渔业信源中心：最小实现设计",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/architecture.md",
+      "originalSha256": "7b95d7eb32aeee3cec7ff565d83323d492216b03bea083cc4dd0575b09a24657",
+      "repositoryFileSha256": "87ad1367218f7ff4144da277b9ece0b0483bc9f5df7be9ec27458d654f98f63e"
+    },
+    {
+      "destination": "docs/fishery-center/easel-contract.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "Easel 素材合同与同步验收（提案 v0.1）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/easel-contract.md",
+      "originalSha256": "c9f8536ea54661f18603aeb182c2e999e627376ef8e08b02a9954c3f7bcabfd9",
+      "repositoryFileSha256": "0b85594993a251d36014e4991dfd61eb38b8c0c0606d8750560edd47954aef9c"
+    },
+    {
+      "destination": "docs/fishery-center/implementation.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "分阶段实施与验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/implementation.md",
+      "originalSha256": "9e7aa91bc3cd72e3b02ef6852360f705740da61fc868976ffc77a1788d312051",
+      "repositoryFileSha256": "114a5835c46e34177fa1ee4a66efdef042c9406891912cef9b591880234f9c7f"
+    },
+    {
+      "destination": "docs/fishery-center/local-pilot.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "本机隔离试部署验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/local-pilot.md",
+      "originalSha256": "5d6b3b6a5ee30867961cde6f51742a66c10902a5fbad93ba46ada434a8652e45",
+      "repositoryFileSha256": "c5646e8504399f729c763a431d627e57f386973ac336cb8ff3ad87c4a50e3bbc"
+    },
+    {
+      "destination": "docs/fishery-center/material-workbench.md",
+      "status": "superseded-index",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "素材工作台（内部试运行）",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/material-workbench.md",
+      "originalSha256": "a53018a649280d5e0f9c0ce5390151c9c59f00fc0ac0a63960c1a1bc0c4fbf2e",
+      "repositoryFileSha256": "5b165c0aef7c89a97a2d1d053d298ebeea6be3bf4e0d550c62c0847163e128b6"
+    },
+    {
+      "destination": "docs/fishery-center/review-assessment.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "Pro评审记录与执行者复核",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/review-assessment.md",
+      "originalSha256": "2028dcb473c0da2f129ce919abff2a9ef880773999bc657c72dee73ef2a1654e",
+      "repositoryFileSha256": "2123a07c8622537efeeb36bae8e038f6e251edc58b4a64551ca7008ff2a7ca32"
+    },
+    {
+      "destination": "docs/fishery-center/server-pilot.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "Linux 隔离试部署（2026-10-20）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/server-pilot.md",
+      "originalSha256": "42d601d39e24c1eb8ef47181ecb3a9adf2e83e4e267b8a65aebfb76fce4ffbcb",
+      "repositoryFileSha256": "49c417781008c2a11d152f0bfd77db2a44d40667927cf0c9ca4b4c97a7a50136"
+    },
+    {
+      "destination": "docs/fishery-center/source-adapter-validation.md",
+      "status": "duplicate-source",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "晋江与IOTC最小离线适配验证",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/source-adapter-validation.md",
+      "originalSha256": "07d92890a60a2f0816642d8a52ba6cd23b0b6155ee94d24cafd05ed7c06c8576",
+      "repositoryFileSha256": "5ea740c6c351c593ae21b861de4ad210154db1fd9d05bdf3c29ac9b4e8fa8347"
+    },
+    {
+      "destination": "docs/fishery-center/source-register.md",
+      "status": "superseded-index",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "分层信源登记与取证状态",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/docs/fishery-center/source-register.md",
+      "originalSha256": "4731eb112cc1a27cb8f73b29eba3bd8e8c31edbb08d5bb318c1eb8daaf48da6f",
+      "repositoryFileSha256": "c6dba6849b0042928114ee39b70b7f53acb240b99ee453fbf435bc27f019890a"
+    },
+    {
+      "destination": "modules/fishery/BUSINESS-GUIDES.md",
+      "status": "already-in-repository",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "人工业务指南（管理员内部）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/modules/fishery/BUSINESS-GUIDES.md",
+      "originalSha256": "44fe3451ce1bc92123dc60a54281574b674801c7ae28d0f4a520774a3a9f76ef",
+      "repositoryFileSha256": "44fe3451ce1bc92123dc60a54281574b674801c7ae28d0f4a520774a3a9f76ef"
+    },
+    {
+      "destination": "modules/fishery/BUSINESS-TOPICS.md",
+      "status": "already-in-repository",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "业务主题卡最小设计（尚未接入运行）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/modules/fishery/BUSINESS-TOPICS.md",
+      "originalSha256": "2d3bbcc55e1fd800075870aa009d0e50ce51e5481e0f56007b420e2376243c9a",
+      "repositoryFileSha256": "2d3bbcc55e1fd800075870aa009d0e50ce51e5481e0f56007b420e2376243c9a"
+    },
+    {
+      "destination": "modules/fishery/OPERATIONS.md",
+      "status": "superseded-index",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "手动官方栏目采集与 AI 准备",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/modules/fishery/OPERATIONS.md",
+      "originalSha256": "d26890a5d47919b9e892f3c08b6f1f663967af30a235c8601ee0e6caf9340bf0",
+      "repositoryFileSha256": "17855d3f3dacf543527241322304fe23f87309d702b74057d964700fe4627b0b"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史人工业务材料核验/部署前基线文档 / 2026-10-21",
+      "title": "渔业素材首期本地模块",
+      "reason": "redacted_summary_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/mobile-tls-diagnostic-20261021/baseline-cfa61e4/modules/fishery/README.md",
+      "originalSha256": "6430d62459d25ec63c799011b597ed5ad2855ace102a55390d97821502896aee",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/safety-integrated-20261023/acceptance/REPORT.md",
+      "status": "archived-redacted",
+      "stage": "历史专项安全/政策PDF/AI核查验收 / 2026-10-23",
+      "title": "本轮已完成安全修复并部署，版本 `2563192f14728ec04933166115bba032d11716f3`；本地、origin分支与服务器一致。部署时间2026-10-23 02:13:09UTC。站点 https://fishery.conchterm.top/ 继续私有登录，原站正常。",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/safety-integrated-20261023/acceptance/REPORT.md",
+      "originalSha256": "6b42ff4256fcf167738128dae388b08f0b9f60086c08464846b4110c4d6800cf",
+      "repositoryFileSha256": "7d1632b581d8fda14e87198f8fb669ffadffbca67a3ddbabde69c7f8071ed40c"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史服务器可行性/隔离部署检查点 / 2026-10-20",
+      "title": "服务器只读部署可行性核验",
+      "reason": "redacted_summary_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/server-checks/server-feasibility.md",
+      "originalSha256": "fee732d37ddddf88116094afb798a6e91ca318e01251c976c511efe8bac0f598",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "历史素材工作台UI演练/暂停恢复检查点 / 2026-10-20",
+      "title": "\\[测试演练\\] UI验收 \\- 版本与导出",
+      "reason": "summary_or_index_only",
+      "source": "workspace-artifacts/2026-10-20/task-3/ui-checks/browser-export-r1.md",
+      "originalSha256": "9e849bc20433bbe939a4b09146f5a3ac5052100772366df70ac77e55164fd48b",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/ui-checks/material-workbench.md",
+      "status": "archived-redacted",
+      "stage": "历史素材工作台UI演练/暂停恢复检查点 / 2026-10-20",
+      "title": "素材工作台（内部试运行）",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/ui-checks/material-workbench.md",
+      "originalSha256": "a53018a649280d5e0f9c0ce5390151c9c59f00fc0ac0a63960c1a1bc0c4fbf2e",
+      "repositoryFileSha256": "cbaf8e6e5fb372a4cc500ecc9d96896d91b61c2207e1d7379fc42dffd7b4b7c4"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/ui-checks/recovery-checkpoint.md",
+      "status": "archived-redacted",
+      "stage": "历史素材工作台UI演练/暂停恢复检查点 / 2026-10-20",
+      "title": "素材后台 UI：暂停检查点",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/ui-checks/recovery-checkpoint.md",
+      "originalSha256": "f3fc3462e29878f7f51a6d369d3913155595824d20b7d5adcfe22d39d39f4936",
+      "repositoryFileSha256": "debb94e6dcc4e9ecda7096961c75b27f9f04bbaaf94ba4266ac99bde35849de6"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-task3/研究结论.md",
+      "status": "archived-redacted",
+      "stage": "初始研究、方案与信源登记（原生主线方案之前） / 2026-10-20",
+      "title": "AIHOT 远洋渔业公众号研究｜2026-10-20",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-20/task-3/研究结论.txt",
+      "originalSha256": "6bd414c24320949375f4ee21a967e60a81611365805a2375916da866cf067498",
+      "repositoryFileSha256": "f14235126b4e5cf1117812fc6fb50c4aa03bd41ad0ec96cfbfc1679d8b22661d"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-research-entry.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "远洋渔业信源中心：研究结论与实施入口",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/README.md",
+      "originalSha256": "514dcaed17dbbdeebbb9caefd93aeffd39986af295054b098e8f1705105bc74c",
+      "repositoryFileSha256": "d5745c412c7e5cbaa5f3946c5512c0cd19685137b6b92a7c699889410c45560c"
+    },
+    {
+      "destination": "docs/fishery-center/architecture.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "远洋渔业信源中心：最小实现设计",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/architecture.md",
+      "originalSha256": "7b95d7eb32aeee3cec7ff565d83323d492216b03bea083cc4dd0575b09a24657",
+      "repositoryFileSha256": "87ad1367218f7ff4144da277b9ece0b0483bc9f5df7be9ec27458d654f98f63e"
+    },
+    {
+      "destination": "docs/fishery-center/business-source-expansion-20261023.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "首批互补业务来源：隔离适配交付",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/business-source-expansion-20261023.md",
+      "originalSha256": "aa0f2149aeff480864d52ae6655d6cd0bb187a5a0d4ee3299969edc51e5664a1",
+      "repositoryFileSha256": "3a0fa0156942e43381198a57a71f9bced7f8777d69df28d592bccf07fd7c4b73"
+    },
+    {
+      "destination": "docs/fishery-center/easel-contract.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "Easel 素材合同与同步验收（提案 v0.1）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/easel-contract.md",
+      "originalSha256": "c9f8536ea54661f18603aeb182c2e999e627376ef8e08b02a9954c3f7bcabfd9",
+      "repositoryFileSha256": "0b85594993a251d36014e4991dfd61eb38b8c0c0606d8750560edd47954aef9c"
+    },
+    {
+      "destination": "docs/fishery-center/implementation.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "分阶段实施与验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/implementation.md",
+      "originalSha256": "9e7aa91bc3cd72e3b02ef6852360f705740da61fc868976ffc77a1788d312051",
+      "repositoryFileSha256": "114a5835c46e34177fa1ee4a66efdef042c9406891912cef9b591880234f9c7f"
+    },
+    {
+      "destination": "docs/fishery-center/local-pilot.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "本机隔离试部署验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/local-pilot.md",
+      "originalSha256": "5d6b3b6a5ee30867961cde6f51742a66c10902a5fbad93ba46ada434a8652e45",
+      "repositoryFileSha256": "c5646e8504399f729c763a431d627e57f386973ac336cb8ff3ad87c4a50e3bbc"
+    },
+    {
+      "destination": "docs/fishery-center/material-workbench.md",
+      "status": "superseded-index",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "素材工作台（内部试运行）",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/material-workbench.md",
+      "originalSha256": "ebaf010553af6d13d481a69ec2b7340eb2b3d2889b02f8571081deb865a8fb64",
+      "repositoryFileSha256": "5b165c0aef7c89a97a2d1d053d298ebeea6be3bf4e0d550c62c0847163e128b6"
+    },
+    {
+      "destination": "docs/fishery-center/news-flow-correction.md",
+      "status": "superseded-index",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "2026-10-23 资讯主流程纠偏记录",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/news-flow-correction.md",
+      "originalSha256": "9e9724087c54604720e1bc2600314b9e7a9d277fbf6e39d9c0beba32ac386dd5",
+      "repositoryFileSha256": "eda314e3e0940d08f2add0655a50832520580e584755251810a154eaec2739da"
+    },
+    {
+      "destination": "docs/fishery-center/pdf-blank-page-review.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "Explicit review of a textless PDF page",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/pdf-blank-page-review.md",
+      "originalSha256": "1cb644c699c8ef1736e7baf8d998a46efab935d1d45a9d9c4e3d28b045f35541",
+      "repositoryFileSha256": "f5f203af7071150f4cc5938560ff61723f51109bf1583fa2ad56325c42ef7b09"
+    },
+    {
+      "destination": "docs/fishery-center/review-assessment.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "Pro评审记录与执行者复核",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/review-assessment.md",
+      "originalSha256": "2028dcb473c0da2f129ce919abff2a9ef880773999bc657c72dee73ef2a1654e",
+      "repositoryFileSha256": "2123a07c8622537efeeb36bae8e038f6e251edc58b4a64551ca7008ff2a7ca32"
+    },
+    {
+      "destination": "docs/fishery-center/server-pilot.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "Linux 隔离试部署（2026-10-20）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/server-pilot.md",
+      "originalSha256": "42d601d39e24c1eb8ef47181ecb3a9adf2e83e4e267b8a65aebfb76fce4ffbcb",
+      "repositoryFileSha256": "49c417781008c2a11d152f0bfd77db2a44d40667927cf0c9ca4b4c97a7a50136"
+    },
+    {
+      "destination": "docs/fishery-center/source-adapter-validation.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "晋江与IOTC最小离线适配验证",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/source-adapter-validation.md",
+      "originalSha256": "07d92890a60a2f0816642d8a52ba6cd23b0b6155ee94d24cafd05ed7c06c8576",
+      "repositoryFileSha256": "5ea740c6c351c593ae21b861de4ad210154db1fd9d05bdf3c29ac9b4e8fa8347"
+    },
+    {
+      "destination": "docs/fishery-center/source-register.md",
+      "status": "duplicate-source",
+      "stage": "ITF/FAO/MPA补充来源隔离适配/旧flow说明 / 2026-10-23—24",
+      "title": "分层信源登记与取证状态",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task/.worktrees/business-sources/docs/fishery-center/source-register.md",
+      "originalSha256": "33e6511b1662363a5c2ea30704acf6c203c41ceb1e1e0f170f6a156f555cef89",
+      "repositoryFileSha256": "c6dba6849b0042928114ee39b70b7f53acb240b99ee453fbf435bc27f019890a"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-task2/DELIVERY.md",
+      "status": "archived-redacted",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "内容审核任务交付",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-evidence/DELIVERY.md",
+      "originalSha256": "468832fcd7e79976e54551e02364723ed4dfc66118a2c0b6f016767ba9612d8a",
+      "repositoryFileSha256": "fed075f9558ec832286a55c1cc4ef85453e4a6920183910e644e9a17f8cdd89d"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-research-entry.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "远洋渔业信源中心：研究结论与实施入口",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/README.md",
+      "originalSha256": "514dcaed17dbbdeebbb9caefd93aeffd39986af295054b098e8f1705105bc74c",
+      "repositoryFileSha256": "d5745c412c7e5cbaa5f3946c5512c0cd19685137b6b92a7c699889410c45560c"
+    },
+    {
+      "destination": "docs/fishery-center/architecture.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "远洋渔业信源中心：最小实现设计",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/architecture.md",
+      "originalSha256": "7b95d7eb32aeee3cec7ff565d83323d492216b03bea083cc4dd0575b09a24657",
+      "repositoryFileSha256": "87ad1367218f7ff4144da277b9ece0b0483bc9f5df7be9ec27458d654f98f63e"
+    },
+    {
+      "destination": "docs/fishery-center/easel-contract.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "Easel 素材合同与同步验收（提案 v0.1）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/easel-contract.md",
+      "originalSha256": "c9f8536ea54661f18603aeb182c2e999e627376ef8e08b02a9954c3f7bcabfd9",
+      "repositoryFileSha256": "0b85594993a251d36014e4991dfd61eb38b8c0c0606d8750560edd47954aef9c"
+    },
+    {
+      "destination": "docs/fishery-center/implementation.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "分阶段实施与验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/implementation.md",
+      "originalSha256": "9e7aa91bc3cd72e3b02ef6852360f705740da61fc868976ffc77a1788d312051",
+      "repositoryFileSha256": "114a5835c46e34177fa1ee4a66efdef042c9406891912cef9b591880234f9c7f"
+    },
+    {
+      "destination": "docs/fishery-center/local-pilot.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "本机隔离试部署验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/local-pilot.md",
+      "originalSha256": "5d6b3b6a5ee30867961cde6f51742a66c10902a5fbad93ba46ada434a8652e45",
+      "repositoryFileSha256": "c5646e8504399f729c763a431d627e57f386973ac336cb8ff3ad87c4a50e3bbc"
+    },
+    {
+      "destination": "docs/fishery-center/material-workbench.md",
+      "status": "superseded-index",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "素材工作台（内部试运行）",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/material-workbench.md",
+      "originalSha256": "ebaf010553af6d13d481a69ec2b7340eb2b3d2889b02f8571081deb865a8fb64",
+      "repositoryFileSha256": "5b165c0aef7c89a97a2d1d053d298ebeea6be3bf4e0d550c62c0847163e128b6"
+    },
+    {
+      "destination": "docs/fishery-center/news-flow-correction.md",
+      "status": "superseded-index",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "2026-10-23 资讯主流程纠偏记录",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/news-flow-correction.md",
+      "originalSha256": "9e9724087c54604720e1bc2600314b9e7a9d277fbf6e39d9c0beba32ac386dd5",
+      "repositoryFileSha256": "eda314e3e0940d08f2add0655a50832520580e584755251810a154eaec2739da"
+    },
+    {
+      "destination": "docs/fishery-center/pdf-blank-page-review.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "Explicit review of a textless PDF page",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/pdf-blank-page-review.md",
+      "originalSha256": "1cb644c699c8ef1736e7baf8d998a46efab935d1d45a9d9c4e3d28b045f35541",
+      "repositoryFileSha256": "f5f203af7071150f4cc5938560ff61723f51109bf1583fa2ad56325c42ef7b09"
+    },
+    {
+      "destination": "docs/fishery-center/review-assessment.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "Pro评审记录与执行者复核",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/review-assessment.md",
+      "originalSha256": "2028dcb473c0da2f129ce919abff2a9ef880773999bc657c72dee73ef2a1654e",
+      "repositoryFileSha256": "2123a07c8622537efeeb36bae8e038f6e251edc58b4a64551ca7008ff2a7ca32"
+    },
+    {
+      "destination": "docs/fishery-center/review-quality-2026-10-24.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "审核质量与真实候选小样本核查",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/review-quality-2026-10-24.md",
+      "originalSha256": "d58203dca6debce9d70524aa6eec186304b505ebd47e1a5b2078dc400f0718f0",
+      "repositoryFileSha256": "101207099a4efd00176a39f1a1c7d6fd9a3639ea9e1bf47b9a64ba72317c7097"
+    },
+    {
+      "destination": "docs/fishery-center/server-pilot.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "Linux 隔离试部署（2026-10-20）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/server-pilot.md",
+      "originalSha256": "42d601d39e24c1eb8ef47181ecb3a9adf2e83e4e267b8a65aebfb76fce4ffbcb",
+      "repositoryFileSha256": "49c417781008c2a11d152f0bfd77db2a44d40667927cf0c9ca4b4c97a7a50136"
+    },
+    {
+      "destination": "docs/fishery-center/source-adapter-validation.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "晋江与IOTC最小离线适配验证",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/source-adapter-validation.md",
+      "originalSha256": "07d92890a60a2f0816642d8a52ba6cd23b0b6155ee94d24cafd05ed7c06c8576",
+      "repositoryFileSha256": "5ea740c6c351c593ae21b861de4ad210154db1fd9d05bdf3c29ac9b4e8fa8347"
+    },
+    {
+      "destination": "docs/fishery-center/source-register.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "分层信源登记与取证状态",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/docs/fishery-center/source-register.md",
+      "originalSha256": "33e6511b1662363a5c2ea30704acf6c203c41ceb1e1e0f170f6a156f555cef89",
+      "repositoryFileSha256": "c6dba6849b0042928114ee39b70b7f53acb240b99ee453fbf435bc27f019890a"
+    },
+    {
+      "destination": "modules/fishery/BUSINESS-GUIDES.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "人工业务指南（管理员内部）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/modules/fishery/BUSINESS-GUIDES.md",
+      "originalSha256": "44fe3451ce1bc92123dc60a54281574b674801c7ae28d0f4a520774a3a9f76ef",
+      "repositoryFileSha256": "44fe3451ce1bc92123dc60a54281574b674801c7ae28d0f4a520774a3a9f76ef"
+    },
+    {
+      "destination": "modules/fishery/BUSINESS-TOPICS.md",
+      "status": "duplicate-source",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "业务主题卡最小设计（尚未接入运行）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/modules/fishery/BUSINESS-TOPICS.md",
+      "originalSha256": "2d3bbcc55e1fd800075870aa009d0e50ce51e5481e0f56007b420e2376243c9a",
+      "repositoryFileSha256": "2d3bbcc55e1fd800075870aa009d0e50ce51e5481e0f56007b420e2376243c9a"
+    },
+    {
+      "destination": "modules/fishery/OPERATIONS.md",
+      "status": "superseded-index",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "资讯采集、审核与政策证据操作",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/modules/fishery/OPERATIONS.md",
+      "originalSha256": "dc8fc8525ba36e8f09f7c26b3f0728eb726ab120702161257856cabd6918da6b",
+      "repositoryFileSha256": "17855d3f3dacf543527241322304fe23f87309d702b74057d964700fe4627b0b"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "审核质量、真实候选及指定政策仅审核 / 2026-10-24",
+      "title": "渔业素材首期本地模块",
+      "reason": "redacted_summary_only",
+      "source": "workspace-artifacts/2026-10-24/task-2/review-quality/modules/fishery/README.md",
+      "originalSha256": "dad09b0540ccd806d99874afe988d656b7965e979aa6d2832dba1ace9c108a4d",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261020-research-entry.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "远洋渔业信源中心：研究结论与实施入口",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/README.md",
+      "originalSha256": "514dcaed17dbbdeebbb9caefd93aeffd39986af295054b098e8f1705105bc74c",
+      "repositoryFileSha256": "d5745c412c7e5cbaa5f3946c5512c0cd19685137b6b92a7c699889410c45560c"
+    },
+    {
+      "destination": "docs/fishery-center/architecture.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "远洋渔业信源中心：最小实现设计",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/architecture.md",
+      "originalSha256": "7b95d7eb32aeee3cec7ff565d83323d492216b03bea083cc4dd0575b09a24657",
+      "repositoryFileSha256": "87ad1367218f7ff4144da277b9ece0b0483bc9f5df7be9ec27458d654f98f63e"
+    },
+    {
+      "destination": "docs/fishery-center/easel-contract.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "Easel 素材合同与同步验收（提案 v0.1）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/easel-contract.md",
+      "originalSha256": "c9f8536ea54661f18603aeb182c2e999e627376ef8e08b02a9954c3f7bcabfd9",
+      "repositoryFileSha256": "0b85594993a251d36014e4991dfd61eb38b8c0c0606d8750560edd47954aef9c"
+    },
+    {
+      "destination": "docs/fishery-center/implementation.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "分阶段实施与验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/implementation.md",
+      "originalSha256": "9e7aa91bc3cd72e3b02ef6852360f705740da61fc868976ffc77a1788d312051",
+      "repositoryFileSha256": "114a5835c46e34177fa1ee4a66efdef042c9406891912cef9b591880234f9c7f"
+    },
+    {
+      "destination": "docs/fishery-center/jma-integration-contract.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "JMA 海上警报模块交付与集成契约",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/jma-integration-contract.md",
+      "originalSha256": "df274414aced6d352d73dce48e20ced3e77475d90c925282c92e56838c0b5d6f",
+      "repositoryFileSha256": "5da635e0fd330c8f4e2da3bc35bb847cbe7d6a193efdcd7b055b09d7c69d5495"
+    },
+    {
+      "destination": "docs/fishery-center/jma-sea-warning-validation.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "正式海上警报接入验证补充（2026-10-23）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/jma-sea-warning-validation.md",
+      "originalSha256": "536f5fbe6679090f1053a8904fc6e66afc5f43d863e7d282042a1e1c6d04c162",
+      "repositoryFileSha256": "d4ac48a1362a2380d825e07ee9079fba5357fbc4da6f8e97914a455cc9bdede6"
+    },
+    {
+      "destination": "docs/fishery-center/jma-validation.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "JMA 气象信源隔离验证（2026-10-23）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/jma-validation.md",
+      "originalSha256": "71c1d501c1565dad42d241b3d3f647344858da06a2fc8850d7ee502dda0a6dd0",
+      "repositoryFileSha256": "9eb8f8c5a659c13d18ed923f4a2c331aceeac549cf62ae6de83e29a9722bc881"
+    },
+    {
+      "destination": "docs/fishery-center/local-pilot.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "本机隔离试部署验收",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/local-pilot.md",
+      "originalSha256": "5d6b3b6a5ee30867961cde6f51742a66c10902a5fbad93ba46ada434a8652e45",
+      "repositoryFileSha256": "c5646e8504399f729c763a431d627e57f386973ac336cb8ff3ad87c4a50e3bbc"
+    },
+    {
+      "destination": "docs/fishery-center/material-workbench.md",
+      "status": "superseded-index",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "素材工作台（内部试运行）",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/material-workbench.md",
+      "originalSha256": "ebaf010553af6d13d481a69ec2b7340eb2b3d2889b02f8571081deb865a8fb64",
+      "repositoryFileSha256": "5b165c0aef7c89a97a2d1d053d298ebeea6be3bf4e0d550c62c0847163e128b6"
+    },
+    {
+      "destination": "docs/fishery-center/news-flow-correction.md",
+      "status": "superseded-index",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "2026-10-23 资讯主流程纠偏记录",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/news-flow-correction.md",
+      "originalSha256": "9e9724087c54604720e1bc2600314b9e7a9d277fbf6e39d9c0beba32ac386dd5",
+      "repositoryFileSha256": "eda314e3e0940d08f2add0655a50832520580e584755251810a154eaec2739da"
+    },
+    {
+      "destination": "docs/fishery-center/pdf-blank-page-review.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "Explicit review of a textless PDF page",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/pdf-blank-page-review.md",
+      "originalSha256": "1cb644c699c8ef1736e7baf8d998a46efab935d1d45a9d9c4e3d28b045f35541",
+      "repositoryFileSha256": "f5f203af7071150f4cc5938560ff61723f51109bf1583fa2ad56325c42ef7b09"
+    },
+    {
+      "destination": "docs/fishery-center/review-assessment.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "Pro评审记录与执行者复核",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/review-assessment.md",
+      "originalSha256": "2028dcb473c0da2f129ce919abff2a9ef880773999bc657c72dee73ef2a1654e",
+      "repositoryFileSha256": "2123a07c8622537efeeb36bae8e038f6e251edc58b4a64551ca7008ff2a7ca32"
+    },
+    {
+      "destination": "docs/fishery-center/server-pilot.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "Linux 隔离试部署（2026-10-20）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/server-pilot.md",
+      "originalSha256": "42d601d39e24c1eb8ef47181ecb3a9adf2e83e4e267b8a65aebfb76fce4ffbcb",
+      "repositoryFileSha256": "49c417781008c2a11d152f0bfd77db2a44d40667927cf0c9ca4b4c97a7a50136"
+    },
+    {
+      "destination": "docs/fishery-center/source-adapter-validation.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "晋江与IOTC最小离线适配验证",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/source-adapter-validation.md",
+      "originalSha256": "07d92890a60a2f0816642d8a52ba6cd23b0b6155ee94d24cafd05ed7c06c8576",
+      "repositoryFileSha256": "5ea740c6c351c593ae21b861de4ad210154db1fd9d05bdf3c29ac9b4e8fa8347"
+    },
+    {
+      "destination": "docs/fishery-center/source-register.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "分层信源登记与取证状态",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/docs/fishery-center/source-register.md",
+      "originalSha256": "33e6511b1662363a5c2ea30704acf6c203c41ceb1e1e0f170f6a156f555cef89",
+      "repositoryFileSha256": "c6dba6849b0042928114ee39b70b7f53acb240b99ee453fbf435bc27f019890a"
+    },
+    {
+      "destination": "modules/fishery/BUSINESS-GUIDES.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "人工业务指南（管理员内部）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/modules/fishery/BUSINESS-GUIDES.md",
+      "originalSha256": "44fe3451ce1bc92123dc60a54281574b674801c7ae28d0f4a520774a3a9f76ef",
+      "repositoryFileSha256": "44fe3451ce1bc92123dc60a54281574b674801c7ae28d0f4a520774a3a9f76ef"
+    },
+    {
+      "destination": "modules/fishery/BUSINESS-TOPICS.md",
+      "status": "duplicate-source",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "业务主题卡最小设计（尚未接入运行）",
+      "reason": "index_existing_exact_document",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/modules/fishery/BUSINESS-TOPICS.md",
+      "originalSha256": "2d3bbcc55e1fd800075870aa009d0e50ce51e5481e0f56007b420e2376243c9a",
+      "repositoryFileSha256": "2d3bbcc55e1fd800075870aa009d0e50ce51e5481e0f56007b420e2376243c9a"
+    },
+    {
+      "destination": "modules/fishery/OPERATIONS.md",
+      "status": "superseded-index",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "资讯采集、审核与政策证据操作",
+      "reason": "index_superseded_revision_by_hash",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/modules/fishery/OPERATIONS.md",
+      "originalSha256": "dc8fc8525ba36e8f09f7c26b3f0728eb726ab120702161257856cabd6918da6b",
+      "repositoryFileSha256": "17855d3f3dacf543527241322304fe23f87309d702b74057d964700fe4627b0b"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "JMA隔离研究、真实回放、集成契约 / 2026-10-23—24",
+      "title": "渔业素材首期本地模块",
+      "reason": "redacted_summary_only",
+      "source": "workspace-artifacts/2026-10-24/task-3/aihot-jma/modules/fishery/README.md",
+      "originalSha256": "dad09b0540ccd806d99874afe988d656b7965e979aa6d2832dba1ace9c108a4d",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/historical-summaries.md",
+      "status": "summary-only",
+      "stage": "前一版集成/生产部署与运行事实（a5阶段） / 2026-10-23—24；以文内具体动作时间为准",
+      "title": "远洋资讯本轮集成交付",
+      "reason": "redacted_summary_only",
+      "source": "workspace-artifacts/2026-10-24/task-4/DELIVERY.md",
+      "originalSha256": "533a4769723d732a21e1b4bc50b882f281729b031502e9cb946db05a7ad0ff34",
+      "repositoryFileSha256": "fc03820dcd3ba322881c0ac1419c0273ae3adb8f64a80bb7c89186887fab92c9"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-task4/integration-agreement.md",
+      "status": "archived-redacted",
+      "stage": "前一版集成/生产部署与运行事实（a5阶段） / 2026-10-23—24；以文内具体动作时间为准",
+      "title": "本轮集成约定",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-24/task-4/integration-agreement.md",
+      "originalSha256": "3bf809370bb04844f95f23ef5950f378ddc04d2d0505d20cb6ca12b9c3b208eb",
+      "repositoryFileSha256": "0333e8f48f4b9334edbd1414c309e6fef5792c93445bcf3b48b861bb4385b0ac"
+    },
+    {
+      "destination": "docs/fishery-center/history/20261024-task4/readiness-report.md",
+      "status": "archived-redacted",
+      "stage": "前一版集成/生产部署与运行事实（a5阶段） / 2026-10-23—24；以文内具体动作时间为准",
+      "title": "远洋资讯集成准备收据",
+      "reason": "archive_historical_with_stage_label",
+      "source": "workspace-artifacts/2026-10-24/task-4/readiness-report.md",
+      "originalSha256": "f2960a31181ea85e7ee7edc8b7d4ec2934f9a5f4c4820747d21a6793f82bc2aa",
+      "repositoryFileSha256": "fb3f6d63717522798cc60edbfa1f80cc31a4e3c1c213fb29b11d34d417db6eec"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-deployment-report.md",
+      "originalSha256": "560bfe089ede067d25b39f3c783ff681e1279aca8731c31f2ca2390987f5e8fe",
+      "status": "duplicate",
+      "destination": "docs/fishery-center/history/20261024-native-flow/production-deployment-3a162-final-report.md",
+      "reason": "byte-identical consolidated final report; archived once",
+      "repositoryFileSha256": "172ba1f9df6c2779b61cf026981bb4d65ada0f913e07bfd6f6400d90b41ebb2b"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/version-evidence.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "ba416bc86ecfd1528e61247485d1780c7fa940ba56838d73faa057f1597d9659"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/read-only-verification.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "7b5e51527455ae60169d7e6b3e39341b7d5c74c07a9dbd48217bb11a076789f4"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/after-ui-submission.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "destination": "docs/fishery-center/evidence/production-acceptance-20261024.safe.json",
+      "originalSha256": "f5bf7691ab07c13d49c6c66cad0cc1c433214ac019f27c34802c6f633058ab83",
+      "repositoryFileSha256": "b08435909d048f9d4ee4ad8f151a819b3966638f8ae474fc547fec850245c0db"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/business-after-ui.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "destination": "docs/fishery-center/evidence/production-acceptance-20261024.safe.json",
+      "originalSha256": "ea178c686c9080e543d9ed2c495984f4906e12704f36f2b410b56092398a76ac",
+      "repositoryFileSha256": "b08435909d048f9d4ee4ad8f151a819b3966638f8ae474fc547fec850245c0db"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/jfa-final/deployment-summary.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "40d0eb13aef5504d12f4db441446ac0fe49fe2dd1d09344663bf8ae13deacfb0"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/implementation.patch",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "220852dc7fed6b9e9b1bdf1e6321e071fe8ac07d9de36b606ea4eefabf834f06"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/jfa-supersede-handover.patch",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "2bd0aad1b7b3f17a85e8a1ab9e5dfecfafefe7712e8d68afd101d03493bffdfc"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/jfa-final/business-outcome.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "507b7f2e77b1697439098ae8587a449e703c069a2876077780b36a8254995e90"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/outlets-and-period.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "destination": "docs/fishery-center/evidence/production-acceptance-20261024.safe.json",
+      "originalSha256": "e57d82546c4fa079a2fc5ebc0c89c0ef68e0c1d0de9a2702fa6cbf103f68828b",
+      "repositoryFileSha256": "b08435909d048f9d4ee4ad8f151a819b3966638f8ae474fc547fec850245c0db"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/natural-compose-final.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "destination": "docs/fishery-center/evidence/production-acceptance-20261024.safe.json",
+      "originalSha256": "7a3d27d24511f6d9cdc94cfcc6d4b02a1339c89cf0c7cba1f6c4134406a1efed",
+      "repositoryFileSha256": "b08435909d048f9d4ee4ad8f151a819b3966638f8ae474fc547fec850245c0db"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/implementation",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-production-upgrade.safe.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "4d0bfa0258aa54889569c7d750b089249a8a3782a2a4594ca2e174e91dfb8e1e"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/git-push.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "80ec4841c2267f0819eae239eae7a01341ca8c34cdffe4097e0c8af70efbc8e0"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/supersede-fix-push.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "5cfd9771e256b6270111b327669bb5a5622137be7f4faa782c5119ca9daa750c"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/release.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "58628bb1ebe3cec50789268657ba25d0b1d14bc646c63992fe66ff5c836235b5"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/production-migration.safe.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "744d16b834a7c4c8c10afe0d60b7e3158cbee0a7c98ce1a7d57fb370d6ba441b"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/production-finish.safe.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "e5da138a46433d5f40b1643b829bfb116b0b449faa581ba042564d09ca16b76f"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/final/production-final.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "b120e1fb07ece71c5df800fa91a53f608783942da1ace4bb13d9bd95f4c713f7"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/http-diagnosis.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "772e0dafea3cb5fc0dbc752f8b00745c7cfbc16e3f813a05f01b9dd948593878"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/final/natural-observation.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "e2bc11817651741682e56ce0960463e017ab9281c34b9c7c501e311e5ed18b93"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/final/rejected-provenance.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "ea3a18f98f1f1a4e7ebab9f62b5935f24259d20d92f46a57f5ee222f8fdb323f"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/final/final-reasons.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "6dee995847e7b08f107d4f4f98f7fcc923717f2d0d546015b0a1c3373b516ab6"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/supersede-handover-commit-manifest.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "c89da90ff780aa1903ff6875ca92a04375d4a2812de13c81df51ed25ca9681fd"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/supersede-handover-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "31d46936095daac23bd4737350b9edb5a7a63f95e3bcf98cfe1e7f8f8c589800"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/jfa-final/handover-summary.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "30b6bdecebb2db628e8878e3838ddb3fe148c8a0c976b4748d4d6ee743eff1e6"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/jfa-final/archive-valves.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "d4a4ad02ab86baf7f72e6249111d12e94c73468c210259faca112ef6d54d3482"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/jfa-final/jfa-content-check.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "3df9955765894a356d628eb5109ca95136e35888fc99760fb42dd05a5b7868d2"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-version-proof.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "destination": "docs/fishery-center/evidence/local-verification-20261024.safe.json",
+      "originalSha256": "2f054d1759fdf9200b7dfc448fbbf9649a14d3c142db8a863e9c3254b40ba9cf",
+      "repositoryFileSha256": "04665795cb38dc33bcbc7c4f4be773505c8c4a5e6cc1e7117b783626ffd8ca68"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-fix-commit-manifest.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "destination": "docs/fishery-center/evidence/local-verification-20261024.safe.json",
+      "originalSha256": "095759e9c88c3cc19830154385220c774e3a02da801c3af63c68278219252d1e",
+      "repositoryFileSha256": "04665795cb38dc33bcbc7c4f4be773505c8c4a5e6cc1e7117b783626ffd8ca68"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-fix-push.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "0c883470bfafa94be731d800cda48b107330e38d9b544285a9ff2430f385f38b"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/runtime-after-ui.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "57a3d46bade9ad33392185f481ae7cd3c247f6ab3732cdf9076a090ce21f4c39"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/implementation-patch-manifest.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "d76ada05f2b2920f37b4499451afcb5846f050a5b4b2db064d75368c7ba35dad"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/implementation.patch.sha256",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "14d44291d61f6d469efba423dbd54abae67027c45814404dab145682cc2e0c5d"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/summary.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "4bae9d39ef87f89fd0eb3dbea433628f1d02a2020353d3002340d598083e628e"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/native-processing-tests-2.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "db3445613563b7ec72186f329bb9f2dad02736a0e9ce0a9960a812d72ddb45d5"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/native-pipeline-outlets-final.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "4908d9b0a873d4b323b0ba186b2bbdfb37945c465e4cfa5f466b110628beb86d"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/native-cli-acceptance-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "3b92a867c3087f7b7b0a1c482c2a1df863f5056bd714667aeec1a604f2503430"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/native-cli-acceptance.mjs",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "ebf665e7a9cf42b4cbd4d4e6638ffb3986bf89c6ae960db480200f9545d28d89"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/typecheck-node24-final.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "457a7096e932d8c68959bb2d7a989d5c52f7bb1a3f8c7c9ce0674f8f3c78f5d0"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/web-build-node24-final.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "979a40cae876ad5ab9a064edc7bb8a3afb1302d5f117641c2888f1311409e7c6"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/web-tests-node24-final.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "613f46d7af2de7319a7461e4c53045307b55034e294f1ced471ffbef933f700b"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/smoke-node24-final.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "9d4f233855f2fe6b37a68607e48f26e6d42e94c741b77b417473ba76ac2f6866"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/integration-backend-tests-final-stable.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "79d28d81c327ea51e1e8495159b442dd7e2ef8fee7edcca0469a834d521ed364"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/native-final-guards-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "8399fe5eae8aeb4e73cac143d01ec92423cfee0e4d41ca942d6ca620628c4ebc"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/native-queue-ownership-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "aed2fee9f5f6060ef21caa1cd7401af8998ab7ce0ed702e18bb63d84b7276293"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/typecheck-final-tree-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "457a7096e932d8c68959bb2d7a989d5c52f7bb1a3f8c7c9ce0674f8f3c78f5d0"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/final-tree.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "44f95e31ba3efc826563cbbdfb73d6843f8f205ee2b7c8fd04521bcda53193e1"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/archive-replay/summary.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "42444ea6ed70c71d8079994d6abc18efe681d32ae1dd106e4763e472251e5f4d"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/jfa-production-finish.safe.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "1d44887fe29e77d8e2b78326e70c27db72f9826052f9f8c9d5d23d8c5c4437e7"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/model-routing-approval.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "783810bb0ee7b3883293f7e3207f056787492e610979f8dc78d64aee5d5188da"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/final/deployment-summary.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "e5da138a46433d5f40b1643b829bfb116b0b449faa581ba042564d09ca16b76f"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-4/rollout/closeout.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "3e851cad2053c07dab59d190c16e03f9a056954be31a07fc0ba2205f7b3fc7cd"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-4/rollout/http-final.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "bdf52ea2d1b6110ccdba9c68fc2d1d90dcdb866814562cb9f220da4bf16e2fa5"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-4/review-fix-evidence/after/policy-current-readonly.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "12a98d09c62dca62abbe7ceac56c268fa712ab8fc5559437685a9d68adfd7339"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-4/review-fix-evidence/after/offline-replay-result.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "05f3748db14b9230bdabd62ae168c08608fc1031c5f4ade8ec6cfaeb4ef0a8a3"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-4/rollout/final-read.safe.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "f7dd4d05a03081eb117b7f6cbc8cdf9340f109a912670ee9b19e933e881ec6df"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-rerun-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "488280a7d40ee46a9e234332b7b350190039bdc936c57941ec029f124d0a0cea"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/diff-check-final-tree.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/environment-regressions-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "908965fd9127e29f6f5e60e722e4af431004d7bd2bdfcd1d6175d1be42b75070"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/final-ui/navigation.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "e55685003409b3895473a2186381e3fcb833d9b4c31553e637b3490da54283ff"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/cleanup.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "1931bfbb5e0e2b9be2229d38808eb5de247eaba93bca2b81334e2500c4ea413e"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/page-metadata-stable-build-node24.log",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "abd95e8dc6a852edd57bbd75047cfa7f03973c2e8e272cf94dc34f377b0f106e"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/full-suite-tree.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "16c78bd1d428345993d41a464ee9eb673ff2e5ab47123cde40aa1cd47b837f4f"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/final-tree-manifest.sha256",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "d872dd506c8f530956d8e852b2acbb8ef5bb81ff9b08bd1f074fa4a3e5a0a811"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/supersede-handover-patch-formats.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "d9e079a6f2d84c3e9eddefae9fe43a20c2e8edf81b042473308588ca62aff4f8"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/verification/prefilter-fix-tree-manifest.sha256",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "4f5ebd7187aac653552926d315fe3436be17f628f08507025815d9e141201761"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/deployment-checks/completion.json",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": "19671ca1aacab7d27c369db099c57787efa7882d58bb04ae5bef21e0cd98ac99"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/ui-checks/server-pilot.md",
+      "status": "local-only",
+      "reason": "local evidence retained; not copied",
+      "destination": null,
+      "originalSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/pro-review/AIHOT-public-review-packet.txt",
+      "status": "excluded-not-copied",
+      "reason": "大篇幅评审资料混含来源正文与内部上下文；不为文档归档复制全文。以已收录review-assessment/review-quality摘要为入口",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/public-access-prep/production-config-changes.txt",
+      "status": "excluded-not-copied",
+      "reason": "生产连接/配置变更明细；不属于可直接公开归档文档",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task/source-evidence",
+      "status": "excluded-not-copied",
+      "reason": "公开原件raw/receipt大目录；业务源文档和task5离线对照已提供路径/hash，不复制原始证据包",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-2/review-evidence/*-body.txt",
+      "status": "excluded-not-copied",
+      "reason": "原文正文/材料证据，非项目文档",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-4/{*.safe.json,review-fix-evidence,rollout}",
+      "status": "excluded-not-copied",
+      "reason": "历史生产状态/审查原始结果及代码快照；仅由DELIVERY/readiness及task5生产审查引用，不整包归档",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "local-original/secrets and original-* source snapshots",
+      "status": "excluded-not-copied",
+      "reason": "依赖、临时物、会话、秘密、连接配置、原始证据或代码快照；不归档这些大目录",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/material-review/recent-20261020-2302/body-audit-result.txt",
+      "status": "excluded-not-copied",
+      "reason": "从纯文档候选数中移除；机器日志或原文审计产物，不复制正文、不按公开项目文档去重",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/server-deployment-checks/build-resource-check.txt",
+      "status": "excluded-not-copied",
+      "reason": "从纯文档候选数中移除；机器日志或原文审计产物，不复制正文、不按公开项目文档去重",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/server-deployment-checks/final-isolation-audit.txt",
+      "status": "excluded-not-copied",
+      "reason": "从纯文档候选数中移除；机器日志或原文审计产物，不复制正文、不按公开项目文档去重",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/ui-checks/server-final-audit.txt",
+      "status": "excluded-not-copied",
+      "reason": "从纯文档候选数中移除；机器日志或原文审计产物，不复制正文、不按公开项目文档去重",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-20/task-3/ui-checks/test-clone-audit.txt",
+      "status": "excluded-not-copied",
+      "reason": "从纯文档候选数中移除；机器日志或原文审计产物，不复制正文、不按公开项目文档去重",
+      "destination": null,
+      "originalSha256": null,
+      "repositoryFileSha256": null
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/rerun-invariants-summary.safe.json",
+      "originalSha256": "5ad25e9ab713a07b24cc3a997f5dc76bd4014fb221b180f909aa7f7bd6c4d3af",
+      "destination": "docs/fishery-center/evidence/production-acceptance-20261024.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "repositoryFileSha256": "b08435909d048f9d4ee4ad8f151a819b3966638f8ae474fc547fec850245c0db"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/source-inventory-latest.safe.json",
+      "originalSha256": "56afdd5261ead7e196300a70679178fa692ffdc87258ee12606a69f16b7dcb9e",
+      "destination": "docs/fishery-center/evidence/production-acceptance-20261024.safe.json",
+      "status": "summarized-only",
+      "reason": "Selected objective fields only; raw business arrays and ledgers are not copied.",
+      "repositoryFileSha256": "b08435909d048f9d4ee4ad8f151a819b3966638f8ae474fc547fec850245c0db"
+    },
+    {
+      "source": "repository-created/sources-and-scope.md",
+      "destination": "docs/fishery-center/sources-and-scope.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "fa61350e139c11aca145a718ae27c5f734018640fd21bbe08a0ca84eb4822e81"
+    },
+    {
+      "source": "repository-created/README.md",
+      "destination": "docs/fishery-center/README.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "7d7e0a3abcb8c1b1fd37c3fbda0862d0cc28129ac926804f5238b39f3127d575"
+    },
+    {
+      "source": "repository-created/rollback-and-operations.md",
+      "destination": "docs/fishery-center/rollback-and-operations.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "1be4b68d4ed2f453f132e905c9b113dd87c3be25b6e71a3c0eab91039a054c81"
+    },
+    {
+      "source": "repository-created/current-status.md",
+      "destination": "docs/fishery-center/current-status.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "417dffe036577860f0882c093460c3d1994b56e892341dc8673f2d3856225e7a"
+    },
+    {
+      "source": "repository-created/evidence/source-tree-3a162cb5.sha256",
+      "destination": "docs/fishery-center/evidence/source-tree-3a162cb5.sha256",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "4f5ebd7187aac653552926d315fe3436be17f628f08507025815d9e141201761"
+    },
+    {
+      "source": "repository-created/provenance/README.md",
+      "destination": "docs/fishery-center/provenance/README.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "73bcc93e6ecd1ce67070a404c35620c54bb8f54675d6006d9d98c75706312965"
+    },
+    {
+      "source": "repository-created/history/README.md",
+      "destination": "docs/fishery-center/history/README.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "0624a08c2d6d2c49d328505db94b6f98474be7acde005afe5264148b4d4e5dd1"
+    },
+    {
+      "source": "repository-created/history/20261024-native-flow/verification/summary.md",
+      "destination": "docs/fishery-center/history/20261024-native-flow/verification/summary.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "0fbe80ace3d0733aa6d63887d766a4d6910e7821491305fad85333f30e24ebd8"
+    },
+    {
+      "source": "repository-created/history/20261024-native-flow/verification/archive-replay-report.md",
+      "destination": "docs/fishery-center/history/20261024-native-flow/verification/archive-replay-report.md",
+      "status": "curated-project-index-or-summary",
+      "originalSha256": null,
+      "repositoryFileSha256": "fbaed2692bbd9aeb51ba75d71768343bceabbc4914f0b25fab83b2a50a07fb50"
+    }
+  ],
+  "coverage": {
+    "historicalTaskSources": 88,
+    "historicalUniqueContents": 49,
+    "historicalUniqueAlreadyInRepository": 17,
+    "historicalUniqueAdditionalHandled": 32,
+    "task5TopLevelMarkdownSources": 16,
+    "note": "Duplicate consolidated final report archived once; five machine/raw audit text files are excluded from pure-document totals."
+  }
+}

@@ -1,5 +1,8 @@
 # Pro评审记录与执行者复核
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 日期：2026-10-20。本节区分外部模型建议、执行者实际复核和实施提案；评审不是功能验收，也不是法律意见。
 
 ## 实际调用情况

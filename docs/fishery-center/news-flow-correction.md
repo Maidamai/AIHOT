@@ -1,6 +1,9 @@
 # 2026-10-23 资讯主流程纠偏记录
 
-本文保留当日事实与历史验收，不是现行运行手册。旧普通新闻审批、fishery.news归组与维护循环成刊路径已在原生迁移中退役；当前操作见[部署与回退](../deploy.md#远洋资讯原生流程迁移2026-10-24)。
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
+本文保留当日事实与历史验收，不是现行运行手册。旧普通新闻审批、fishery.news归组与维护循环成刊路径已在原生迁移中退役；当前操作见[部署与回退](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/docs/deploy.md#远洋资讯原生流程迁移2026-10-24)。
 
 对照 upstream `b3998dc6fc138eb9659f33f55eb38c1c716f0d57` 与本站 `e0578ddb5eca1ccba74bfb02a22393cbec094eb0` 的调用链审查。工作目标是可靠行业资讯，不以文书数量作为验收。
 
@@ -77,7 +80,7 @@ MARA受限采集`correction-moa-20261023`从最新页发现3个新增URL。2026-
 | [MARA工作动态](https://yyj.moa.gov.cn/gzdt/) / 上述产量统计 | 最新为10月22日，真实正文已走共享流程后低分拒绝；后续10月13日、9月政策不充当今天新消息。 |
 | [福建通知公告：征集海洋标准化技术委员会委员](https://hyyyj.fujian.gov.cn/xxgk/tzgg/202610/t20261021_7238851.htm) | 10月21日16:42，委员征集/个人申请，不是船队许可、配额、费用或安全条件变化；附件未走生产完整采集，未做正式发布决定。 |
 | [日本水产厅：11月3日至7日“いいさかなの日”](https://www.jfa.maff.go.jp/j/press/kakou/261023.html) | 10月23日发布，正文是消费推广和试吃活动，不因“水产”关键词当作远洋船队资讯。 |
-| [FRA红雪蟹标志放流研究](https://www.fra.go.jp/home/kenkyushokai/press/pr2026/20261020_press.html) | 10月20日，福井沿海蟹笼研究；可作研究参考，未显示中国北太平洋船队的近期作业条件变化，且不在新闻48小时窗口内。 |
+| [FRA红雪蟹标志放流研究](https://www.fra.go.jp[private-server-or-temporary-path]) | 10月20日，福井沿海蟹笼研究；可作研究参考，未显示中国北太平洋船队的近期作业条件变化，且不在新闻48小时窗口内。 |
 | [NPFC秋刀鱼累计捕捞量](https://www.npfc.int/pacific-saury-cumulative-catch-public) | 页面统计截至10月10日，不能把10月23日读取时间写成新增发布；后续应按统计版本/状态变更发现更新。NPFC法规目录仍按既有新增/修订语义运行，未套用48小时失效。 |
 | [CCS合作公告](https://www.ccs.org.cn/ccswz/articleDetail?id=202610220274690596) | 检索到10月22日一般航运合作，但正文打开超时，证据未完成，不能按标题入选。 |
 | [FAO GLOBEFISH鱼标签主题活动](https://www.fao.org/in-action/globefish/news-events/news/news-detail/the-journey-behind-a-fish-label--fao-globefish-and-fish4acp-at-the-world-food-forum/en) | 检索到10月21日学生教育活动，尚未取得适配器完整正文；不作为新的行情、通关或船队经营条件发布。 |

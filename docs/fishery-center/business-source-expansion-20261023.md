@@ -1,10 +1,13 @@
 # 首批互补业务来源：隔离适配交付
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 核验时间：2026-10-23 16:12–16:27 UTC。基线 `605ac218a44a724bbcbd2c616706b331191c4ca5`；分支 `feat/fishery-business-sources-20261024`。
 
 本批只交付三个来源的有界预览定义和离线适配，不修改 `industry/sources.json`、生产库、共享采集调度、审核核心或公开出口。没有部署、注册生产信源、启用周期、使用付费模型、接入 IOTC 或创建凭据。按照本轮集成约定，由唯一集成者统一合入、推送和部署。
 
-实现位于 [`business-sources.ts`](../../modules/fishery/backend/business-sources.ts)。它复用原版 `fromHtml`、`Candidate/SourceRow`、日期与 URL 身份规则；MPA 使用原版 `fetchRss` 后做范围约束，附件复用已有 `extractPdf` 和分段证据目录。没有另建 RSS 引擎、队列、数据库表或持久化游标。
+实现位于 [`business-sources.ts`](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/modules/fishery/backend/business-sources.ts)。它复用原版 `fromHtml`、`Candidate/SourceRow`、日期与 URL 身份规则；MPA 使用原版 `fetchRss` 后做范围约束，附件复用已有 `extractPdf` 和分段证据目录。没有另建 RSS 引擎、队列、数据库表或持久化游标。
 
 ## 每个来源的实际边界
 
@@ -38,7 +41,7 @@
 | 修改前后 | 基线没有这三个独立适配；新增后能发现4／3／27条限定候选。FAO 3条显示日均正确；三篇详情两次均完整。没有将“适配新增候选”计作生产新增新闻 |
 | 故障及修订回归 | 8项定向测试：旧日期／日月歧义、非法日期、日期冲突、原件／跳转／哈希错误、摘要与正文边界、缺附件／通知错号／无文字页、同 URL PDF 替换、页外字节变化、证据容量；均通过 |
 | 类型检查 | `node node_modules/typescript/bin/tsc -p modules --noEmit` 通过 |
-| 环境 | 最终检查使用 `/Users/choco/.nvm/versions/node/v24.15.0/bin/node`；UTC 和 America/Los_Angeles 下定向测试均通过。Homebrew Node24 缺少其依赖 dylib，未修改系统安装，改用已存在的 nvm Node24 |
+| 环境 | 最终检查使用 `[private-local-path]`；UTC 和 America/Los_Angeles 下定向测试均通过。Homebrew Node24 缺少其依赖 dylib，未修改系统安装，改用已存在的 nvm Node24 |
 
 仅运行上述针对性检查。未跑全量 suite、数据库测试、Web build、线上 smoke 或付费筛选。
 
@@ -66,7 +69,7 @@
 
 私有原件、完整正文与临时回放工具不进入 Git；已保存在本任务目录，未上传或对外发布：
 
-- `/Users/choco/Documents/Codex/2026-10-24/task/source-evidence/verified-v2/verification.json`：最终两次真实获取后的逐源比较、原件/正文/内容版本/证据绑定哈希。
+- `[private-local-path]`：最终两次真实获取后的逐源比较、原件/正文/内容版本/证据绑定哈希。
 - 同目录 `{fao-tuna,itf-fisheries,mpa-port}-{first,revisit}.json`：每份完整提取结果、来源区间、原件收据和问题列表；仅供本地审阅。
 - 上级 `*.raw`、`*.receipt.json`：列表、正文、PDF、robots、条款的原始响应及独立收据；`*-revisit.*` 是第二次获取，未覆盖第一次原件。
 - `mpa-pdf.parsed.json`：原始 PDF 的2页解析结果；`verify-revisits.mjs`：最终离线比较脚本。脚本仅对已归档 RSS启动临时127.0.0.1假服务，结束后关闭，模型和数据库均不参与。

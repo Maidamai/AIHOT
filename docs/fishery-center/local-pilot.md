@@ -1,5 +1,8 @@
 # 本机隔离试部署验收
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 2026-10-20；基线`deb11ef8ba169ab19482fb9c5dbe1b356768eb80`。用户批准官方PG/WebKit依赖、本机隔离部署、隔离数据测试审核和本地提交。没有生产写入、公开发布、push、Easel发布、第二份调度或付费模型调用；没有改其他项目配置。
 
 ## 实际入口和启停
@@ -8,14 +11,14 @@
 - 来源：`http://127.0.0.1:39871/api/admin/fishery/sources`；文书：`http://127.0.0.1:39871/api/admin/fishery/documents`。
 - 仅loopback监听，使用开发管理员旁路及开发CSRF值，没有新建长期token或密码；没有公网访问。网站仍是示例界面，渔业素材由管理员API查看，尚无素材GUI。
 - Node24.15.0；采集调度/模型/飞书/IndexNow阀全关，不启动worker、不加载真实.env，凭据目录指向不存在的测试路径。
-- 运行时/数据：`/Users/choco/Documents/Codex/2026-10-20/task-3/.runtime/`。没有写入/Applications或注册系统服务，没有启动已有Docker。
+- 运行时/数据：`[private-local-path]`。没有写入/Applications或注册系统服务，没有启动已有Docker。
 
 已实际验证stop→start，数据保留，最终保持运行：
 
 ```sh
-/usr/bin/python3 /Users/choco/Documents/Codex/2026-10-20/task-3/deployment-checks/pilot-control.py status
-/usr/bin/python3 /Users/choco/Documents/Codex/2026-10-20/task-3/deployment-checks/pilot-control.py stop
-/usr/bin/python3 /Users/choco/Documents/Codex/2026-10-20/task-3/deployment-checks/pilot-control.py start
+/usr/bin/python3 [private-local-path] status
+/usr/bin/python3 [private-local-path] stop
+/usr/bin/python3 [private-local-path] start
 ```
 
 脚本只管理本任务PG数据目录及已记录且命令匹配的API/Web进程；遇到他人占用端口会拒绝，不强杀或清理其他服务。不在DB测试执行期间停止PG。
@@ -84,16 +87,16 @@ IOTC保留Pending、通过年2026（year精度）、异议截止2026-11-18；发
 先用start命令启动已有隔离实例；输出目录必须不存在。以下会追加一批隔离记录：
 
 ```sh
-cd /Users/choco/workplace/AIHOT
-env -i PATH=/Users/choco/.nvm/versions/node/v24.15.0/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+cd [private-local-path]
+env -i PATH=[private-local-path] \
   NODE_ENV=test AIHOT_ENVIRONMENT=test \
   DATABASE_URL=postgres://aihot_test@127.0.0.1:55437/fishery_pilot_test \
   AIHOT_CREDENTIALS_DIR=/nonexistent-test-credentials \
-  AIHOT_DATA_DIR=/Users/choco/Documents/Codex/2026-10-20/task-3/.runtime/appdata \
+  AIHOT_DATA_DIR=[private-local-path] \
   node modules/fishery/scripts/pilot-evidence.ts \
-  --archives /Users/choco/Documents/Codex/2026-10-20/task-3/.runtime/original-archive \
-  --probe-failures /Users/choco/Documents/Codex/2026-10-20/task-3/deployment-checks/current-capture-failures.json \
-  --base http://127.0.0.1:39872 --output /tmp/fishery-evidence-new-run --exercise-test-review
+  --archives [private-local-path] \
+  --probe-failures [private-local-path] \
+  --base http://127.0.0.1:39872 --output [temporary-evidence-path] --exercise-test-review
 ```
 
 省略--exercise-test-review仅入库保留待审。脚本拒绝非本机/非*_test库、非test环境及非loopback HTTP，不安装依赖、不加载凭据、不访问原网站。当前失败探测不是旧原件新获取的证明。

@@ -1,10 +1,13 @@
 # Linux 隔离试部署（2026-10-20）
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 本文件记录远洋渔业素材中心的服务器验证方式。它是内部回环试验，不是生产上线或业务审核结论。现有网站、Nginx、公网入口和发布调度不属于这个项目。
 
 ## 独立资源
 
-- 主机：`ubuntu@43.133.78.32`；目录：`/home/ubuntu/fishery-pilot-20261020`。
+- 主机：`[private-ssh-target]`；目录：`[private-server-or-temporary-path]`。
 - Compose 项目：`fishery-pilot`；配置：`modules/fishery/deploy/compose.yaml`。
 - 网页：服务器 `127.0.0.1:39871`；API：服务器 `127.0.0.1:39872`。
 - 专用数据库：`fishery_pilot_test`，仅在项目 Docker 网络内使用，不发布宿主端口。
@@ -27,7 +30,7 @@ Linux 的实际软件包版本和镜像 ID 记在本任务验证回执中。macO
 以下命令只在上述服务器专用目录执行：
 
 ```sh
-cd /home/ubuntu/fishery-pilot-20261020
+cd [private-server-or-temporary-path]
 docker compose -p fishery-pilot -f modules/fishery/deploy/compose.yaml ps -a
 docker compose -p fishery-pilot -f modules/fishery/deploy/compose.yaml stop
 docker compose -p fishery-pilot -f modules/fishery/deploy/compose.yaml start fishery-db api web

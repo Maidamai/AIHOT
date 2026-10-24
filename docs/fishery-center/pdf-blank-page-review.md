@@ -1,5 +1,8 @@
 # Explicit review of a textless PDF page
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 Text extraction cannot distinguish a blank page from a scan. Automatic collectors still reject textless pages. This narrow administrative path handles an individually inspected original PDF in the existing manual official archive, without OCR or a new collector.
 
 1. `preparePdfBlankReview(dataDir, originalBytes, physicalPages)` renders the selected complete media boxes using the existing local PDFKit or Poppler. It stores the original hash, physical page count, renderer/version/options, and content-addressed PNG files. This is a draft render receipt, **not approval**.

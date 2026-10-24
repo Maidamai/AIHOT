@@ -1,5 +1,8 @@
 # 素材工作台（内部试运行）
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 入口为现有后台导航的“材料工作台”，路径 `/admin/fishery`；详情 `/admin/fishery/:id`，沿用现有管理员会话、CSRF和no-store规则，没有另一套应用或新增依赖。
 
 ## 日常操作
@@ -23,7 +26,7 @@
 
 ## 既有验收与访问边界
 
-下述为2026-10-20时的验收记录；原生迁移以[当前部署清单](../deploy.md#远洋资讯原生流程迁移2026-10-24)及本次新验收为准，不能据此声称已经生产切换。
+下述为2026-10-20时的验收记录；原生迁移以[当前部署清单](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/docs/deploy.md#远洋资讯原生流程迁移2026-10-24)及本次新验收为准，不能据此声称已经生产切换。
 
 本轮使用本任务已有Mac隔离预览进行真实浏览器操作：列表/搜索、404阻断、测试副本拒绝与审批、两种实际下载、仅解析器版本变化导致旧审核失效、重新审核与撤回；390像素列表/详情无页面横向溢出。原件主记录不审批，测试副本有醒目标识，导出保留隔离测试警示。
 

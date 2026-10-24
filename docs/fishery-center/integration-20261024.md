@@ -1,5 +1,8 @@
 # 2026-10-24 集成约定与上线门禁
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 本轮基线 `605ac218`。合入审核报告 `d72b2319`、业务适配 `13cea7ef`/`3fb6b741`、JMA `cb7f2de7`。唯一集成与生产写入分支为 `integration/fishery-20261024`，共享工作区不切换分支。
 
 ## 审核修复

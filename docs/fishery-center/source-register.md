@@ -1,5 +1,8 @@
 # 分层信源登记与取证状态
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 核验日：2026-10-20。`已读`表示本轮实际读取公开正文或文件，`入口`只表示发现入口或页面可达，`待验`不能据此声称已接通。频率分为页面提供的证据和我们建议的检查节奏；研究阶段没有建立采集器、订阅、调度或付费账户；当前首期新增了手工许可登记schema与健康扩展，但未自动导入本表、逐源批准许可或接通真实采集。公开GET成功不代表许可、结构稳定性、历史完整性或生产SLA。
 
 时效优先使用本执行者实际取得的2026年NPFC/SPRFMO资料；Pro比较表中采用的较旧年度报告作为历史证据，不能替代新资料。来源发布年、统计年度及版本分别登记。
@@ -17,7 +20,7 @@
 | [NPFC 2025 Fisheries Overview，2026-TCC09-IP01](https://www.npfc.int/system/files/2026-03/NPFC-2026-TCC09-IP01%20Fisheries%20Overview.pdf) | 各成员2025年度渔获/努力量，区分Convention Area与National Waters | 英文9页PDF，年度；数据来自2026成员年报，非实时 | 实际下载、提取并渲染核对第3/4页表格。中国Convention Area鱼种含秋刀鱼、鲐、沙丁鱼、柔鱼；仅用于选择研究范围 | 表间数字与叙述须核对，不能直接据此推断配额履约/超捕；未取得第三方附图再发布许可 |
 | [NPFC秋刀鱼公开累计捕捞](https://www.npfc.int/pacific-saury-cumulative-catch-public)；[鲐累计入口](https://www.npfc.int/chub-mackerel-cumulative-catch-public) | 通报累计量及TAC利用，不是船位、实时资源或可捕额度 | 英文HTML，秋刀鱼页明确截至2026-10-10 | 秋刀鱼正文已读；鲐入口本轮读取超时。保存as-of、单位、措施链接；建议每日检查但不承诺每日更新 | 总体TAC不代表某企业/某船可用额度；缺失时标未知，不能推算当前许可 |
 | [日本水产厅2026-04-17 NPFC会议结果](https://www.jfa.maff.go.jp/j/press/kokusai/260417.html) | 日本官方对2026/27秋刀鱼、鲐类、沙丁鱼措施的说明 | 日文HTML+PDF，事件驱动；发布日2026-04-17 | 正文已读，作为CMM交叉解读；必须区分“会议合意”与措施原文生效、日俄国家水域合作口径 | [MAFF条款](https://www.maff.go.jp/j/use/link.html)已读：PDL1.0适用范围、署名/编辑说明、第三方权利及标志例外须保留；不推广为全部日本官方资料均开放 |
-| [日本FRA 2026研究发布目录](https://www.fra.go.jp/home/kenkyushokai/press/pr2026/index.html)；[太平洋スルメイカ9月30日预报](https://www.fra.go.jp/home/kenkyushokai/press/pr2026/fri_20260930_surume-pac-2nd.html)；[浮鱼8月3日预报](https://www.fra.go.jp/home/kenkyushokai/press/pr2026/fri_20260803_ukiuo-pac-1st.html) | 研究机构原创资源/来游预报，日方沿近海和太平洋背景；スルメイカ不能仅按“鱿鱼”汉译与Neon flying squid或茎柔鱼自动合并，也不能等同中国公海渔场预报 | 日文HTML/PDF；目录有不同月份和季次 | 目录和两项正文入口已读；建议周查与季节性专题，提取地理/物种/预测期/方法/不确定性 | [版权页](https://www.fra.go.jp/copyright.html)保留权利且限制转载/修改；首版只做参考摘要和链接，未经许可不翻译整份图表发布。PDF表格自动解析未接通 |
+| [日本FRA 2026研究发布目录](https://www.fra.go.jp[private-server-or-temporary-path])；[太平洋スルメイカ9月30日预报](https://www.fra.go.jp[private-server-or-temporary-path])；[浮鱼8月3日预报](https://www.fra.go.jp[private-server-or-temporary-path]) | 研究机构原创资源/来游预报，日方沿近海和太平洋背景；スルメイカ不能仅按“鱿鱼”汉译与Neon flying squid或茎柔鱼自动合并，也不能等同中国公海渔场预报 | 日文HTML/PDF；目录有不同月份和季次 | 目录和两项正文入口已读；建议周查与季节性专题，提取地理/物种/预测期/方法/不确定性 | [版权页](https://www.fra.go.jp/copyright.html)保留权利且限制转载/修改；首版只做参考摘要和链接，未经许可不翻译整份图表发布。PDF表格自动解析未接通 |
 | [WCPFC CMM库](https://cmm.wcpfc.int/) | 西中太平洋高度洄游资源规则；金枪鱼线观察核心，不能用于全部北太平洋非金枪鱼 | 英文HTML/PDF，可区分现行/历史/未生效状态 | 公开页实际GET成功，已读状态入口；中国年报、具体2026鱼种/渔法分布需逐份取证后入库 | 未验证稳定RSS/API及内容再分发许可。观察阶段人工重点摘录，跨组织边界不能仅按经纬度归属 |
 | [WCPFC中国2026年报元数据](https://meetings.wcpfc.int/node/32189)；[原PDF](https://meetings.wcpfc.int/file/21027/download) | 中国提交的2025年度作业与市场链，非全体中国远洋船队普查 | 英文17页PDF；文号WCPFC-SC22-2026-AR-CCM03，2026-07-07发布 | 本执行者追加读取第2—4页：延绳钓/围网、太平洋岛国EEZ及公海、热带/赤道附近活动；日本刺身、斐济和泰国罐头加工链。足以反驳“所有业务只看日本以东” | 正文也有明显无效日期字样，说明官方原文需校验；不自动据年报生成当前许可结论。转载许可未确认，首版只做元数据/摘要/链接 |
 | [WCPFC CMM 2024-04](https://cmm.wcpfc.int/measure/cmm-2024-04) | 船员劳动标准正式措施，未来生效样本 | 英文HTML/PDF；页面标Not Yet in Force及2028-01-01 | 本执行者已读取措施元数据：截至核验日不能把“2024已通过”写成“已生效”。建议纳入长期日期提醒回归样本 | 未完成所有条款/成员实施/例外的法律审核；不据此推定其他现有劳动义务不存在 |
@@ -51,6 +54,6 @@
 
 本次实际读取 [MAFF版权条款](https://www.maff.go.jp/j/use/link.html)：无特别权利声明的适用内容按PDL1.0，需署名和加工说明；照片、标志、第三方及外链内容不能据此推定开放。公开出口仍只使用注明加工的摘要和原文链接，全文出口关闭；许可登记和服务器调度由部署步骤明确配置，不由适配器自动批准。
 
-`robots.txt` 实际HTTP403返回水产厅官方“ご指定のページは見つかりませんでした”缺页HTML，SHA-256为 `458e61da3ecdb675ae7b9d98805fd4529d9de15c9b802d63279d28e61934debc`。按 [RFC9309 §2.3.1.3](https://www.rfc-editor.org/rfc/rfc9309.html#section-2.3.1.3) 的4xx unavailable语义，只接受这一精确地址、状态及字节指纹；响应改变即停采待核，不能推广为所有403均可继续。
+`robots.txt` 实际HTTP403返回水产厅官方“ご指定のページは見つかりませんでした”缺页HTML，SHA-256为 `458e61da3ecdb675ae7b9d98805fd4529d9de15c9b802d63279d28e61934debc`。按 [RFC9309 §[private-server-ip]](https://www.rfc-editor.org/rfc/rfc9309.html#section-[private-server-ip]) 的4xx unavailable语义，只接受这一精确地址、状态及字节指纹；响应改变即停采待核，不能推广为所有403均可继续。
 
 NPFC秋刀鱼累计捕捞页本次再次读取显示截至2026-10-17，较登记表原观察日更新。固定URL的可变状态需要独立as-of/内容变化语义；本批仍待接入，不用新闻URL游标冒充完成，也不从TAC与累计捕捞推算任何企业或船舶可捕额度。

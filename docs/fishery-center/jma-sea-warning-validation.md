@@ -1,5 +1,8 @@
 # 正式海上警报接入验证补充（2026-10-23）
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 按本次新增授权，继续独立分支 `feat/jma-marine-validation-20261023`（本轮基线 `90581aa`），增加正式全般/地方海上警报的**内部原文参考与审核适配器**。没有合并、部署、注册信源、写数据库或调度；没有调用AI生成、改写、推导预报。未改主工作树、主会话测试环境或运行服务。此前[regular/extra验证](jma-validation.md)和原收据保持为第一轮历史证据，本文补足其正式海警覆盖缺口。
 
 ## 官方入口与产品选择
@@ -42,7 +45,7 @@ R08不是简单改名。[官方规格No12001](https://www.data.jma.go.jp/suishin
 
 七份均Status=通常、InfoType=発表；**没有真实訂正、InfoType取消、解除、无警报或训练样本**。当前官方海警产品解说Head表规定InfoType仅発表/訂正；地方「海上警報解除」是警报正文/见出名称，可不带ValidDateTime，不能为了填补样本而伪造一份“真实取消”。
 
-证据见[机器可读收据](evidence/jma-sea-warning-20261023.json)：确切URL、HTTP日期、ETag、SHA-256、字节数、头部日期、地区绑定、原数值/单位的少量路径级摘录和离线缓存回放结果。原文、技术包、提取文本和PDF核对图在隔离任务目录 `../jma-evidence/marine-20261023/`。收据是本机观测，不是官方数字签名，不应将快照中的预测数值用于当前航行。
+证据见[机器可读收据](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/docs/fishery-center/evidence/jma-sea-warning-20261023.json)：确切URL、HTTP日期、ETag、SHA-256、字节数、头部日期、地区绑定、原数值/单位的少量路径级摘录和离线缓存回放结果。原文、技术包、提取文本和PDF核对图在隔离任务目录 `../jma-evidence/marine-20261023/`。收据是本机观测，不是官方数字签名，不应将快照中的预测数值用于当前航行。
 
 ## 海区范围与字段边界
 

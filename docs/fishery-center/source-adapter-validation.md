@@ -1,5 +1,8 @@
 # 晋江与IOTC最小离线适配验证
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 2026-10-20；基线`c849caa66628648f15441a55cc0e96f9dcdba41e`；分支`feat/fishery-materials-mvp`。本轮开始及中断恢复时只读核对工作区，未发现范围外改动。没有付费模型、生产DB写入、自动批准、长期调度、Easel联调、push、部署或发布。没有更改全站行业提示词、评分门槛或核心采集链。
 
 ## 改动
@@ -21,7 +24,7 @@
 
 三个输出的状态/关键日期/条款年份及成功正文hash均经独立Python断言核对。IOTC原件PDF SHA-256为`6d60080cf90f9fe7f0e960b28e73c8f23e24764bcf7d12f240d6ad3c09dac44e`；晋江HTML为`e4a43b08caaab02742f2dacb030abcd2eaa5a7644773246d2f6cdce372f22fc2`。文件完整性不能替代业务事实、法律适用性或转载许可审核。
 
-原件目录`/tmp/aihot-original-validation-20261020-0549`；输出`/tmp/aihot-adapter-replay/{jinjiang,iotc,fuzhou}/capture.json`，成功样本另有body.txt。它们未入库、未上传、未提交，临时目录可能被系统清理。提交内的合成回归不依赖这些路径。
+原件目录`[temporary-evidence-path]`；输出`[temporary-evidence-path]`，成功样本另有body.txt。它们未入库、未上传、未提交，临时目录可能被系统清理。提交内的合成回归不依赖这些路径。
 
 ## 本轮检查
 
@@ -40,7 +43,7 @@
 
 离线回归覆盖正常/缺失/仅day/冲突/非法日期，404/缺正文，hash/域名不符，Pending与生效日分离，year不补日，2027—2028条款年份，PDF缺失/失败/未核及文号/状态/截止冲突，失败证据导出拒绝。已有DB测试文件补充“批准后仍拒绝失败获取证据”场景，但尚未执行，不能用纯函数检查代称API/DB全链路通过。
 
-日志位于本任务目录`/Users/choco/Documents/Codex/2026-10-20/task-3`：fishery-adapter-standalone.log、fishery-adapter-unit.log、fishery-adapter-typecheck.log、fishery-adapter-build.log、fishery-adapter-web-tests.log、fishery-adapter-lock.log；最终回放与关键语义见fishery-adapter-replay.json。前一期944/59项通过不是本轮结果。
+日志位于本任务目录`[private-local-path]`：fishery-adapter-standalone.log、fishery-adapter-unit.log、fishery-adapter-typecheck.log、fishery-adapter-build.log、fishery-adapter-web-tests.log、fishery-adapter-lock.log；最终回放与关键语义见fishery-adapter-replay.json。前一期944/59项通过不是本轮结果。
 
 ## 已解决中断与剩余边界
 

@@ -1,6 +1,9 @@
 # JMA 海上警报模块交付与集成契约
 
-本分支基于 `605ac218a44a724bbcbd2c616706b331191c4ca5`，以合并提交 `b14a980` 完整保留旧分支 `e384bdbd5b11bc81570fd0ecb7f9bdc5ffdcd3c6` 的五个提交。实现提交为 `80501ba6a92b8df4ae17a3dcdfab1a17f44d719a`。分支 `feat/jma-marine-lifecycle-20261024`，目录 `/Users/choco/Documents/Codex/2026-10-24/task-3/aihot-jma`。
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
+本分支基于 `605ac218a44a724bbcbd2c616706b331191c4ca5`，以合并提交 `b14a980` 完整保留旧分支 `e384bdbd5b11bc81570fd0ecb7f9bdc5ffdcd3c6` 的五个提交。实现提交为 `80501ba6a92b8df4ae17a3dcdfab1a17f44d719a`。分支 `feat/jma-marine-lifecycle-20261024`，目录 `[private-local-path]`。
 
 交付范围是独立的原文参考解析、状态投影、离线回放及证据。本分支没有生产信源注册、数据库迁移、定时任务、API、网页、付费模型调用或部署。按照本轮集成约定，由 `integration/fishery-20261024` 的统一集成者合入、推送和部署；不写其工作目录。旧分支和共享主目录均未修改。
 
@@ -48,10 +51,10 @@
 
 证据文件：
 
-- [真实样本前后比较与HTTP收据](evidence/jma-lifecycle-20261024.json)
-- [警报代码官方工作簿摘录](evidence/jma-warning-codes-20261024.json)
-- 私有原件、下载checkpoint、完整生命周期输出、测试日志：`/Users/choco/Documents/Codex/2026-10-24/task-3/jma-evidence/`
-- 旧归档只读复用：`/Users/choco/Documents/Codex/2026-10-23/task/jma-evidence/marine-20261023/`
+- [真实样本前后比较与HTTP收据](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/docs/fishery-center/evidence/jma-lifecycle-20261024.json)
+- [警报代码官方工作簿摘录](https://github.com/Maidamai/AIHOT/blob/3a162cb5f30e27a6385d0fb0c1b7227f059028a3/docs/fishery-center/evidence/jma-warning-codes-20261024.json)
+- 私有原件、下载checkpoint、完整生命周期输出、测试日志：`[private-local-path]`
+- 旧归档只读复用：`[private-local-path]`
 
 ```bash
 node --test modules/fishery/tests/jma-marine.standalone.test.ts modules/fishery/tests/jma-sea-warning.standalone.test.ts

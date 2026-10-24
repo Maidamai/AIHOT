@@ -1,5 +1,8 @@
 # 远洋渔业信源中心：最小实现设计
 
+> Archived project snapshot; dates and claims describe that stage, not current live state. Local paths and private deployment locations are redacted. Local-only evidence is catalogued in provenance; its links are not copies of the raw evidence. See [current status](current-status.md) and [source/hash inventory](provenance/source-manifest.json).
+
+
 本文件主体保留实施提案；当前已实现的有限首期与真实验收结果另见[实施记录](implementation.md)。基线：上游 `5633b648b9ca6453caec5bcf70a76785a794286f`，核验日 2026-10-20。早期研究仅做文档；用户随后授权本地改造与验证，仍不部署、不改Easel或现有AI早报调度。
 
 ## 现有能力与改造边界

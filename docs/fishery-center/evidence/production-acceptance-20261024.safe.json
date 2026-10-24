@@ -1,0 +1,363 @@
+{
+  "schemaVersion": 1,
+  "observationTimes": {
+    "deployment": "2026-10-24T05:44:24Z",
+    "rerun": "2026-10-24T05:57Z",
+    "naturalCompose": "2026-10-24T06:14Z",
+    "editionReadback": "2026-10-24T06:17:04.701412+00:00",
+    "sourceInventory": "2026-10-24T06:23:21.292901+00:00"
+  },
+  "sourceCodeAndProductionRelease": "3a162cb5f30e27a6385d0fb0c1b7227f059028a3",
+  "documentationCommit": "Separate documentation-only archive; not deployed as a business release.",
+  "fourServicesRunning": true,
+  "oldManualStopped": true,
+  "promptProof": {
+    "prefilterVersion": "prefilter@f1dd56b576",
+    "renderedSystemHash": "2d3353d0dd0c0670de5f851d0fd31301e52f34ce2c7a1cab70bb96993c785576",
+    "fisheryConfigurationVersion": "868fbe5dd400e28b8978065bc48bbff465241b6071a79c51f4ede3f488192c7c"
+  },
+  "singleUiRerunAudit": [
+    {
+      "id": 1184,
+      "actor": "admin:1",
+      "request_id": "mvlzl1zy-a5kp30xg",
+      "job_id": "5ebce0f6-66ad-4ed1-bef2-bc47db14b328"
+    }
+  ],
+  "article": {
+    "id": "jxr71d4jo1wbyzpbkrob4rwe6",
+    "source_id": "fishery-column-jfa-press",
+    "published_at": "2026-10-22T15:00:00.000Z",
+    "discovered_at": "2026-10-23T14:51:32.146Z",
+    "backfill": false,
+    "processing_state": "analyzed",
+    "grouping_status": "complete"
+  },
+  "newAnalysis": {
+    "id": 2,
+    "prefilter": "PASS",
+    "scores": [
+      22,
+      22
+    ],
+    "selected": false,
+    "writer": "summarize"
+  },
+  "receiptResults": [
+    {
+      "id": 47,
+      "purpose": "prefilter_article",
+      "status": "completed",
+      "prompt_version": "prefilter@f1dd56b576",
+      "system_hash": "2d3353d0dd0c0670de5f851d0fd31301e52f34ce2c7a1cab70bb96993c785576"
+    },
+    {
+      "id": 48,
+      "purpose": "score_article",
+      "status": "completed",
+      "prompt_version": "selection-score@ba0e7d47a5",
+      "system_hash": "1d2662d3b58e17f1b33407ad8bc62097709ee5431e21d18ca7dc9f3d760e2e7c"
+    },
+    {
+      "id": 49,
+      "purpose": "structure_article",
+      "status": "completed",
+      "prompt_version": "structure@e1bf3f8812",
+      "system_hash": "e02efceadc7b9ac05e96e6e5189179dcfcb9a3e8cd779b1f3131cab8ec2dce77"
+    },
+    {
+      "id": 50,
+      "purpose": "score_article",
+      "status": "completed",
+      "prompt_version": "selection-score@ba0e7d47a5",
+      "system_hash": "1d2662d3b58e17f1b33407ad8bc62097709ee5431e21d18ca7dc9f3d760e2e7c"
+    },
+    {
+      "id": 51,
+      "purpose": "summarize_article",
+      "status": "completed",
+      "prompt_version": "summarize-article+summarize-article-empty+summarize-short-post+summarize-short-post-quoted+summarize-long-post+summarize-long-post-quoted+identity-context@053c978a52",
+      "system_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "publication": {
+    "visibility": "public",
+    "eligible": true,
+    "selected": false,
+    "score": 22,
+    "story_id": null,
+    "fact_id": null
+  },
+  "readable": {
+    "before": 13,
+    "after": 14,
+    "onlyNewArticleId": "jxr71d4jo1wbyzpbkrob4rwe6",
+    "old13Preserved": true
+  },
+  "preserved": {
+    "old54EntryHashesPrefixUnchanged": true,
+    "oldAnalysis1AndReceipt46HashesUnchanged": true,
+    "policyAndMaraFullObjectsUnchanged": true
+  },
+  "ledger": {
+    "calls": 59,
+    "spentMicroCny": 897700,
+    "unsettledReserveMicroCny": 0,
+    "maxReservedMicroCny": 10000000,
+    "states": {
+      "received": 59
+    }
+  },
+  "newRerunCost": {
+    "entryIds": [
+      55,
+      56,
+      57,
+      58,
+      59
+    ],
+    "calls": 5,
+    "estimatedMicroCny": 162376
+  },
+  "costCaveat": "Usage-based estimate in the original cumulative ledger, not a provider invoice settlement.",
+  "articleOutlets": {
+    "web": {
+      "status": 200,
+      "containsTargetId": true
+    },
+    "apiAll": {
+      "status": 200,
+      "containsTargetId": true
+    },
+    "apiSelected": {
+      "status": 200,
+      "containsTargetId": false
+    },
+    "rssAll": {
+      "status": 200,
+      "containsTargetId": true
+    },
+    "mcpAll": {
+      "status": 200,
+      "containsTargetId": true
+    }
+  },
+  "naturalDaily": {
+    "reports": [
+      {
+        "id": 1,
+        "key": "2026-10-24",
+        "kind": "daily",
+        "lead": {
+          "title": "本期暂无入选资讯",
+          "leadParagraph": "北京时间 10 月 23 日 08:00 至 10 月 24 日 08:00，收录范围内暂无入选的远洋渔业资讯。"
+        },
+        "model": null,
+        "generator": {
+          "left": 0,
+          "facts": 0,
+          "events": 0,
+          "fillIns": 0,
+          "version": "report-period+report-period-sections+report-period-no-sections@8a7e3d4811",
+          "judgedReports": 1,
+          "roundupsFolded": 0,
+          "selectedReports": 0,
+          "repeatsSuppressed": 0,
+          "followUpsAsFlashes": 0
+        },
+        "windowEnd": "2026-10-24T00:00:00+00:00",
+        "entryCount": 0,
+        "flashCount": 0,
+        "leadItemId": null,
+        "generatedAt": "2026-10-24T06:14:15.645168+00:00",
+        "windowStart": "2026-10-23T00:00:00+00:00",
+        "highlightCount": 0
+      }
+    ],
+    "latestCompose": {
+      "id": 207,
+      "error": null,
+      "detail": {
+        "failed": [],
+        "generated": [
+          "daily:2026-10-24"
+        ]
+      },
+      "status": "ok",
+      "startedAt": "2026-10-24T06:14:14.362545+00:00",
+      "finishedAt": "2026-10-24T06:14:15.648991+00:00"
+    }
+  },
+  "dailyHttp": [
+    {
+      "path": "/api/v1/dailies/latest",
+      "status": 200,
+      "containsDailyKey": true,
+      "containsQuietTitle": true
+    },
+    {
+      "path": "/daily/2026-10-24",
+      "status": 200,
+      "containsDailyKey": true,
+      "containsQuietTitle": true
+    },
+    {
+      "path": "/feed/daily.xml",
+      "status": 200,
+      "containsDailyKey": true,
+      "containsQuietTitle": true
+    }
+  ],
+  "sourceInventory": {
+    "checkedAt": "2026-10-24T06:23:21.292901+00:00",
+    "nativeScope": {
+      "enabled": true,
+      "sourceIds": [
+        "fishery-column-fujian",
+        "fishery-column-fujian-notices",
+        "fishery-column-jfa-press",
+        "fishery-column-moa"
+      ],
+      "createdAfter": "2026-10-21T07:13:00Z"
+    },
+    "archiveColumns": [
+      {
+        "id": "fishery-column-fao-tuna",
+        "name": "FAO GLOBEFISH · 金枪鱼市场分析",
+        "mode": "hourly",
+        "outcome": "success",
+        "latestRoundFinishedAt": "2026-10-24T05:44:26.132658+00:00",
+        "bodyFailures": 0,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:44:26.183Z"
+      },
+      {
+        "id": "fishery-column-fujian",
+        "name": "福建省海洋与渔业局 · 省局动态",
+        "mode": "hourly",
+        "outcome": "success",
+        "latestRoundFinishedAt": "2026-10-24T05:32:36.252852+00:00",
+        "bodyFailures": 0,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:32:36.583Z"
+      },
+      {
+        "id": "fishery-column-fujian-notices",
+        "name": "福建省海洋与渔业局 · 通知公告",
+        "mode": "hourly",
+        "outcome": "success",
+        "latestRoundFinishedAt": "2026-10-24T05:32:37.656831+00:00",
+        "bodyFailures": 0,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:32:38.009Z"
+      },
+      {
+        "id": "fishery-column-itf-fisheries",
+        "name": "ITF · 渔业劳动资讯",
+        "mode": "hourly",
+        "outcome": "success",
+        "latestRoundFinishedAt": "2026-10-24T05:44:27.125288+00:00",
+        "bodyFailures": 0,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:44:27.151Z"
+      },
+      {
+        "id": "fishery-column-jfa-press",
+        "name": "日本水产厅 · 新闻发布",
+        "mode": "hourly",
+        "outcome": "partial",
+        "latestRoundFinishedAt": "2026-10-24T05:33:49.85745+00:00",
+        "bodyFailures": 2,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:33:50.317Z"
+      },
+      {
+        "id": "fishery-column-moa",
+        "name": "农业农村部渔业渔政管理局 · 工作动态",
+        "mode": "hourly",
+        "outcome": "success",
+        "latestRoundFinishedAt": "2026-10-24T05:54:35.963015+00:00",
+        "bodyFailures": 0,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:54:36.306Z"
+      },
+      {
+        "id": "fishery-column-mpa-port",
+        "name": "MPA · 港口作业通知",
+        "mode": "hourly",
+        "outcome": "partial",
+        "latestRoundFinishedAt": "2026-10-24T05:32:38.402126+00:00",
+        "bodyFailures": 1,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T06:32:38.611Z"
+      },
+      {
+        "id": "fishery-column-npfc",
+        "name": "NPFC 北太平洋渔业委员会 · 逐项养护管理措施",
+        "mode": "six_hourly",
+        "outcome": "partial",
+        "latestRoundFinishedAt": "2026-10-24T06:17:58.550717+00:00",
+        "bodyFailures": 1,
+        "failCount": 0,
+        "paused": false,
+        "enabled": true,
+        "nextAt": "2026-10-24T12:17:59.414Z"
+      }
+    ],
+    "manualSourceCount": 9,
+    "jmaEnabled": false,
+    "iotcIsolated": true
+  },
+  "notVerified": [
+    "natural newly captured article through publication",
+    "high-score selected event/digest/hot example",
+    "nonempty selected daily, weekly or monthly issue",
+    "48-hour continuous operation and full production restore drill"
+  ],
+  "sourceArtifacts": [
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/after-ui-submission.safe.json",
+      "originalSha256": "f5bf7691ab07c13d49c6c66cad0cc1c433214ac019f27c34802c6f633058ab83",
+      "status": "summarized-only; raw business arrays/ledger hashes not copied"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/business-after-ui.safe.json",
+      "originalSha256": "ea178c686c9080e543d9ed2c495984f4906e12704f36f2b410b56092398a76ac",
+      "status": "summarized-only; raw business arrays/ledger hashes not copied"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/rerun-invariants-summary.safe.json",
+      "originalSha256": "5ad25e9ab713a07b24cc3a997f5dc76bd4014fb221b180f909aa7f7bd6c4d3af",
+      "status": "summarized-only; raw business arrays/ledger hashes not copied"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/outlets-and-period.safe.json",
+      "originalSha256": "e57d82546c4fa079a2fc5ebc0c89c0ef68e0c1d0de9a2702fa6cbf103f68828b",
+      "status": "summarized-only; raw business arrays/ledger hashes not copied"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/natural-compose-final.safe.json",
+      "originalSha256": "7a3d27d24511f6d9cdc94cfcc6d4b02a1339c89cf0c7cba1f6c4134406a1efed",
+      "status": "summarized-only; raw business arrays/ledger hashes not copied"
+    },
+    {
+      "source": "workspace-artifacts/2026-10-24/task-5/production-preparation/prefilter-final/source-inventory-latest.safe.json",
+      "originalSha256": "56afdd5261ead7e196300a70679178fa692ffdc87258ee12606a69f16b7dcb9e",
+      "status": "summarized-only; raw business arrays/ledger hashes not copied"
+    }
+  ]
+}
